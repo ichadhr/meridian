@@ -612,15 +612,21 @@ export async function deployPosition({
   // Use SDK's canonical base fee formula to avoid manual math errors.
   // SDK: base_fee_rate = baseFactor * binStep * 10 * 10^baseFeePowerFactor
   //      baseFeeRatePercentage = (baseFeeRate * 100) / 1e9
-  const baseFactor = pool.lbPair.parameters?.baseFactor ?? 0;
-  const baseFeeInfo = DLMM.calculateFeeInfo(
-    baseFactor,
-    actualBinStep,
-    pool.lbPair.parameters?.baseFeePowerFactor ?? 0,
-  );
-  const actualBaseFee = base_fee ?? (baseFactor > 0
-    ? parseFloat(baseFeeInfo.baseFeeRatePercentage.toFixed(4))
-    : null);
+  // Note: base_fee param is currently never set by the screening pipeline
+  // (condensePool returns fee_pct, not base_fee). Kept as defensive override
+  // for future manual callers — remove in a follow-up if confirmed dead.
+  const params = pool.lbPair.parameters ?? {};
+  const baseFactor = params.baseFactor ?? 0;
+  const baseFeePowerFactor = params.baseFeePowerFactor ?? 0;
+  let actualBaseFee = base_fee ?? null;
+  if (actualBaseFee == null && baseFactor > 0) {
+    try {
+      const feeInfo = DLMM.calculateFeeInfo(baseFactor, actualBinStep, baseFeePowerFactor);
+      actualBaseFee = parseFloat(feeInfo.baseFeeRatePercentage.toFixed(4));
+    } catch (err) {
+      log("deploy", `WARN: calculateFeeInfo failed for pool ${pool_address}: ${err.message}`);
+    }
+  }
 
   const totalYLamports = new BN(Math.floor(finalAmountY * 1e9));
   // Token X amount uses mint decimals when available, falling back to 9.

@@ -168,12 +168,26 @@ Jupiter audit API: `botHoldersPercentage` (5–25% is normal for legitimate toke
 
 ## Base Fee Calculation (dlmm.js)
 
-Read from pool object at deploy time:
+Delegated to SDK's `DLMM.calculateFeeInfo()` to avoid manual math errors:
 ```js
-const baseFactor = pool.lbPair.parameters?.baseFactor ?? 0;
-const actualBaseFee = baseFactor > 0
-  ? parseFloat((baseFactor * actualBinStep / 1e6 * 100).toFixed(4))
-  : null;
+const params = pool.lbPair.parameters ?? {};
+const baseFactor = params.baseFactor ?? 0;
+const baseFeePowerFactor = params.baseFeePowerFactor ?? 0;
+let actualBaseFee = base_fee ?? null;
+if (actualBaseFee == null && baseFactor > 0) {
+  try {
+    const feeInfo = DLMM.calculateFeeInfo(baseFactor, actualBinStep, baseFeePowerFactor);
+    actualBaseFee = parseFloat(feeInfo.baseFeeRatePercentage.toFixed(4));
+  } catch (err) {
+    log("deploy", `WARN: calculateFeeInfo failed: ${err.message}`);
+  }
+}
+```
+
+SDK source (`@meteora-ag/dlmm@1.9.4` `dist/index.js:17649`):
+```
+baseFeeRate = baseFactor * binStep * 10 * 10^baseFeePowerFactor
+baseFeeRatePercentage = (baseFeeRate * 100) / 1e9
 ```
 
 ---
