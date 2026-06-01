@@ -483,7 +483,7 @@ export async function deployPosition({
     return { success: false, error: "Pool on cooldown — was recently closed with a cooldown reason. Try a different pool." };
   }
 
-  const { StrategyType, getBinIdFromPrice, getPriceOfBinByBinId } = await getDLMM();
+  const { DLMM, StrategyType, getBinIdFromPrice, getPriceOfBinByBinId } = await getDLMM();
   const pool = await getPool(pool_address);
   const baseMint = pool.lbPair.tokenXMint.toString();
   if (isBaseMintOnCooldown(baseMint)) {
@@ -609,9 +609,18 @@ export async function deployPosition({
   const upsideCoveragePct = activePrice > 0 ? ((maxPrice - activePrice) / activePrice) * 100 : null;
   const totalWidthPct = minPrice > 0 ? ((maxPrice - minPrice) / minPrice) * 100 : null;
 
-  // Read base fee directly from pool — baseFactor * binStep / 10^6 gives fee in %
+  // Use SDK's canonical base fee formula to avoid manual math errors.
+  // SDK: base_fee_rate = baseFactor * binStep * 10 * 10^baseFeePowerFactor
+  //      baseFeeRatePercentage = (baseFeeRate * 100) / 1e9
   const baseFactor = pool.lbPair.parameters?.baseFactor ?? 0;
-  const actualBaseFee = base_fee ?? (baseFactor > 0 ? parseFloat((baseFactor * actualBinStep / 1e6 * 100).toFixed(4)) : null);
+  const baseFeeInfo = DLMM.calculateFeeInfo(
+    baseFactor,
+    actualBinStep,
+    pool.lbPair.parameters?.baseFeePowerFactor ?? 0,
+  );
+  const actualBaseFee = base_fee ?? (baseFactor > 0
+    ? parseFloat(baseFeeInfo.baseFeeRatePercentage.toFixed(4))
+    : null);
 
   const totalYLamports = new BN(Math.floor(finalAmountY * 1e9));
   // Token X amount uses mint decimals when available, falling back to 9.
