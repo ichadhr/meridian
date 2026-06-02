@@ -165,7 +165,7 @@ async function runBriefing() {
   try {
     const briefing = await generateBriefing();
     if (telegramEnabled()) {
-      await sendHTML(briefing);
+      await sendLongMessage(briefing, { parse_mode: "HTML" });
     }
     setLastBriefingDate();
   } catch (error) {
@@ -1597,7 +1597,7 @@ async function telegramHandler(msg) {
   if (text === "/briefing") {
     try {
       const briefing = await generateBriefing();
-      await sendHTML(briefing);
+      await sendLongMessage(briefing, { parse_mode: "HTML" });
     } catch (e) {
       await sendMessage(`Error: ${e.message}`).catch(() => {});
     }
