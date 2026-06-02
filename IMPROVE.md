@@ -1,7 +1,7 @@
 # Meridian — Improvement Plan
 
 > Created: June 1, 2026 | Status: Living document  
-> Complements: `ISSUES.md` (current bugs) and `CLAUDE.md` (architecture)  
+> Complements: `bd list` (active issues) and `CLAUDE.md` (architecture)  
 > Goal: Document what can be made better, with code references, effort estimates, and trade-offs
 
 ---
@@ -246,7 +246,7 @@ async function fetchWithBackoff(url, { maxAttempts = 3, baseMs = 1000 } = {}) {
 
 ### 4.1 Multi-Provider LLM Proxy
 
-**The problem (recap from `ISSUES.md` #1 and #7):**  
+**The problem (recap from `bd` issues `meridian-651` and `meridian-heu`):**  
 Meridian has a single OpenAI client. If MiMo v2.5 Pro rate-limits or 502s, the agent goes down. Per-role models exist (`managementModel`, `screeningModel`, `generalModel`) but they all share the same `baseURL` + `apiKey`.
 
 **The solution:** A thin, standalone OpenAI-compatible proxy in front of Meridian.
@@ -844,7 +844,7 @@ If target vol = 5% daily and pool vol = 10%, position is half-size.
 **Risks per tier:**
 | Tier | Risk | Mitigation |
 |------|------|------------|
-| 1 | Source code changes might conflict with upstream Meridian | Keep changes minimal, document them in `ISSUES.md` |
+| 1 | Source code changes might conflict with upstream Meridian | Keep changes minimal, use `bd` to track issues |
 | 2 | New processes (proxy, indexer) = more to deploy/monitor | PM2 / systemd unit files for both |
 | 3 | Over-engineering vs. just deploying capital | Each Tier 3 item should pay for itself in <1 month |
 
@@ -874,8 +874,8 @@ These need user input before implementation:
 
 ## 9. See Also
 
-- `ISSUES.md` — Current bugs and known limitations
 - `CLAUDE.md` — Architecture and code conventions
+- `bd list` — Active issues (migrated from `ISSUES.md`)
 - `lessons.json` — What Meridian has learned so far
 - `decision-log.json` — What Meridian has decided so far
 

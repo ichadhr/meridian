@@ -425,7 +425,7 @@ If you want to verify Meridian's DLMM usage against this reference:
 ## 17. See Also
 
 - `CLAUDE.md` — Meridian architecture overview
-- `ISSUES.md` — Current bugs and known limitations
+- `bd list` — Active issues and known limitations
 - `IMPROVE.md` — Improvement plan with tiers
 - [Meteora DLMM Docs](https://docs.meteora.ag/overview/products/dlmm)
 - [dlmm-sdk GitHub](https://github.com/MeteoraAg/dlmm-sdk)
