@@ -1766,16 +1766,38 @@ async function telegramHandler(msg) {
   }
 
   if (text === "/vp" || text === "/vp report") {
-    try {
-      const { generateDryRunReport } = await import("./tools/generate-dry-run-report.js");
-      const html = generateDryRunReport();
-      const reportPath = "./dry-run-report.html";
-      const fs = await import("fs");
-      fs.writeFileSync(reportPath, html);
-      const { sendDocument } = await import("./telegram.js");
-      await sendDocument(reportPath, { caption: `📅 Dry Run Report — ${new Date().toISOString().slice(0, 10)}` });
-    } catch (e) {
-      await sendMessage(`Error: ${e.message}`).catch(() => {});
+    if (process.env.DRY_RUN !== "true") {
+      await sendMessage("Virtual positions are only available in DRY_RUN mode.").catch(() => {});
+      return;
+    }
+    if (text === "/vp") {
+      try {
+        const vps = listVirtualPositions();
+        if (vps.length === 0) {
+          await sendMessage("No open virtual positions.").catch(() => {});
+          return;
+        }
+        const lines = vps.map(vp => {
+          const val = vp.current_value_usd?.toFixed(2) ?? "?";
+          const fees = vp.total_fees_earned_usd?.toFixed(4) ?? "0";
+          return `${vp.pair} | $${val} | fees: $${fees}`;
+        });
+        await sendMessage(`📋 Virtual Positions (${vps.length}):\n${lines.join("\n")}`);
+      } catch (e) {
+        await sendMessage(`Error: ${e.message}`).catch(() => {});
+      }
+    } else {
+      try {
+        const { generateDryRunReport } = await import("./tools/generate-dry-run-report.js");
+        const html = generateDryRunReport();
+        const reportPath = "./dry-run-report.html";
+        const fs = await import("fs");
+        fs.writeFileSync(reportPath, html);
+        const { sendDocument } = await import("./telegram.js");
+        await sendDocument(reportPath, { caption: `📅 Dry Run Report — ${new Date().toISOString().slice(0, 10)}` });
+      } catch (e) {
+        await sendMessage(`Error: ${e.message}`).catch(() => {});
+      }
     }
     return;
   }
