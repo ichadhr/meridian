@@ -956,6 +956,9 @@ async function manageVirtualPositions() {
   const virtualPositions = listVirtualPositions("open");
   if (virtualPositions.length === 0) return null;
 
+  const bal = await getWalletBalances().catch(() => ({ sol_price: 150 }));
+  const solPrice = bal.sol_price || 150;
+
   const SINGLE_SIDE_SPOT_FEE_DISCOUNT = 0.4;
   const lines = [];
   const now = Date.now();
@@ -1011,7 +1014,6 @@ async function manageVirtualPositions() {
 
       // 7. Fee accrual this cycle
       // formula: positionValue × sol_price × (fee_per_tvl_24h/100) × (elapsed_minutes/1440) × SINGLE_SIDE_SPOT_FEE_DISCOUNT
-      const solPrice = 150; // default SOL price — actual value not critical for PnL tracking
       const rawFeeThisCycle = positionValueSol * solPrice * (feePerTvl24h / 100) * (elapsedMin / 1440);
       const feeThisCycleUsd = inRange ? rawFeeThisCycle * SINGLE_SIDE_SPOT_FEE_DISCOUNT : 0;
 
@@ -1027,7 +1029,7 @@ async function manageVirtualPositions() {
       let closeReason = null;
 
       // PnL suspect guard: if PnL < -90% but position value isn't near zero, skip PnL-based rules
-      const pnlSuspect = pnlPct < -90 && (positionValueSol * 150) > vp.initial_value_usd * 0.1;
+      const pnlSuspect = pnlPct < -90 && (positionValueSol * solPrice) > vp.initial_value_usd * 0.1;
 
       if (!pnlSuspect && pnlPct <= (mgmtCfg.stopLossPct ?? -50)) {
         closeReason = "stop_loss";
