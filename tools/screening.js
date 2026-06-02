@@ -574,7 +574,8 @@ export async function getTopCandidates({ limit = 10 } = {}) {
       }
       if (!isUsableVolatility(p.volatility)) {
         pushFilteredReason(filteredOut, p, `volatility ${p.volatility ?? "unknown"} is unusable`);
-        return false;
+      } else if (s.maxVolatility != null && p.volatility > s.maxVolatility) {
+        pushFilteredReason(filteredOut, p, `volatility ${p.volatility} exceeds maxVolatility ${s.maxVolatility}`);
       }
       if (occupiedPools.has(p.pool)) {
         pushFilteredReason(filteredOut, p, "already have an open position in this pool");
