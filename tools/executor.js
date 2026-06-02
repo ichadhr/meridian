@@ -618,7 +618,6 @@ export async function executeTool(name, args) {
               active_bin: deploy.active_bin_id ?? null,
               bin_step: deploy.bin_step ?? args.bin_step ?? null,
               amount_sol: parseFloat(deploy.amount_y ?? args.amount_y ?? args.amount_sol ?? 0),
-              sol_price: null,
               fee_per_tvl_24h: parseFloat(args.fee_tvl_ratio ?? args.fee_per_tvl_24h ?? 0),
               deploy_rationale: args.deploy_rationale || null,
               initial_value_usd: parseFloat(args.initial_value_usd ?? parseFloat(deploy.amount_y ?? args.amount_y ?? args.amount_sol ?? 0) * 150),
