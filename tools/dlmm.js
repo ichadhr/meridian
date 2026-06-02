@@ -787,6 +787,15 @@ export async function deployPosition({
   log("deploy", `Amount: ${finalAmountX} X, ${finalAmountY} Y`);
   log("deploy", `Position: ${newPosition.publicKey.toString()}`);
 
+  // Warn if active bin drifted during deploy window (observability, no abort)
+  try {
+    const freshBin = await pool.getActiveBin();
+    const binDrift = Math.abs(freshBin.binId - activeBin.binId);
+    if (binDrift > 0) {
+      log("deploy_warn", `Active bin drifted ${binDrift} bin(s) during deploy window for ${pool_address.slice(0, 8)} (range: ${totalBins} bins)`);
+    }
+  } catch (_) { /* best-effort */ }
+
   try {
     const txHashes = [];
 
@@ -958,7 +967,7 @@ async function fetchDlmmPnlForPool(poolAddress, walletAddress) {
     if (!res.ok) {
       const body = await res.text().catch(() => "");
       log("pnl_api", `HTTP ${res.status} for pool ${poolAddress.slice(0, 8)}: ${body.slice(0, 120)}`);
-      return {};
+      return { _api_error: true, _http_status: res.status };
     }
     const data = await res.json();
     const positions = data.positions || data.data || [];
@@ -973,7 +982,7 @@ async function fetchDlmmPnlForPool(poolAddress, walletAddress) {
     return byAddress;
   } catch (e) {
     log("pnl_api", `Fetch error for pool ${poolAddress.slice(0, 8)}: ${e.message}`);
-    return {};
+    return { _api_error: true, _http_status: null };
   }
 }
 
@@ -1009,6 +1018,7 @@ export async function getPositionPnl({ pool_address, position_address }) {
   }
   try {
     const byAddress = await fetchDlmmPnlForPool(pool_address, walletAddress);
+    if (byAddress._api_error) return { error: "PnL API unavailable — cannot evaluate position", api_available: false };
     const p = byAddress[position_address];
     if (!p) return { error: "Position not found in PnL API" };
 
