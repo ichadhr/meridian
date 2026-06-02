@@ -161,161 +161,74 @@ No clean "disable HiveMind" toggle. Setting `hiveMindUrl` or `hiveMindApiKey` to
 ## 8. Base Fee Calculated 100× Too High
 
 **Severity:** Critical  
-**Status:** Open (1-line fix available)
+**Status:** Fixed (commit `2a97a55`, also on `dev` branch)
 
-**Problem:**
-`tools/dlmm.js:614` calculates base fee with an extra `× 100` factor that makes the reported value 100× larger than the SDK's actual base fee percentage.
+**Problem (original):**
+`tools/dlmm.js:614` calculated base fee with an extra `× 100` factor that made the reported value 100× larger than the SDK's actual base fee percentage.
 
-**Current code** (`tools/dlmm.js:614`):
-```js
-// Read base fee directly from pool — baseFactor * binStep / 10^6 gives fee in %
-const actualBaseFee = baseFactor > 0
-  ? parseFloat((baseFactor * actualBinStep / 1e6 * 100).toFixed(4))
-  : null;
-```
+**Root cause:**
+Two errors in the old formula (`baseFactor * binStep / 1e6 * 100`):
+1. **Missing `× 10 × 10^powerFactor`** term from the canonical SDK formula
+2. **Wrong denominator** — `/ 1e6` instead of `/ 1e9`
 
-**Why this is wrong (per `DLMM.md` Section 7):**
-The SDK formula is:
-```
-baseFeeRatePercentage = (baseFactor × binStep × 10 × 10^powerFactor) × 100 / FEE_PRECISION
-                        where FEE_PRECISION = 1_000_000_000
-```
-For `powerFactor=0`: `baseFactor × binStep × 1000 / 1_000_000_000 = baseFactor × binStep / 1_000_000`
+For the typical case (`powerFactor=0`), the old code was 100× too high.
 
-Meridian's formula: `baseFactor × binStep / 1_000_000 × 100` → **100× too high**.
+**Fix applied:**
+Delegated to `DLMM.calculateFeeInfo(baseFactor, binStep, baseFeePowerFactor)` — the SDK's own static method that implements the canonical formula. This also handles `baseFeePowerFactor` correctly and future-proofs against formula changes.
 
-**Concrete example** (baseFactor=100, binStep=100):
-| Source | Formula | Result |
-|--------|---------|--------|
-| SDK actual | `100×100×1000 / 1e9` | **0.01%** |
-| Meridian | `100×100×100 / 1e6` | **1.0%** |
+**Verification:**
+- Cross-checked against [Meteora docs](https://docs.meteora.ag/core-products/dlmm/formulas): $f_b = B \cdot s \cdot 10 \cdot 10^{\text{base\_fee\_power\_factor}}$
+- E2E tested 5 scenarios (SDK output = manual BigInt calculation)
+- SDK source at `dist/index.js:17649` confirms the same formula
 
 **Impact:**
-- The reported `base_fee_pct` is passed into the LLM prompt as part of the pool metrics block
-- LLM sees inflated base fees and may incorrectly reject low-fee pools or prefer pools with bad base fees
-- Does NOT affect on-chain funds — strictly a decision-quality issue
-- No on-chain safety risk (deploy safety checks are independent of this value)
-
-**Proposed fix:**
-```js
-// Option A (minimal — just remove the × 100):
-const actualBaseFee = baseFactor > 0
-  ? parseFloat((baseFactor * actualBinStep / 1e6).toFixed(4))
-  : null;
-
-// Option B (full SDK alignment including powerFactor):
-const powerFactor = pool.lbPair.parameters?.baseFeePowerFactor ?? 0;
-const FEE_PRECISION = 1_000_000_000;
-const baseFeeRate = baseFactor * actualBinStep * 10 * Math.pow(10, powerFactor);
-const actualBaseFee = baseFactor > 0
-  ? parseFloat((baseFeeRate * 100 / FEE_PRECISION).toFixed(4))
-  : null;
-```
-
-**Related:** Issue #11 (M-3) covers the missing `baseFeePowerFactor` term.
+- Informational only — on-chain safety was never affected
+- Old inflated value could have biased LLM's pool quality perception
+- Now LLM sees the correct base fee
 
 ---
 
 ## 9. `claimFees` Does Not Claim Meteora Rewards
 
 **Severity:** High  
-**Status:** Open
+**Status:** Fixed
 
 **Problem:**
-The standalone `claimFees` function (`tools/dlmm.js:1458-1501`) only calls `pool.claimSwapFee()`, which claims **swap fees only** — not Meteora liquidity mining rewards (up to 2 reward mints per pool, stored in `lbPair.rewardInfos`).
+The standalone `claimFees` function (`tools/dlmm.js:1458-1501`) only called `pool.claimSwapFee()`, which claims **swap fees only** — not Meteora liquidity mining rewards (up to 2 reward mints per pool, stored in `lbPair.rewardInfos`).
 
-**Current code** (`tools/dlmm.js:1478`):
-```js
-const txs = await pool.claimSwapFee({
-  owner: wallet.publicKey,
-  position: positionData,
-});
-```
+**Impact (before fix):**
+- LLM `claim_fees` tool collected swap fees but lost reward tokens
+- The `close_position` flow was unaffected (Step 2's `removeLiquidity({ shouldClaimAndClose: true })` already claims both)
+- Silent bug — no error, no warning
 
-**Why this matters (per `DLMM.md` Section 8):**
-Meteora pools can have token incentives on top of swap fees. Per DLMM SDK, reward claiming requires `claimReward2` on-chain instructions, which are only bundled inside:
-- `removeLiquidity({ shouldClaimAndClose: true })` — used by `close_position` flow ✅
-- The rebalance path
+**Fix applied:**
+Replaced `claimSwapFee` with SDK's `claimAllRewardsByPosition({ owner, position })` (`tools/dlmm.js:1493`). Same signature, same return type. Internally calls both fee and LM reward claim methods, then chunks into valid TX bundles.
 
-**The standalone `claimFees` silently leaves rewards unclaimed.**
-
-**Impact:**
-- If the agent uses `claim_fees` to compound (reclaim fees without closing), it collects swap fees but loses reward tokens
-- For pools with active rewards, this is lost income
-- The `close_position` flow (line 1800) DOES claim rewards correctly, so this only affects the standalone claim path
-- This is a **silent bug** — no error, no warning, just missed rewards
-
-**Proposed fix:**
-Option A (minimal — document the limitation):
-- Add a note to the LLM prompt that `claim_fees` only claims swap fees, not rewards
-
-Option B (complete — claim rewards too):
-```js
-// After claimSwapFee, claim each reward mint
-const rewardInfos = pool.lbPair.rewardInfos || [];
-for (let i = 0; i < rewardInfos.length; i++) {
-  if (rewardInfos[i]) {
-    const rewardTxs = await pool.claimReward({
-      owner: wallet.publicKey,
-      position: positionData,
-      rewardIndex: i,
-    });
-    // ... send txs
-  }
-}
-```
-
-Option C (use removeLiquidity with bps=0 if supported by SDK):
-```js
-// Verify SDK supports zero-bps claim
-const txs = await pool.removeLiquidity({
-  user: wallet.publicKey,
-  position: positionData,
-  fromBinId: positionData.positionData.lowerBinId,
-  toBinId: positionData.positionData.upperBinId,
-  bps: new BN(0),  // 0 = claim only, no remove
-  shouldClaimAndClose: false,
-});
-```
+**Close flow (line 1780) left unchanged** — the pre-claim is an optimization step, and Step 2 already handles rewards correctly.
 
 ---
 
 ## 10. Slippage Inconsistency Between Deploy Paths
 
 **Severity:** High  
-**Status:** Open
+**Status:** Fixed
 
 **Problem:**
-Meridian uses two different slippage values for the two deploy code paths — 100× apart. Both values are also outside the recommended range.
+Meridian used two different slippage values for the two deploy code paths — 100× apart. Both SDK methods (`initializePositionAndAddLiquidityByStrategy` and `addLiquidityByStrategyChunkable`) expect **percentage** (confirmed from SDK source `dist/index.js:18417`), but the code treated them differently.
 
-**Current code:**
-- Standard path (≤69 bins), `tools/dlmm.js:816`: `slippage: 1000` (10%)
-- Wide-range path (>69 bins), `tools/dlmm.js:800`: `slippage: 10` (0.1%)
+**Before fix:**
+- Standard path (≤69 bins): `slippage: 1000` = **1000%** tolerance (absurd — the comment said "10% in bps" but SDK takes percentage)
+- Wide-range path (>69 bins): `slippage: 10` = **10%** tolerance (ISSUES.md incorrectly documented this as 0.1%)
 
-**Why this matters:**
-- **Standard path (10% slippage)** is extremely loose. Sandwich attacks on every deploy can extract up to 10% of position value. Real-world impact: ~0.5-2% loss per deploy from MEV.
-- **Wide-range path (0.1% slippage)** is extremely tight. The `addLiquidityByStrategyChunkable` path operates across multiple transactions. Between TX blocks, even small price moves will violate 0.1% tolerance, causing frequent failures and wasted gas.
+**Impact (before fix):**
+- Standard path: 1000% tolerance caused `getSlippageMinAmount` to produce **negative** minimum-withdraw values (undefined behavior), and bloated TXs with 1000-bin account pre-allocation
+- Wide-range path: 10% exposed deploys to MEV/sandwich attacks
+- `DLMM.md` line 340 documented slippage as "in bps" — this error was the root cause
 
-**Impact:**
-- Standard deploys: exposed to MEV/sandwich attacks
-- Wide-range deploys: frequent TX failures, wasted gas, retry loops
-- Both are easy to fix
+**Fix applied:**
+Both paths normalized to `slippage: 1.5` (1.5%). With Meridian's binStep filter (80-125), this yields `maxActiveBinSlippage = 2` bins tolerance (~1.6-2.5% price movement). Standard DeFi range.
 
-**Proposed fix:**
-Normalize both paths to a consistent, reasonable value:
-```js
-// In config.js:
-{
-  "management": {
-    "deploySlippageBps": 150  // 1.5% — typical for concentrated liquidity
-  }
-}
-
-// In both deploy code paths:
-slippage: config.management.deploySlippageBps
-```
-
-Recommended range: 100-200 bps (1-2%). Below 1% = frequent failures; above 5% = MEV risk.
+**Recommended range:** 1.0-2.5%. Monitor deploy failure rates — if >5%, bump to 2.0%.
 
 ---
 
@@ -431,8 +344,8 @@ Three minor issues. Not bugs — design choices that may be worth revisiting.
 | 5  | OKX unavailable for niche tokens | Trivial | Expected |
 | 6  | HiveMind push spam | Low | Mitigated |
 | 7  | No multi-provider LLM support | Medium | Open |
-| 8  | Base fee calculated 100× too high | **Critical** | **Open (1-line fix)** |
-| 9  | `claimFees` does not claim Meteora rewards | High | Open |
-| 10 | Slippage inconsistency between deploy paths (10% vs 0.1%) | High | Open |
+| 8  | Base fee calculated 100× too high | **Critical** | **Fixed (2a97a55)** |
+| 9  | `claimFees` does not claim Meteora rewards | High | Fixed |
+| 10 | Slippage inconsistency between deploy paths (1000% vs 10%) | High | Fixed |
 | 11 | Medium-severity SDK issues (M-1 to M-5) | Medium | Open (deferred) |
 | 12 | Low-severity SDK issues (L-1 to L-3) | Low | Open (deferred) |

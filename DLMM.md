@@ -337,7 +337,7 @@ public async initializePositionAndAddLiquidityByStrategy({
   totalYAmount,      // BN — total token Y amount
   strategy,          // StrategyParameters — { minBinId, maxBinId, strategyType }
   user,              // PublicKey — wallet address
-  slippage?,         // number — optional slippage in bps
+  slippage?,         // number — optional slippage percentage (e.g., 1.5 = 1.5%)
 }): Promise<Transaction>
 ```
 
