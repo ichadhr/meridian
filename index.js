@@ -217,7 +217,7 @@ export async function runManagementCycle({ silent = false } = {}) {
     if (positions.length === 0) {
       log("cron", "No open positions — triggering screening cycle");
       mgmtReport = "No open positions. Triggering screening cycle.";
-      runScreeningCycle().catch((e) => log("cron_error", `Triggered screening failed: ${e.message}`));
+      tryStartScreening("mgmt-no-positions");
       return mgmtReport;
     }
 
@@ -355,7 +355,7 @@ After executing, write a brief one-line result per position.
     const afterCount = afterPositions?.positions?.length ?? 0;
     if (afterCount < config.risk.maxPositions && Date.now() - _screeningLastTriggered > screeningCooldownMs) {
       log("cron", `Post-management: ${afterCount}/${config.risk.maxPositions} positions — triggering screening`);
-      runScreeningCycle().catch((e) => log("cron_error", `Triggered screening failed: ${e.message}`));
+      tryStartScreening("mgmt-post-management");
     }
 
     // Virtual position management (dry run only)
@@ -385,6 +385,20 @@ After executing, write a brief one-line result per position.
     }
   }
   return mgmtReport;
+}
+
+/**
+ * Fire screening cycle if not already running.
+ * All callers should use this instead of calling runScreeningCycle directly,
+ * to avoid overlapping cycles and provide clear source attribution in logs.
+ */
+function tryStartScreening(source, silent = false) {
+  if (_screeningBusy) {
+    log("cron", `Screening skipped (${source}) — already running`);
+    return false;
+  }
+  runScreeningCycle({ silent }).catch(e => log("cron_error", `${source} failed: ${e.message}`));
+  return true;
 }
 
 export async function runScreeningCycle({ silent = false } = {}) {
@@ -1665,7 +1679,7 @@ async function telegramHandler(msg) {
         const claimNote = result.claim_txs?.length ? `\nClaim txs: ${result.claim_txs.join(", ")}` : "";
         await sendMessage(`✅ Closed ${pos.pair}\nPnL: ${config.management.solMode ? "◎" : "$"}${result.pnl_usd ?? "?"} | close txs: ${closeTxs?.join(", ") || "n/a"}${claimNote}`);
         // Screening trigger — slot freed, don't let SOL sit idle
-        runScreeningCycle({ silent: true }).catch((e) => log("cron_error", `Post-close screening failed: ${e.message}`));
+        tryStartScreening("telegram-close", true);
       } else {
         await sendMessage(`❌ Close failed: ${JSON.stringify(result)}`);
       }
@@ -1689,7 +1703,7 @@ async function telegramHandler(msg) {
       }
       await sendMessage(`Close-all finished.\n\n${results.join("\n")}`).catch(() => {});
       // Screening trigger — slot(s) freed
-      runScreeningCycle({ silent: true }).catch((e) => log("cron_error", `Post-close screening failed: ${e.message}`));
+      tryStartScreening("telegram-closeall", true);
     } catch (e) {
       await sendMessage(`Error: ${e.message}`).catch(() => {});
     }
@@ -1922,7 +1936,7 @@ function computeBinsBelow(volatility) {
 
 // Register restarter — when update_config changes intervals, running cron jobs get replaced
 registerCronRestarter(() => { if (cronStarted) startCronJobs(); });
-registerScreeningTrigger(() => runScreeningCycle({ silent: true }).catch((e) => log("cron_error", `Post-close screening failed: ${e.message}`)));
+registerScreeningTrigger(() => tryStartScreening("post-close-executor", true));
 
 // Archive virtual positions when going live
 if (process.env.DRY_RUN !== "true") {
