@@ -985,9 +985,9 @@ async function manageVirtualPositions() {
         continue;
       }
 
-      // 2. Current fee_per_tvl_24h (use stored deploy-time value — updates each cycle when pool data available)
-      // For closer-to-reality, would fetch from pool API each cycle. For now, use stored value.
-      const feePerTvl24h = vp.fee_per_tvl_24h ?? vp.fee_per_tvl_24h_at_deploy ?? 0;
+      // 2. Fee_per_tvl_24h — stored at deploy time. Not refreshed (would need pool API call each cycle).
+      //     Stale rate overestimates yield for long-held positions as pool fees decay.
+      const feePerTvl24h = vp.fee_per_tvl_24h_at_deploy ?? 0;
 
       // 3. Elapsed time since last sync
       const elapsedMin = vp.last_sync_at
@@ -1085,7 +1085,6 @@ async function manageVirtualPositions() {
       updateVirtualPosition(vp.id, {
         total_fees_earned_usd: totalFeesUsd,
         current_value_usd: currentValueUsd,
-        fee_per_tvl_24h: feePerTvl24h,
         last_sync_at: new Date().toISOString(),
         _data_fail_count: 0,
         _oor_since: oorSince,
