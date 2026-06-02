@@ -121,10 +121,7 @@ function tryStartScreening(source) {
 }
 ```
 
-**Effort:** 1 hour  
-**Impact:** Removes confusing log line, fixes a real (if minor) race  
-**Risk:** Low — pure refactor, behavior preserved  
-**Files:** `index.js` (one helper added, two call sites updated)
+**Status:** ✅ Fixed (commit `4461b1a`) — `tryStartScreening(source)` centralizes all triggers
 
 ---
 
@@ -890,3 +887,4 @@ These need user input before implementation:
 |------|--------|
 | 2026-06-01 | Initial document. Tier 1-3 outlined. No code changes proposed yet. |
 | 2026-06-01 | Added 3 new Medium effort items from MANAGER cycle deep-dive: 4.5 Structured Instruction Format, 4.6 Stuck-STAY AI Review, 4.7 Trailing TP State Centralization. Updated dependency graph and recommended order. Added 3 new open decisions. |
+| 2026-06-02 | ✅ 3.1 Screening race condition fixed. Virtual position simulation system implemented (5 files, ~900 lines). |

@@ -340,7 +340,7 @@ Three minor issues. Not bugs — design choices that may be worth revisiting.
 | 1  | 429 rate limiting | High | Open |
 | 2  | HiveMind key rejected | Medium | Fixed |
 | 3  | LPAgent paid plan required | Low | Open |
-| 4  | Screening race condition | Low | Open |
+| 4  | Screening race condition | Low | Fixed (4461b1a) |
 | 5  | OKX unavailable for niche tokens | Trivial | Expected |
 | 6  | HiveMind push spam | Low | Mitigated |
 | 7  | No multi-provider LLM support | Medium | Open |
