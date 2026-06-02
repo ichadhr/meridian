@@ -215,9 +215,16 @@ export async function runManagementCycle({ silent = false } = {}) {
     const livePositions = await getMyPositions({ force: true }).catch(() => null);
     positions = livePositions?.positions || [];
 
+    // Virtual position management runs regardless of real positions
+    let virtualReport = null;
+    if (process.env.DRY_RUN === "true") {
+      virtualReport = await manageVirtualPositions();
+    }
+
     if (positions.length === 0) {
       log("cron", "No open positions — triggering screening cycle");
       mgmtReport = "No open positions. Triggering screening cycle.";
+      if (virtualReport) mgmtReport += `\n\n---\n\n🔄 VIRTUAL POSITIONS\n\n${virtualReport}`;
       tryStartScreening("mgmt-no-positions");
       return mgmtReport;
     }
@@ -306,6 +313,8 @@ export async function runManagementCycle({ silent = false } = {}) {
     mgmtReport = reportLines.join("\n\n") +
       `\n\nSummary: 💼 ${positions.length} positions | ${cur}${totalValue.toFixed(4)} | fees: ${cur}${totalUnclaimed.toFixed(4)} | ${actionSummary}`;
 
+    if (virtualReport) mgmtReport += `\n\n---\n\n🔄 VIRTUAL POSITIONS\n\n${virtualReport}`;
+
     // ── Call LLM only if action needed ──────────────────────────────
     const actionPositions = positionData.filter(p => {
       const a = actionMap.get(p.position);
@@ -357,16 +366,6 @@ After executing, write a brief one-line result per position.
     if (afterCount < config.risk.maxPositions && Date.now() - _screeningLastTriggered > screeningCooldownMs) {
       log("cron", `Post-management: ${afterCount}/${config.risk.maxPositions} positions — triggering screening`);
       tryStartScreening("mgmt-post-management");
-    }
-
-    // Virtual position management (dry run only)
-    if (process.env.DRY_RUN === "true") {
-      const virtualReport = await manageVirtualPositions();
-      if (virtualReport) {
-        mgmtReport = mgmtReport
-          ? `${mgmtReport}\n\n---\n\n🔄 VIRTUAL POSITIONS\n\n${virtualReport}`
-          : `🔄 VIRTUAL POSITIONS\n\n${virtualReport}`;
-      }
     }
   } catch (error) {
     log("cron_error", `Management cycle failed: ${error.message}`);

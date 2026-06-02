@@ -591,7 +591,7 @@ export async function deployPosition({
         amount_y: finalAmountY,
         wide_range: totalBins > 69,
       },
-      message: "DRY RUN — no transaction sent",
+      message: "✅ DRY RUN — virtual position recorded (no real transaction sent)",
     };
   }
 
