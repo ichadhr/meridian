@@ -142,13 +142,32 @@ export async function sendHTML(html) {
 }
 
 /**
+ * Convert common markdown patterns to Telegram-safe HTML.
+ * Covers **bold**, *italic*, `code` — the patterns LLMs most commonly generate.
+ * Headers, tables, and lists are left as plain text (safe, no rejection risk).
+ */
+function formatMarkdownToTelegramHtml(text) {
+  return text
+    .replace(/\*\*(.+?)\*\*/g, "<b>$1</b>")
+    .replace(/\*([^*\n]+?)\*/g, "<i>$1</i>")
+    .replace(/`([^`\n]+?)`/g, "<code>$1</code>");
+}
+
+/**
  * Send a long message by splitting at paragraph boundaries under 4096 chars.
  * Falls back to sendMessage for short messages. Supports optional parse_mode.
+ * When no parse_mode is specified, auto-formats markdown patterns to HTML.
  */
 export async function sendLongMessage(text, { parse_mode } = {}) {
   if (!TOKEN || !chatId) return;
+  let content = String(text);
+  const useHtml = !parse_mode && /[*`]/.test(content);
+  if (useHtml) {
+    content = formatMarkdownToTelegramHtml(content);
+  }
+  const effectiveMode = parse_mode || (useHtml ? "HTML" : undefined);
   const maxLen = 4096;
-  let remaining = String(text);
+  let remaining = content;
   let isFirst = true;
 
   while (remaining.length > 0) {
@@ -157,7 +176,7 @@ export async function sendLongMessage(text, { parse_mode } = {}) {
       : splitAtBoundary(remaining, maxLen);
 
     const payload = { text: isFirst ? chunk : "🔍 Continued...\n\n" + chunk };
-    if (parse_mode) payload.parse_mode = parse_mode;
+    if (effectiveMode) payload.parse_mode = effectiveMode;
     await postTelegram("sendMessage", payload);
 
     if (remaining.length <= maxLen) return;
