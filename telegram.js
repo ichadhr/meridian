@@ -351,24 +351,30 @@ export async function createLiveMessage(title, intro = "Starting...") {
     flushRequested: false,
   };
 
+  let _lastParseMode = null;
+
   function render() {
     const sections = [state.title];
     if (state.intro) sections.push(state.intro);
     if (state.toolLines.length > 0) sections.push(state.toolLines.join("\n"));
     if (state.footer) sections.push(state.footer);
-    return sections.join("\n\n").slice(0, 4096);
+    const text = sections.join("\n\n").slice(0, 4096);
+    const hasHtml = /<[bi]>|\*\*|`/.test(text);
+    _lastParseMode = hasHtml ? "HTML" : null;
+    return hasHtml ? formatMarkdownToTelegramHtml(text) : text;
   }
 
   async function flushNow() {
     state.flushTimer = null;
     state.flushRequested = false;
     const text = render();
+    const params = { text, parse_mode: _lastParseMode };
     if (!state.messageId) {
-      const sent = await sendMessage(text);
+      const sent = await postTelegram("sendMessage", { chat_id: chatId, ...params });
       state.messageId = sent?.result?.message_id ?? null;
       return;
     }
-    await editMessage(text, state.messageId);
+    await postTelegram("editMessageText", { chat_id: chatId, message_id: state.messageId, ...params });
   }
 
   function scheduleFlush(delay = 300) {
