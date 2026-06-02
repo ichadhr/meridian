@@ -107,6 +107,29 @@ export function updateVirtualPosition(id, updates) {
   return true;
 }
 
+function getArchivePath() {
+  const month = new Date().toISOString().slice(0, 7); // "2026-06"
+  return `./dry-run-state-archive-${month}.json`;
+}
+
+function appendToArchive(vp) {
+  const file = getArchivePath();
+  let archive = { virtual_positions: [] };
+  try {
+    if (fs.existsSync(file)) {
+      archive = JSON.parse(fs.readFileSync(file, "utf8"));
+    }
+  } catch (e) {
+    log("dry_run_state", `Failed to read archive file, starting fresh: ${e.message}`);
+  }
+  archive.virtual_positions.push(vp);
+  try {
+    fs.writeFileSync(file, JSON.stringify(archive, null, 2));
+  } catch (e) {
+    log("dry_run_state", `Failed to write archive: ${e.message}`);
+  }
+}
+
 export function closeVirtualPosition(id, reason, pnlPct, pnlUsd) {
   const state = load();
   const idx = state.virtual_positions.findIndex((p) => p.id === id);
@@ -117,23 +140,22 @@ export function closeVirtualPosition(id, reason, pnlPct, pnlUsd) {
   vp.close_reason = reason;
   vp.close_pnl_pct = pnlPct;
   vp.close_pnl_usd = pnlUsd;
+  // Move closed position to archive file and remove from active state
+  appendToArchive(vp);
+  state.virtual_positions.splice(idx, 1);
   save(state);
-  log("dry_run_state", `Virtual ${id} CLOSED: ${reason} PnL=${pnlPct}%`);
+  log("dry_run_state", `Virtual ${id} CLOSED: ${reason} PnL=${pnlPct}% — archived to ${getArchivePath()}`);
   return true;
 }
 
 export function archiveVirtualPositions() {
   const state = load();
   if (state.virtual_positions.length === 0) return;
-  const ts = new Date().toISOString().replace(/[:.]/g, "-");
-  const archiveFile = `./dry-run-state-archive-${ts}.json`;
-  const archive = { archived_at: ts.replace(/T/, " ").slice(0, 19), virtual_positions: state.virtual_positions };
-  try {
-    fs.writeFileSync(archiveFile, JSON.stringify(archive, null, 2));
-    state.virtual_positions = [];
-    save(state);
-    log("dry_run_state", `Archived ${archive.virtual_positions.length} virtual positions to ${archiveFile}`);
-  } catch (err) {
-    log("dry_run_state", `Failed to archive: ${err.message}`);
+  const count = state.virtual_positions.length;
+  for (const vp of state.virtual_positions) {
+    appendToArchive(vp);
   }
+  state.virtual_positions = [];
+  save(state);
+  log("dry_run_state", `Archived ${count} virtual positions to ${getArchivePath()}`);
 }

@@ -2192,18 +2192,16 @@ Focus on: hold duration, entry/exit timing, what win rates look like, whether sc
     if (input === "/vp") {
       const vps = listVirtualPositions();
       if (vps.length === 0) {
-        console.log("\nNo virtual positions.\n");
+        console.log("\nNo open virtual positions.\n");
         rl.prompt();
         return;
       }
-      console.log("\nVirtual Positions:");
+      console.log(`\nVirtual Positions (${vps.length} open, use /vp <id> for detail):`);
       for (const vp of vps) {
-        const status = vp.status === "open" ? "🟢 OPEN" : "🔴 CLOSED";
         const val = vp.current_value_usd?.toFixed(2) ?? "?";
         const fees = vp.total_fees_earned_usd?.toFixed(4) ?? "0";
-        const pnl = vp.close_pnl_pct != null ? `PnL: ${vp.close_pnl_pct.toFixed(2)}%` : `PnL est: ${vp.initial_value_usd > 0 ? ((vp.current_value_usd / vp.initial_value_usd - 1) * 100).toFixed(2) : "?"}%`;
-        const reason = vp.close_reason ? ` | ${vp.close_reason}` : "";
-        console.log(`  ${status} ${vp.id} ${vp.pair} | $${val} | Fees: $${fees} | ${pnl}${reason}`);
+        const pnl = vp.initial_value_usd > 0 ? ((vp.current_value_usd / vp.initial_value_usd - 1) * 100).toFixed(2) : "?";
+        console.log(`  🟢 ${vp.id} ${vp.pair} | $${val} | Fees: $${fees} | est PnL: ${pnl}%`);
         if (vp.deploy_rationale) {
           console.log(`    Rationale: ${vp.deploy_rationale.slice(0, 120)}...`);
         }
@@ -2237,7 +2235,7 @@ Focus on: hold duration, entry/exit timing, what win rates look like, whether sc
       const id = input.slice(4).trim();
       const vp = getVirtualPosition(id);
       if (!vp) {
-        console.log(`\nVirtual position "${id}" not found.\n`);
+        console.log(`\nVirtual position "${id}" not found (may be archived — use /vp report to view closed positions).\n`);
         rl.prompt();
         return;
       }
