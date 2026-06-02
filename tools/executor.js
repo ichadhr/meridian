@@ -22,6 +22,7 @@ import { addSmartWallet, removeSmartWallet, listSmartWallets, checkSmartWalletsO
 import { getTokenInfo, getTokenHolders, getTokenNarrative } from "./token.js";
 import { config, reloadScreeningThresholds, MIN_SAFE_BINS_BELOW } from "../config.js";
 import { getRecentDecisions } from "../decision-log.js";
+import { trackVirtualPosition } from "./dry-run-state.js";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -603,6 +604,29 @@ export async function executeTool(name, args) {
         notifySwap({ inputSymbol: args.input_mint?.slice(0, 8), outputSymbol: args.output_mint === "So11111111111111111111111111111111111111112" || args.output_mint === "SOL" ? "SOL" : args.output_mint?.slice(0, 8), amountIn: result.amount_in, amountOut: result.amount_out, tx: result.tx }).catch(() => {});
       } else if (name === "deploy_position") {
         notifyDeploy({ pair: result.pool_name || args.pool_name || args.pool_address?.slice(0, 8), amountSol: args.amount_y ?? args.amount_sol ?? 0, position: result.position, tx: result.txs?.[0] ?? result.tx, priceRange: result.price_range, rangeCoverage: result.range_coverage, binStep: result.bin_step, baseFee: result.base_fee }).catch(() => {});
+        if (result.dry_run && result.would_deploy && result.would_deploy.pool_address) {
+          const deploy = result.would_deploy;
+          try {
+            trackVirtualPosition({
+              pool: deploy.pool_address || args.pool_address,
+              pool_name: deploy.pool_name || args.pool_name || null,
+              pair: args.pool_name || (args.pool_address || "").slice(0, 8),
+              strategy: deploy.strategy || args.strategy || "spot",
+              bins_below: deploy.bins_below ?? args.bins_below ?? null,
+              lower_bin: deploy.lower_bin_id ?? null,
+              upper_bin: deploy.upper_bin_id ?? null,
+              active_bin: deploy.active_bin_id ?? null,
+              bin_step: deploy.bin_step ?? args.bin_step ?? null,
+              amount_sol: parseFloat(deploy.amount_y ?? args.amount_y ?? args.amount_sol ?? 0),
+              sol_price: null,
+              fee_per_tvl_24h: parseFloat(args.fee_tvl_ratio ?? args.fee_per_tvl_24h ?? 0),
+              deploy_rationale: args.deploy_rationale || null,
+              initial_value_usd: parseFloat(args.initial_value_usd ?? 0),
+            });
+          } catch (e) {
+            log("executor_warn", `Failed to record virtual position: ${e.message}`);
+          }
+        }
       } else if (name === "close_position") {
         notifyClose({ pair: result.pool_name || args.position_address?.slice(0, 8), pnlUsd: result.pnl_usd ?? 0, pnlPct: result.pnl_pct ?? 0 }).catch(() => {});
         // Note low-yield closes in pool memory so screener avoids redeploying

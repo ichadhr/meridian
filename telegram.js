@@ -141,6 +141,43 @@ export async function sendHTML(html) {
   return postTelegram("sendMessage", { text: html.slice(0, 4096), parse_mode: "HTML" });
 }
 
+export async function sendDocument(filePath, { caption } = {}) {
+  if (!TOKEN || !chatId) return;
+  try {
+    const stat = await fs.promises.stat(filePath);
+    if (!stat.isFile()) { log("telegram_error", `sendDocument: not a file ${filePath}`); return; }
+    if (stat.size > 50 * 1024 * 1024) { log("telegram_error", `sendDocument: file too large (${(stat.size / 1024 / 1024).toFixed(1)}MB)`); return; }
+
+    const boundary = "----FormBoundary" + Math.random().toString(36).slice(2);
+    const filename = path.basename(filePath).replace(/"/g, '\\"');
+    const content = await fs.promises.readFile(filePath);
+    const header = Buffer.from(
+      `--${boundary}\r\n` +
+      `Content-Disposition: form-data; name="document"; filename="${filename}"\r\n` +
+      `Content-Type: text/html; charset=utf-8\r\n\r\n`
+    );
+    const footer = Buffer.from(
+      caption
+        ? `\r\n--${boundary}\r\nContent-Disposition: form-data; name="caption"\r\n\r\n${caption}\r\n--${boundary}--\r\n`
+        : `\r\n--${boundary}--\r\n`
+    );
+
+    const body = Buffer.concat([header, content, footer]);
+
+    const res = await fetch(`${BASE}/sendDocument?chat_id=${chatId}`, {
+      method: "POST",
+      headers: { "Content-Type": `multipart/form-data; boundary=${boundary}` },
+      body,
+    });
+    if (!res.ok) {
+      const err = await res.text();
+      log("telegram_error", `sendDocument ${res.status}: ${err.slice(0, 200)}`);
+    }
+  } catch (e) {
+    log("telegram_error", `sendDocument failed: ${e.message}`);
+  }
+}
+
 export async function editMessage(text, messageId) {
   if (!TOKEN || !chatId || !messageId) return null;
   return postTelegram("editMessageText", {
@@ -403,6 +440,7 @@ const BOT_COMMANDS = [
   { command: "candidates", description: "Show latest cached candidates" },
   { command: "deploy",     description: "Deploy candidate by cached index" },
   { command: "briefing",   description: "Morning briefing" },
+  { command: "vp",         description: "List virtual positions (dry run) or /vp report" },
   { command: "hive",       description: "HiveMind sync status" },
   { command: "pause",      description: "Stop cron cycles" },
   { command: "resume",     description: "Start cron cycles again" },

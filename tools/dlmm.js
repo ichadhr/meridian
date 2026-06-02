@@ -571,10 +571,17 @@ export async function deployPosition({
   }
 
   if (process.env.DRY_RUN === "true") {
+    const lower_bin_id = activeBin.binId - activeBinsBelow;
+    const upper_bin_id = isSingleSidedSol ? activeBin.binId : activeBin.binId + activeBinsAbove;
     return {
       dry_run: true,
       would_deploy: {
         pool_address,
+        pool_name: pool_name || null,
+        bin_step: actualBinStep ?? null,
+        active_bin_id: activeBin.binId,
+        lower_bin_id,
+        upper_bin_id,
         strategy: activeStrategy,
         bins_below: activeBinsBelow,
         bins_above: activeBinsAbove,

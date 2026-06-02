@@ -5,6 +5,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { agentLoop } from "./agent.js";
 import { log } from "./logger.js";
+import { listVirtualPositions, getVirtualPosition, updateVirtualPosition, closeVirtualPosition } from "./tools/dry-run-state.js";
 import { getMyPositions, closePosition, getActiveBin } from "./tools/dlmm.js";
 import { getWalletBalances } from "./tools/wallet.js";
 import { getTopCandidates } from "./tools/screening.js";
@@ -355,6 +356,16 @@ After executing, write a brief one-line result per position.
     if (afterCount < config.risk.maxPositions && Date.now() - _screeningLastTriggered > screeningCooldownMs) {
       log("cron", `Post-management: ${afterCount}/${config.risk.maxPositions} positions — triggering screening`);
       runScreeningCycle().catch((e) => log("cron_error", `Triggered screening failed: ${e.message}`));
+    }
+
+    // Virtual position management (dry run only)
+    if (process.env.DRY_RUN === "true") {
+      const virtualReport = await manageVirtualPositions();
+      if (virtualReport) {
+        mgmtReport = mgmtReport
+          ? `${mgmtReport}\n\n---\n\n🔄 VIRTUAL POSITIONS\n\n${virtualReport}`
+          : `🔄 VIRTUAL POSITIONS\n\n${virtualReport}`;
+      }
     }
   } catch (error) {
     log("cron_error", `Management cycle failed: ${error.message}`);
@@ -933,6 +944,168 @@ function getDeterministicCloseRule(position, managementConfig) {
     return { action: "CLOSE", rule: 5, reason: "low yield" };
   }
   return null;
+}
+
+/**
+ * Manage virtual positions in dry run mode.
+ * Each cycle: fetches pool's current active bin, computes PnL via geometric price ratio,
+ * accrues fees with SINGLE_SIDE_SPOT_FEE_DISCOUNT (only when in-range), applies close rules, takes snapshots.
+ */
+async function manageVirtualPositions() {
+  if (process.env.DRY_RUN !== "true") return null;
+  const virtualPositions = listVirtualPositions("open");
+  if (virtualPositions.length === 0) return null;
+
+  const SINGLE_SIDE_SPOT_FEE_DISCOUNT = 0.4;
+  const lines = [];
+  const now = Date.now();
+
+  for (const vp of virtualPositions) {
+    try {
+      // 1. Fetch current active bin for this pool
+      let activeBinResult;
+      try {
+        activeBinResult = await getActiveBin({ pool_address: vp.pool });
+      } catch (e) {
+        // If pool data unavailable for 3+ consecutive cycles, close
+        const failCount = (vp._data_fail_count || 0) + 1;
+        updateVirtualPosition(vp.id, { _data_fail_count: failCount });
+        if (failCount >= 3) {
+          closeVirtualPosition(vp.id, "pool_unavailable", null, null);
+          lines.push(`🔴 ${vp.pair} | CLOSED pool_unavailable (${failCount} failed fetches)`);
+        }
+        continue;
+      }
+      const currentActiveBin = activeBinResult?.binId ?? null;
+      if (currentActiveBin == null) {
+        log("dry_run_mgmt", `Skipping ${vp.id}: active bin unavailable`);
+        continue;
+      }
+
+      // 2. Current fee_per_tvl_24h (use stored deploy-time value — updates each cycle when pool data available)
+      // For closer-to-reality, would fetch from pool API each cycle. For now, use stored value.
+      const feePerTvl24h = vp.fee_per_tvl_24h ?? vp.fee_per_tvl_24h_at_deploy ?? 0;
+
+      // 3. Elapsed time since last sync
+      const elapsedMin = vp.last_sync_at
+        ? (now - new Date(vp.last_sync_at).getTime()) / 60000
+        : 10;
+
+      // 4. Conversion state
+      const rangeWidth = (vp.upper_bin ?? 0) - (vp.lower_bin ?? 0);
+      const pctConverted = rangeWidth > 0
+        ? Math.max(0, Math.min(1, ((vp.upper_bin ?? 0) - currentActiveBin) / rangeWidth))
+        : 0;
+
+      const inRange = currentActiveBin >= (vp.lower_bin ?? 0) && currentActiveBin <= (vp.upper_bin ?? 0);
+
+      // 5. Price ratio (geometric)
+      const binStepDecimal = (vp.bin_step || 80) / 10000;
+      const binDelta = currentActiveBin - (vp.active_bin_at_deploy ?? currentActiveBin);
+      const priceRatio = Math.pow(1 + binStepDecimal, binDelta);
+
+      // 6. Position value in SOL terms (mark-to-market)
+      const solPart = (vp.amount_sol || 0) * (1 - pctConverted);
+      const xPartInSol = (vp.amount_sol || 0) * pctConverted * priceRatio;
+      const positionValueSol = solPart + xPartInSol;
+
+      // 7. Fee accrual this cycle
+      // formula: positionValue × sol_price × (fee_per_tvl_24h/100) × (elapsed_minutes/1440) × SINGLE_SIDE_SPOT_FEE_DISCOUNT
+      const solPrice = 150; // default SOL price — actual value not critical for PnL tracking
+      const rawFeeThisCycle = positionValueSol * solPrice * (feePerTvl24h / 100) * (elapsedMin / 1440);
+      const feeThisCycleUsd = inRange ? rawFeeThisCycle * SINGLE_SIDE_SPOT_FEE_DISCOUNT : 0;
+
+      // 8. Total values
+      const totalFeesUsd = (vp.total_fees_earned_usd || 0) + feeThisCycleUsd;
+      const currentValueUsd = (positionValueSol * solPrice) + totalFeesUsd;
+      const pnlPct = vp.initial_value_usd > 0
+        ? ((currentValueUsd - vp.initial_value_usd) / vp.initial_value_usd) * 100
+        : 0;
+
+      // 9. Close rules (same priority as getDeterministicCloseRule)
+      const mgmtCfg = config.management;
+      let closeReason = null;
+
+      // PnL suspect guard: if PnL < -90% but position value isn't near zero, skip PnL-based rules
+      const pnlSuspect = pnlPct < -90 && (positionValueSol * 150) > vp.initial_value_usd * 0.1;
+
+      if (!pnlSuspect && pnlPct <= (mgmtCfg.stopLossPct ?? -50)) {
+        closeReason = "stop_loss";
+      } else if (!pnlSuspect && pnlPct >= (mgmtCfg.takeProfitPct ?? 5)) {
+        closeReason = "take_profit";
+      } else if (
+        currentActiveBin != null && vp.upper_bin != null &&
+        currentActiveBin > vp.upper_bin + (mgmtCfg.outOfRangeBinsToClose ?? 10)
+      ) {
+        closeReason = "pumped";
+      } else if (
+        currentActiveBin != null && vp.upper_bin != null &&
+        currentActiveBin > vp.upper_bin &&
+        (vp._oor_minutes ?? 0) >= (mgmtCfg.outOfRangeWaitMinutes ?? 30)
+      ) {
+        closeReason = "oor";
+      } else if (
+        feePerTvl24h < (mgmtCfg.minFeePerTvl24h ?? 7) &&
+        vp.deployed_at && (now - new Date(vp.deployed_at).getTime()) / 60000 >= (mgmtCfg.minAgeBeforeYieldCheck ?? 60)
+      ) {
+        closeReason = "low_yield";
+      }
+
+      // 10. Track OOR minutes
+      let oorMinutes = vp._oor_minutes ?? 0;
+      let oorSince = vp._oor_since ?? null;
+      if (currentActiveBin != null && vp.upper_bin != null && currentActiveBin > vp.upper_bin) {
+        if (oorSince == null) oorSince = now;
+        oorMinutes = (now - oorSince) / 60000;
+      } else {
+        oorSince = null;
+        oorMinutes = 0;
+      }
+
+      // 11. Build snapshot
+      const snapshot = {
+        ts: new Date().toISOString(),
+        active_bin: currentActiveBin,
+        in_range: inRange,
+        pct_converted: Math.round(pctConverted * 10000) / 10000,
+        price_ratio: Math.round(priceRatio * 10000) / 10000,
+        position_value_sol: Math.round(positionValueSol * 1000000) / 1000000,
+        fees_this_cycle_usd: Math.round(feeThisCycleUsd * 10000) / 10000,
+        fees_cumulative_usd: Math.round(totalFeesUsd * 10000) / 10000,
+        total_value_usd: Math.round(currentValueUsd * 100) / 100,
+        pnl_pct: Math.round(pnlPct * 100) / 100,
+        oor_minutes: Math.round(oorMinutes * 10) / 10,
+      };
+
+      // 12. Update state with all computed values
+      const snapshots = [...(vp.snapshots || []), snapshot].slice(-100);
+
+      updateVirtualPosition(vp.id, {
+        total_fees_earned_usd: totalFeesUsd,
+        current_value_usd: currentValueUsd,
+        fee_per_tvl_24h: feePerTvl24h,
+        last_sync_at: new Date().toISOString(),
+        _data_fail_count: 0,
+        _oor_since: oorSince,
+        _oor_minutes: oorMinutes,
+        snapshots,
+      });
+
+      if (closeReason) {
+        const pnlUsd = currentValueUsd - vp.initial_value_usd;
+        closeVirtualPosition(vp.id, closeReason, Math.round(pnlPct * 100) / 100, Math.round(pnlUsd * 100) / 100);
+        const pnlEmoji = pnlPct >= 0 ? "🟢" : "🔴";
+        lines.push(`${pnlEmoji} ${vp.pair} | CLOSED ${closeReason} | PnL: ${Math.round(pnlPct * 100) / 100}%`);
+      } else {
+        const rangeStatus = inRange ? "🟢 IN" : "🔴 OOR";
+        lines.push(`  ${vp.pair} | ${rangeStatus} | $${Math.round(currentValueUsd * 100) / 100} | PnL: ${Math.round(pnlPct * 100) / 100}%`);
+      }
+    } catch (e) {
+      log("dry_run_mgmt", `Virtual position ${vp.id} error: ${e.message}`);
+    }
+  }
+
+  return lines.length > 0 ? lines.join("\n") : null;
 }
 
 // ═══════════════════════════════════════════
@@ -1592,6 +1765,21 @@ async function telegramHandler(msg) {
     return;
   }
 
+  if (text === "/vp" || text === "/vp report") {
+    try {
+      const { generateDryRunReport } = await import("./tools/generate-dry-run-report.js");
+      const html = generateDryRunReport();
+      const reportPath = "./dry-run-report.html";
+      const fs = await import("fs");
+      fs.writeFileSync(reportPath, html);
+      const { sendDocument } = await import("./telegram.js");
+      await sendDocument(reportPath, { caption: `📅 Dry Run Report — ${new Date().toISOString().slice(0, 10)}` });
+    } catch (e) {
+      await sendMessage(`Error: ${e.message}`).catch(() => {});
+    }
+    return;
+  }
+
   if (text === "/pause") {
     stopCronJobs();
     cronStarted = false;
@@ -1713,6 +1901,11 @@ function computeBinsBelow(volatility) {
 registerCronRestarter(() => { if (cronStarted) startCronJobs(); });
 registerScreeningTrigger(() => runScreeningCycle({ silent: true }).catch((e) => log("cron_error", `Post-close screening failed: ${e.message}`)));
 
+// Archive virtual positions when going live
+if (process.env.DRY_RUN !== "true") {
+  import("./tools/dry-run-state.js").then(m => m.archiveVirtualPositions()).catch(e => log("startup", `Archive dry-run state failed: ${e.message}`));
+}
+
 if (isMain && isTTY) {
   const rl = readline.createInterface({
     input: process.stdin,
@@ -1807,6 +2000,8 @@ Commands:
   /learn <addr>  Study top LPers from a specific pool address
   /thresholds    Show current screening thresholds + performance stats
   /evolve        Manually trigger threshold evolution from performance data
+  /vp            List virtual positions with PnL (dry run only)
+  /vp report     Generate PnL calendar HTML report
   /stop          Shut down
 `);
 
@@ -1991,6 +2186,86 @@ Focus on: hold duration, entry/exit timing, what win rates look like, whether sc
           console.log("\nSaved to user-config.json. Applied immediately.\n");
         }
       });
+      return;
+    }
+
+    if (input === "/vp") {
+      const vps = listVirtualPositions();
+      if (vps.length === 0) {
+        console.log("\nNo virtual positions.\n");
+        rl.prompt();
+        return;
+      }
+      console.log("\nVirtual Positions:");
+      for (const vp of vps) {
+        const status = vp.status === "open" ? "🟢 OPEN" : "🔴 CLOSED";
+        const val = vp.current_value_usd?.toFixed(2) ?? "?";
+        const fees = vp.total_fees_earned_usd?.toFixed(4) ?? "0";
+        const pnl = vp.close_pnl_pct != null ? `PnL: ${vp.close_pnl_pct.toFixed(2)}%` : `PnL est: ${vp.initial_value_usd > 0 ? ((vp.current_value_usd / vp.initial_value_usd - 1) * 100).toFixed(2) : "?"}%`;
+        const reason = vp.close_reason ? ` | ${vp.close_reason}` : "";
+        console.log(`  ${status} ${vp.id} ${vp.pair} | $${val} | Fees: $${fees} | ${pnl}${reason}`);
+        if (vp.deploy_rationale) {
+          console.log(`    Rationale: ${vp.deploy_rationale.slice(0, 120)}...`);
+        }
+      }
+      console.log();
+      rl.prompt();
+      return;
+    }
+
+    if (input === "/vp report") {
+      await runBusy(async () => {
+        const [fs, { generateDryRunReport }, { sendDocument }] = await Promise.all([
+          import("fs"),
+          import("./tools/generate-dry-run-report.js"),
+          telegramEnabled() ? import("./telegram.js") : Promise.resolve({ sendDocument: null }),
+        ]);
+        const html = generateDryRunReport();
+        const reportPath = "./dry-run-report.html";
+        fs.writeFileSync(reportPath, html);
+        const kb = (Buffer.byteLength(html) / 1024).toFixed(1);
+        console.log(`\nReport generated (${kb} KB): ${reportPath}`);
+        if (sendDocument) {
+          await sendDocument(reportPath, { caption: `📅 Dry Run Report — ${new Date().toISOString().slice(0, 10)}` });
+          console.log("Report sent to Telegram.");
+        }
+      });
+      return;
+    }
+
+    if (input.startsWith("/vp ")) {
+      const id = input.slice(4).trim();
+      const vp = getVirtualPosition(id);
+      if (!vp) {
+        console.log(`\nVirtual position "${id}" not found.\n`);
+        rl.prompt();
+        return;
+      }
+      console.log(`\n${vp.id} — ${vp.pair} (${vp.status})`);
+      console.log(`  Pool: ${vp.pool}`);
+      console.log(`  Deployed: ${vp.deployed_at}`);
+      console.log(`  Amount: ${vp.amount_sol ?? "?"} SOL | Strategy: ${vp.strategy ?? "?"}`);
+      console.log(`  Range: ${vp.lower_bin ?? "?"} → ${vp.upper_bin ?? "?"} (active: ${vp.active_bin_at_deploy ?? "?"})`);
+      console.log(`  Initial value: $${vp.initial_value_usd?.toFixed(2) ?? "?"}`);
+      console.log(`  Current value: $${vp.current_value_usd?.toFixed(2) ?? "?"}`);
+      console.log(`  Fees earned: $${vp.total_fees_earned_usd?.toFixed(4) ?? "?"}`);
+      if (vp.status === "closed") {
+        console.log(`  Close reason: ${vp.close_reason ?? "?"}`);
+        console.log(`  Close PnL: ${vp.close_pnl_pct?.toFixed(2) ?? "?"}% ($${vp.close_pnl_usd?.toFixed(2) ?? "?"})`);
+        console.log(`  Closed at: ${vp.closed_at ?? "?"}`);
+      }
+      if (vp.deploy_rationale) {
+        console.log(`\n  Rationale:\n  ${vp.deploy_rationale}`);
+      }
+      if (vp.snapshots && vp.snapshots.length > 0) {
+        const recent = vp.snapshots.slice(-5);
+        console.log(`\n  Last ${recent.length} snapshots:`);
+        for (const s of recent) {
+          console.log(`    ${s.ts?.slice(11, 19)} | bin:${s.active_bin} | range:${s.in_range ? "IN" : "OOR"} | fees:$${s.fees_this_cycle_usd?.toFixed(4)} | val:$${s.total_value_usd?.toFixed(2)} | PnL:${s.pnl_pct?.toFixed(2)}%`);
+        }
+      }
+      console.log();
+      rl.prompt();
       return;
     }
 
