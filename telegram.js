@@ -368,13 +368,14 @@ export async function createLiveMessage(title, intro = "Starting...") {
     state.flushTimer = null;
     state.flushRequested = false;
     const text = render();
-    const params = { text, parse_mode: _lastParseMode };
+    const params = { text };
+    if (_lastParseMode) params.parse_mode = _lastParseMode;
     if (!state.messageId) {
-      const sent = await postTelegram("sendMessage", { chat_id: chatId, ...params });
+      const sent = await postTelegram("sendMessage", params);
       state.messageId = sent?.result?.message_id ?? null;
       return;
     }
-    await postTelegram("editMessageText", { chat_id: chatId, message_id: state.messageId, ...params });
+    await postTelegram("editMessageText", { message_id: state.messageId, ...params });
   }
 
   function scheduleFlush(delay = 300) {
