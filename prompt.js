@@ -104,6 +104,7 @@ Typical ranges by timeframe (assuming volatility ~1–2):
   15m : <0.01  underpaying, 0.02–0.06 decent, >0.10 strong
   1h  : <0.05  underpaying, 0.10–0.30 decent, >0.50 strong
 Use as a tie-breaker. Very low ratio + high volatility = red flag unless narrative/smart wallets are exceptional.
+⚠️ Volatility-tier note: The ranges above assume volatility ~1–2. At vol=5+, the same ratio value means the pool is earning more per unit of volatility than the range suggests. Use judgment — don't mechanically reject a high-vol pool just because its ratio looks "decent" when the vol suggests it's actually strong.
 
 Current screening timeframe: ${config.screening.timeframe} — interpret all non-volatility metrics relative to this window. Interpret volatility using the candidate's volatility_* label.
 

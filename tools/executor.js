@@ -173,6 +173,10 @@ async function validateDeployPoolThresholds(args) {
 let _cronRestarter = null;
 export function registerCronRestarter(fn) { _cronRestarter = fn; }
 
+// Registered by index.js — triggers a screening cycle after a position closes
+let _screeningTrigger = null;
+export function registerScreeningTrigger(fn) { _screeningTrigger = fn; }
+
 function coerceBoolean(value, key) {
   if (typeof value === "boolean") return value;
   if (typeof value === "string") {
@@ -623,6 +627,8 @@ export async function executeTool(name, args) {
             log("executor_warn", `Auto-swap after close failed: ${e.message}`);
           }
         }
+        // Trigger screening now that a slot is free — don't let SOL sit idle
+        _screeningTrigger?.();
       } else if (name === "claim_fees" && config.management.autoSwapAfterClaim && result.base_mint) {
         try {
           const balances = await getWalletBalances({});

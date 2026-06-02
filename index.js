@@ -10,7 +10,7 @@ import { getWalletBalances } from "./tools/wallet.js";
 import { getTopCandidates } from "./tools/screening.js";
 import { config, reloadScreeningThresholds, computeDeployAmount } from "./config.js";
 import { evolveThresholds, getPerformanceSummary } from "./lessons.js";
-import { executeTool, registerCronRestarter } from "./tools/executor.js";
+import { executeTool, registerCronRestarter, registerScreeningTrigger } from "./tools/executor.js";
 import {
   startPolling,
   stopPolling,
@@ -1490,6 +1490,8 @@ async function telegramHandler(msg) {
         const closeTxs = result.close_txs?.length ? result.close_txs : result.txs;
         const claimNote = result.claim_txs?.length ? `\nClaim txs: ${result.claim_txs.join(", ")}` : "";
         await sendMessage(`✅ Closed ${pos.pair}\nPnL: ${config.management.solMode ? "◎" : "$"}${result.pnl_usd ?? "?"} | close txs: ${closeTxs?.join(", ") || "n/a"}${claimNote}`);
+        // Screening trigger — slot freed, don't let SOL sit idle
+        runScreeningCycle({ silent: true }).catch((e) => log("cron_error", `Post-close screening failed: ${e.message}`));
       } else {
         await sendMessage(`❌ Close failed: ${JSON.stringify(result)}`);
       }
@@ -1512,6 +1514,8 @@ async function telegramHandler(msg) {
         }
       }
       await sendMessage(`Close-all finished.\n\n${results.join("\n")}`).catch(() => {});
+      // Screening trigger — slot(s) freed
+      runScreeningCycle({ silent: true }).catch((e) => log("cron_error", `Post-close screening failed: ${e.message}`));
     } catch (e) {
       await sendMessage(`Error: ${e.message}`).catch(() => {});
     }
@@ -1707,6 +1711,7 @@ function computeBinsBelow(volatility) {
 
 // Register restarter — when update_config changes intervals, running cron jobs get replaced
 registerCronRestarter(() => { if (cronStarted) startCronJobs(); });
+registerScreeningTrigger(() => runScreeningCycle({ silent: true }).catch((e) => log("cron_error", `Post-close screening failed: ${e.message}`)));
 
 if (isMain && isTTY) {
   const rl = readline.createInterface({
