@@ -161,11 +161,12 @@ function formatMarkdownToTelegramHtml(text) {
 export async function sendLongMessage(text, { parse_mode } = {}) {
   if (!TOKEN || !chatId) return;
   let content = String(text);
-  const useHtml = !parse_mode && /[*`]/.test(content);
+  const hasMarkdown = /[*`]/.test(content);
+  const useHtml = (!parse_mode && hasMarkdown) || (parse_mode === "HTML" && hasMarkdown);
   if (useHtml) {
     content = formatMarkdownToTelegramHtml(content);
   }
-  const effectiveMode = parse_mode || (useHtml ? "HTML" : undefined);
+  const effectiveMode = parse_mode === "HTML" ? "HTML" : (useHtml ? "HTML" : undefined);
   const maxLen = 4096;
   let remaining = content;
   let isFirst = true;
@@ -359,7 +360,7 @@ export async function createLiveMessage(title, intro = "Starting...") {
     if (state.toolLines.length > 0) sections.push(state.toolLines.join("\n"));
     if (state.footer) sections.push(state.footer);
     const text = sections.join("\n\n").slice(0, 4096);
-    const hasHtml = /<[bi]>|\*\*|`/.test(text);
+    const hasHtml = /<[bi]>|\*\*|\*[^*\n]+\*|`/.test(text);
     _lastParseMode = hasHtml ? "HTML" : null;
     return hasHtml ? formatMarkdownToTelegramHtml(text) : text;
   }
