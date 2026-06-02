@@ -574,8 +574,7 @@ export async function getTopCandidates({ limit = 10 } = {}) {
       }
       if (!isUsableVolatility(p.volatility)) {
         pushFilteredReason(filteredOut, p, `volatility ${p.volatility ?? "unknown"} is unusable`);
-      } else if (s.maxVolatility != null && p.volatility > s.maxVolatility) {
-        pushFilteredReason(filteredOut, p, `volatility ${p.volatility} exceeds maxVolatility ${s.maxVolatility}`);
+        return false;
       }
       if (occupiedPools.has(p.pool)) {
         pushFilteredReason(filteredOut, p, "already have an open position in this pool");
@@ -802,6 +801,11 @@ function condensePool(p) {
     fee_active_tvl_ratio: p.fee_active_tvl_ratio != null ? fix(p.fee_active_tvl_ratio, 4) : null,
     volatility: fix(p.volatility, 4),
     volatility_timeframe: p.volatility_timeframe || getVolatilityTimeframe(config.screening.timeframe),
+
+    // Risk-adjusted yield — fees per unit of volatility (higher = better compensated)
+    fee_volatility_ratio: (p.fee_active_tvl_ratio != null && isUsableVolatility(p.volatility))
+      ? fix(p.fee_active_tvl_ratio / p.volatility, 4)
+      : null,
 
     // Per-timeframe breakdown (populated when sourceTimeframe !== volatilityTimeframe)
     ...(p.volatility_timeframe && p.volatility_timeframe !== config.screening.timeframe ? {

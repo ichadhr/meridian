@@ -97,6 +97,14 @@ TOKEN TAGS (from OKX advanced-info):
 
 IMPORTANT: fee_active_tvl_ratio values are ALREADY in percentage form. 0.29 = 0.29%. Do NOT multiply by 100. A value of 1.0 = 1.0%, a value of 22 = 22%. Never convert.
 
+FEE-TO-VOLATILITY RATIO (fee_volatility_ratio = fee_active_tvl_ratio / volatility):
+Risk-adjusted yield. Higher = fees better compensate for price risk.
+Typical ranges by timeframe (assuming volatility ~1–2):
+  5m  : <0.005 underpaying, 0.01–0.03 decent, >0.05 strong
+  15m : <0.01  underpaying, 0.02–0.06 decent, >0.10 strong
+  1h  : <0.05  underpaying, 0.10–0.30 decent, >0.50 strong
+Use as a tie-breaker. Very low ratio + high volatility = red flag unless narrative/smart wallets are exceptional.
+
 Current screening timeframe: ${config.screening.timeframe} — interpret all non-volatility metrics relative to this window. Interpret volatility using the candidate's volatility_* label.
 
 `;
