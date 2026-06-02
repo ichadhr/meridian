@@ -141,6 +141,38 @@ export async function sendHTML(html) {
   return postTelegram("sendMessage", { text: html.slice(0, 4096), parse_mode: "HTML" });
 }
 
+/**
+ * Send a long message by splitting at paragraph boundaries under 4096 chars.
+ * Falls back to sendMessage for short messages. Supports optional parse_mode.
+ */
+export async function sendLongMessage(text, { parse_mode } = {}) {
+  if (!TOKEN || !chatId) return;
+  const maxLen = 4096;
+  let remaining = String(text);
+  let isFirst = true;
+
+  while (remaining.length > 0) {
+    const chunk = remaining.length <= maxLen
+      ? remaining
+      : splitAtBoundary(remaining, maxLen);
+
+    const payload = { text: isFirst ? chunk : "🔍 Continued...\n\n" + chunk };
+    if (parse_mode) payload.parse_mode = parse_mode;
+    await postTelegram("sendMessage", payload);
+
+    if (remaining.length <= maxLen) return;
+    remaining = remaining.slice(chunk.length).trimStart();
+    isFirst = false;
+  }
+}
+
+function splitAtBoundary(text, maxLen) {
+  let at = text.lastIndexOf("\n\n", maxLen);
+  if (at < maxLen / 2) at = text.lastIndexOf("\n", maxLen);
+  if (at < maxLen / 2) at = maxLen;
+  return text.slice(0, at);
+}
+
 export async function sendDocument(filePath, { caption } = {}) {
   if (!TOKEN || !chatId) return;
   try {

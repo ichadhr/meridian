@@ -18,6 +18,7 @@ import {
   sendMessage,
   sendMessageWithButtons,
   sendHTML,
+  sendLongMessage,
   editMessage,
   editMessageWithButtons,
   answerCallbackQuery,
@@ -375,7 +376,7 @@ After executing, write a brief one-line result per position.
     if (!silent && telegramEnabled()) {
       if (mgmtReport) {
         if (liveMessage) await liveMessage.finalize(stripThink(mgmtReport)).catch(() => {});
-        else sendMessage(`🔄 Management Cycle\n\n${stripThink(mgmtReport)}`).catch(() => { });
+        else sendLongMessage(`🔄 Management Cycle\n\n${stripThink(mgmtReport)}`).catch(() => { });
       }
       for (const p of positions) {
         if (!p.in_range && p.minutes_out_of_range >= config.management.outOfRangeWaitMinutes) {
@@ -743,7 +744,7 @@ IMPORTANT:
     if (!silent && telegramEnabled()) {
       if (screenReport) {
         if (liveMessage) await liveMessage.finalize(stripThink(screenReport)).catch(() => {});
-        else sendMessage(`🔍 Screening Cycle\n\n${stripThink(screenReport)}`).catch(() => { });
+        else sendLongMessage(`🔍 Screening Cycle\n\n${stripThink(screenReport)}`).catch(() => { });
       }
     }
   }
@@ -1884,7 +1885,7 @@ async function telegramHandler(msg) {
     });
     appendHistory(text, content);
     if (liveMessage) await liveMessage.finalize(stripThink(content));
-    else await sendMessage(stripThink(content));
+    else await sendLongMessage(stripThink(content));
   } catch (e) {
     if (liveMessage) await liveMessage.fail(e.message).catch(() => {});
     else await sendMessage(`Error: ${e.message}`).catch(() => {});
