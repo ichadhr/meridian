@@ -228,8 +228,14 @@ export async function agentLoop(goal, maxSteps = config.llm.maxSteps, sessionHis
             continue;
           }
           if (!omitToolChoice && isThinkingModeToolChoiceError(error)) {
+            if (toolChoice === "required") {
+              toolChoice = "auto";
+              log("agent", "Provider thinking mode rejected tool_choice=required — retrying with tool_choice=auto");
+              attempt -= 1;
+              continue;
+            }
             omitToolChoice = true;
-            log("agent", "Provider thinking mode does not support tool_choice — retrying without it");
+            log("agent", "Provider thinking mode still rejects tool_choice — retrying without it");
             attempt -= 1;
             continue;
           }
