@@ -1038,7 +1038,18 @@ async function manageVirtualPositions() {
         ? ((currentValueUsd - vp.initial_value_usd) / vp.initial_value_usd) * 100
         : 0;
 
-      // 9. Close rules (same priority as getDeterministicCloseRule)
+      // 9. Track OOR minutes (before close rules so they see current value)
+      let oorMinutes = vp._oor_minutes ?? 0;
+      let oorSince = vp._oor_since ?? null;
+      if (currentActiveBin != null && vp.upper_bin != null && currentActiveBin > vp.upper_bin) {
+        if (oorSince == null) oorSince = now;
+        oorMinutes = (now - oorSince) / 60000;
+      } else {
+        oorSince = null;
+        oorMinutes = 0;
+      }
+
+      // 10. Close rules (same priority as getDeterministicCloseRule)
       const mgmtCfg = config.management;
       let closeReason = null;
 
@@ -1057,7 +1068,7 @@ async function manageVirtualPositions() {
       } else if (
         currentActiveBin != null && vp.upper_bin != null &&
         currentActiveBin > vp.upper_bin &&
-        (vp._oor_minutes ?? 0) >= (mgmtCfg.outOfRangeWaitMinutes ?? 30)
+        oorMinutes >= (mgmtCfg.outOfRangeWaitMinutes ?? 30)
       ) {
         closeReason = "oor";
       } else if (
@@ -1065,17 +1076,6 @@ async function manageVirtualPositions() {
         vp.deployed_at && (now - new Date(vp.deployed_at).getTime()) / 60000 >= (mgmtCfg.minAgeBeforeYieldCheck ?? 60)
       ) {
         closeReason = "low_yield";
-      }
-
-      // 10. Track OOR minutes
-      let oorMinutes = vp._oor_minutes ?? 0;
-      let oorSince = vp._oor_since ?? null;
-      if (currentActiveBin != null && vp.upper_bin != null && currentActiveBin > vp.upper_bin) {
-        if (oorSince == null) oorSince = now;
-        oorMinutes = (now - oorSince) / 60000;
-      } else {
-        oorSince = null;
-        oorMinutes = 0;
       }
 
       // 11. Build snapshot
