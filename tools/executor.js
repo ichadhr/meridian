@@ -64,10 +64,6 @@ function poolDetailBinStep(pool) {
   return numberOrNull(pool?.dlmm_params?.bin_step ?? pool?.pool_config?.bin_step);
 }
 
-function poolDetailFeeActiveTvlRatio(pool) {
-  return numberOrNull(pool?.fee_active_tvl_ratio);
-}
-
 function poolDetailVolatility(pool) {
   return numberOrNull(pool?.volatility);
 }
@@ -113,19 +109,6 @@ async function validateDeployPoolThresholds(args) {
     return {
       pass: false,
       reason: `Pool TVL $${tvl} is above configured maxTvl $${maxTvl}.`,
-    };
-  }
-
-  const feeActiveTvlRatio = poolDetailFeeActiveTvlRatio(detail);
-  const minFeeActiveTvlRatio = numberOrNull(config.screening.minFeeActiveTvlRatio);
-  if (
-    minFeeActiveTvlRatio != null &&
-    minFeeActiveTvlRatio > 0 &&
-    (feeActiveTvlRatio == null || feeActiveTvlRatio < minFeeActiveTvlRatio)
-  ) {
-    return {
-      pass: false,
-      reason: `Pool fee/active-TVL ${feeActiveTvlRatio ?? "unknown"}% is below configured minFeeActiveTvlRatio ${minFeeActiveTvlRatio}%.`,
     };
   }
 
