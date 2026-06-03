@@ -173,6 +173,7 @@ export async function agentLoop(goal, maxSteps = config.llm.maxSteps, sessionHis
   const firedOnce = new Set();
   const mustUseRealTool = shouldRequireRealToolUse(goal, agentType, interactive);
   let sawToolCall = false;
+  let sawDeployTool = false;
   let noToolRetryCount = 0;
 
   let emptyStreak = 0;
@@ -269,29 +270,61 @@ export async function agentLoop(goal, maxSteps = config.llm.maxSteps, sessionHis
           log("agent", "Empty response, retrying...");
           continue;
         }
-        if (mustUseRealTool && !sawToolCall) {
-          noToolRetryCount += 1;
-          messages.pop();
-          log("agent", `Rejected no-tool final answer (${noToolRetryCount}/2) for tool-required request`);
-          if (noToolRetryCount >= 2) {
-            return {
-              content: "I couldn't complete that reliably because no tool call was made. Please retry after checking the logs.",
-              userMessage: goal,
-            };
+        if (mustUseRealTool) {
+          // For SCREENER: require deploy_position call or explicit NO DEPLOY text
+          if (agentType === "SCREENER" && !sawDeployTool) {
+            const isExplicitNoDeploy = /⛔\s*NO\s+DEPLOY/i.test(msg.content);
+            if (!isExplicitNoDeploy) {
+              noToolRetryCount += 1;
+              messages.pop();
+              log("agent", `Rejected — SCREENER wrote about deploying but didn't call deploy_position (${noToolRetryCount}/2)`);
+              if (noToolRetryCount >= 2) {
+                return {
+                  content: "I couldn't complete that reliably. Please retry after checking the logs.",
+                  userMessage: goal,
+                };
+              }
+              messages.push({
+                role: providerMode === "system" ? "system" : "user",
+                content: providerMode === "system"
+                  ? "SCREENING CYCLE — If you decided to deploy, you MUST call deploy_position. If no pool qualifies, write ⛔ NO DEPLOY explicitly. Do not write reasoning about deploying without actually calling the tool."
+                  : "[SYSTEM REMINDER]\nSCREENING CYCLE — If you decided to deploy, you MUST call deploy_position. If no pool qualifies, write ⛔ NO DEPLOY explicitly. Do not write reasoning about deploying without actually calling the tool.",
+              });
+              continue;
+            }
+          } else if (!sawToolCall) {
+            noToolRetryCount += 1;
+            messages.pop();
+            log("agent", `Rejected no-tool final answer (${noToolRetryCount}/2) for tool-required request`);
+            if (noToolRetryCount >= 2) {
+              return {
+                content: "I couldn't complete that reliably because no tool call was made. Please retry after checking the logs.",
+                userMessage: goal,
+              };
+            }
+            messages.push({
+              role: providerMode === "system" ? "system" : "user",
+              content: providerMode === "system"
+                ? "You have not used any tool yet. This request requires real tool execution or live tool-backed data. Do not answer from memory or inference. Call the appropriate tool first, then report only the real result."
+                : "[SYSTEM REMINDER]\nYou have not used any tool yet. This request requires real tool execution or live tool-backed data. Do not answer from memory or inference. Call the appropriate tool first, then report only the real result.",
+            });
+            continue;
           }
-          messages.push({
-            role: providerMode === "system" ? "system" : "user",
-            content: providerMode === "system"
-              ? "You have not used any tool yet. This request requires real tool execution or live tool-backed data. Do not answer from memory or inference. Call the appropriate tool first, then report only the real result."
-              : "[SYSTEM REMINDER]\nYou have not used any tool yet. This request requires real tool execution or live tool-backed data. Do not answer from memory or inference. Call the appropriate tool first, then report only the real result.",
-          });
-          continue;
         }
         log("agent", "Final answer reached");
         log("agent", msg.content);
         return { content: msg.content, userMessage: goal };
       }
       sawToolCall = true;
+      // Track deploy_position for SCREENER must-use enforcement
+      if (agentType === "SCREENER" && !sawDeployTool) {
+        for (const tc of msg.tool_calls) {
+          if (tc.function.name.replace(/<.*$/, "").trim() === "deploy_position") {
+            sawDeployTool = true;
+            break;
+          }
+        }
+      }
 
       // Execute each tool call in parallel
       const toolResults = await Promise.all(msg.tool_calls.map(async (toolCall) => {

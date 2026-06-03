@@ -142,6 +142,30 @@ export async function sendHTML(html) {
 }
 
 /**
+ * Send a local file as a Telegram document (supports any file type).
+ * Uses multipart/form-data to upload the file content.
+ */
+export async function sendDocument(filePath, { caption } = {}) {
+  if (!TOKEN || !chatId) return null;
+  try {
+    const formData = new FormData();
+    formData.append("chat_id", chatId);
+    formData.append("document", new Blob([fs.readFileSync(filePath)]), path.basename(filePath));
+    if (caption) formData.append("caption", String(caption).slice(0, 1024));
+    const res = await fetch(`${BASE}/sendDocument`, { method: "POST", body: formData });
+    if (!res.ok) {
+      const err = await res.text();
+      log("telegram_error", `sendDocument ${res.status}: ${err.slice(0, 200)}`);
+      return null;
+    }
+    return await res.json();
+  } catch (e) {
+    log("telegram_error", `sendDocument failed: ${e.message}`);
+    return null;
+  }
+}
+
+/**
  * Convert common markdown patterns to Telegram-safe HTML.
  * Covers **bold**, *italic*, `code` — the patterns LLMs most commonly generate.
  * Headers, tables, and lists are left as plain text (safe, no rejection risk).
@@ -468,6 +492,7 @@ const BOT_COMMANDS = [
   { command: "config",     description: "Show important runtime config" },
   { command: "settings",   description: "Button menu for common config" },
   { command: "setcfg",     description: "Update persisted config key" },
+  { command: "vp",         description: "List virtual (dry-run) positions" },
   { command: "screen",     description: "Refresh deterministic candidate list" },
   { command: "candidates", description: "Show latest cached candidates" },
   { command: "deploy",     description: "Deploy candidate by cached index" },

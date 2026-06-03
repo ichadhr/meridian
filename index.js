@@ -1,4 +1,5 @@
 import "./envcrypt.js";
+import fs from "fs";
 import cron from "node-cron";
 import readline from "readline";
 import path from "path";
@@ -17,6 +18,7 @@ import {
   sendMessage,
   sendMessageWithButtons,
   sendLongMessage,
+  sendDocument,
   editMessage,
   editMessageWithButtons,
   answerCallbackQuery,
@@ -35,6 +37,8 @@ import { getWeightsSummary } from "./signal-weights.js";
 import { bootstrapHiveMind, ensureAgentId, getHiveMindPullMode, isHiveMindEnabled, pullHiveMindLessons, pullHiveMindPresets, registerHiveMindAgent, startHiveMindBackgroundSync } from "./hivemind.js";
 import { appendDecision } from "./decision-log.js";
 import { runVirtualManagementCycle } from "./tools/manage-virtual.js";
+import { listVirtualPositions } from "./tools/dry-run-state.js";
+import { generateDryRunReport } from "./tools/generate-dry-run-report.js";
 
 const entrypointPath = process.env.pm_exec_path || process.argv[1];
 const isMain = entrypointPath
@@ -214,8 +218,34 @@ export async function runManagementCycle({ silent = false } = {}) {
     positions = livePositions?.positions || [];
 
     if (positions.length === 0) {
-      log("cron", "No open positions — triggering screening cycle");
-      mgmtReport = "No open positions. Triggering screening cycle.";
+      // In dry-run mode, we may still have virtual positions to manage
+      const vpEarlyResults = [];
+      if (process.env.DRY_RUN === "true") {
+        try {
+          const results = await runVirtualManagementCycle();
+          vpEarlyResults.push(...results);
+          const vpClosed = results.filter(r => r.action === "CLOSED");
+          const vpStay = results.filter(r => r.action === "STAY");
+          if (results.length > 0) {
+            log("cron", `Virtual positions: ${vpStay.length} active, ${vpClosed.length} closed`);
+          }
+        } catch (e) {
+          log("cron_error", `Virtual position management failed: ${e.message}`);
+        }
+      }
+      let report = "No open positions. Triggering screening cycle.";
+      if (vpEarlyResults.length > 0) {
+        const vpLines = vpEarlyResults.map(r => {
+          if (r.action === "CLOSED") {
+            return `🎭 **${r.pair}** (VP) CLOSED: ${r.reason} | PnL: ${r.pnl_pct?.toFixed(2)}%`;
+          }
+          const val = config.management.solMode ? `◎${(r.value_sol ?? 0).toFixed(4)}` : `$${(r.value_usd ?? 0).toFixed(4)}`;
+          const fees = config.management.solMode ? `◎${(r.unclaimed_fees_usd ?? 0).toFixed(4)}` : `$${(r.unclaimed_fees_usd ?? 0).toFixed(4)}`;
+          return `🎭 **${r.pair}** (VP) | Val: ${val} | Fees: ${fees} | PnL: ${r.pnl_pct?.toFixed(2)}% | ${r.oor}`;
+        }).join("\n");
+        report += `\n\n---\n**Virtual Positions**\n${vpLines}`;
+      }
+      mgmtReport = report;
       tryStartScreening("mgmt-no-positions");
       return mgmtReport;
     }
@@ -1312,6 +1342,8 @@ function formatHelpText() {
     "/status — wallet + positions snapshot",
     "/wallet — wallet, deploy amount, HiveMind status",
     "/positions — list open positions",
+    "/vp — list virtual (dry-run) positions",
+    "/vp report — generate dry-run HTML report",
     "/pool <n> — detailed info for one open position",
     "/close <n> — close one position by index",
     "/closeall — close all open positions",
@@ -1496,6 +1528,32 @@ async function telegramHandler(msg) {
         return `${i + 1}. ${p.pair} | ${cur}${p.total_value_usd} | PnL: ${pnl} | fees: ${cur}${p.unclaimed_fees_usd} | ${age}${oor}`;
       });
       await sendMessage(`📊 Open Positions (${total_positions}):\n\n${lines.join("\n")}\n\n/close <n> to close | /set <n> <note> to set instruction`);
+    } catch (e) { await sendMessage(`Error: ${e.message}`).catch(() => {}); }
+    return;
+  }
+
+  if (text === "/vp" || text === "/vp report") {
+    try {
+      if (text === "/vp report") {
+        const html = generateDryRunReport();
+        const filePath = path.join(path.dirname(fileURLToPath(import.meta.url)), "dry-run-report.html");
+        fs.writeFileSync(filePath, html, "utf8");
+        const sent = await sendDocument(filePath, { caption: "📄 Dry-run VP report" });
+        if (!sent) await sendMessage("❌ Failed to upload report — check logs.");
+      } else {
+        const vps = listVirtualPositions("open");
+        if (vps.length === 0) { await sendMessage("No open virtual positions."); return; }
+        const cur = config.management.solMode ? "◎" : "$";
+        const lines = vps.map((vp) => {
+          const pnl = vp.current_value_usd != null && vp.initial_value_usd != null
+            ? `${((vp.current_value_usd / vp.initial_value_usd - 1) * 100).toFixed(2)}%`
+            : "?";
+          const fees = vp.total_fees_earned_usd != null ? `${cur}${vp.total_fees_earned_usd.toFixed(2)}` : "?";
+          const oor = vp._oor_since ? "⚠️OOR" : "IN";
+          return `${vp.id} | ${vp.pair} | PnL: ${pnl} | fees: ${fees} | ${oor}`;
+        });
+        await sendMessage(`📊 Virtual Positions (${vps.length}):\n\n${lines.join("\n")}`);
+      }
     } catch (e) { await sendMessage(`Error: ${e.message}`).catch(() => {}); }
     return;
   }
@@ -2035,6 +2093,36 @@ Focus on: hold duration, entry/exit timing, what win rates look like, whether sc
             console.log(`  ${key}: ${result.rationale[key]}`);
           }
           console.log("\nSaved to user-config.json. Applied immediately.\n");
+        }
+      });
+      return;
+    }
+
+    if (input.startsWith("/vp")) {
+      await runBusy(async () => {
+        if (input === "/vp report") {
+          console.log("\nGenerating dry-run report...\n");
+          const html = generateDryRunReport();
+          const filePath = path.join(path.dirname(fileURLToPath(import.meta.url)), "dry-run-report.html");
+          fs.writeFileSync(filePath, html, "utf8");
+          console.log(`✅ Report saved to ${filePath}\n`);
+        } else {
+          const vps = listVirtualPositions("open");
+          if (vps.length === 0) {
+            console.log("No open virtual positions.\n");
+            return;
+          }
+          const solFmt = config.management.solMode ? "◎" : "$";
+          console.log(`\nVirtual positions (${vps.length}):\n`);
+          for (const vp of vps) {
+            const pnl = vp.current_value_usd != null && vp.initial_value_usd != null
+              ? `${((vp.current_value_usd / vp.initial_value_usd - 1) * 100).toFixed(2)}%`
+              : "?";
+            const fees = vp.total_fees_earned_usd != null ? `${solFmt}${vp.total_fees_earned_usd.toFixed(2)}` : "?" ;
+            const oor = vp._oor_since ? `OOR` : "IN";
+            console.log(`  ${vp.id} | ${vp.pair.padEnd(16)} | PnL: ${pnl.padStart(8)} | fees: ${fees} | ${oor}`);
+          }
+          console.log();
         }
       });
       return;
