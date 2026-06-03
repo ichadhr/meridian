@@ -1569,7 +1569,7 @@ async function drainTelegramQueue() {
 }
 
 async function telegramHandler(msg) {
-  const text = msg?.text?.trim();
+  const text = msg?.text?.trim().split("@")[0];
   if (!text) return;
   if (msg?.isCallback && text.startsWith("cfg:")) {
     try {
