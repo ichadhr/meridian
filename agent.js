@@ -137,16 +137,6 @@ function isSystemRoleError(error) {
   return /invalid message role:\s*system/i.test(message);
 }
 
-function isToolChoiceRequiredError(error) {
-  const message = String(error?.message || error?.error?.message || error || "");
-  return /tool_choice/i.test(message) && /required/i.test(message);
-}
-
-function isThinkingModeToolChoiceError(error) {
-  const message = String(error?.message || error?.error?.message || error || "");
-  return /thinking mode does not support/i.test(message) && /tool_choice/i.test(message);
-}
-
 /**
  * Core ReAct agent loop.
  *
@@ -184,8 +174,6 @@ export async function agentLoop(goal, maxSteps = config.llm.maxSteps, sessionHis
   const mustUseRealTool = shouldRequireRealToolUse(goal, agentType, interactive);
   let sawToolCall = false;
   let noToolRetryCount = 0;
-  // Stays true for the whole run once a thinking-mode provider rejects tool_choice
-  let omitToolChoice = false;
 
   let emptyStreak = 0;
   for (let step = 0; step < maxSteps; step++) {
@@ -194,24 +182,21 @@ export async function agentLoop(goal, maxSteps = config.llm.maxSteps, sessionHis
     try {
       const activeModel = model || DEFAULT_MODEL;
 
-      // Retry up to 3 times on transient provider errors (502, 503, 529)
       const FALLBACK_MODEL = "stepfun/step-3.5-flash:free";
       let response;
       let usedModel = activeModel;
-      // Force a tool call on step 0 for action intents — prevents the model from inventing deploy/close outcomes
-      const ACTION_INTENTS = /\b(deploy|open|add liquidity|close|exit|withdraw|claim|swap|block|unblock)\b/i;
-      let toolChoice = (step === 0 && (ACTION_INTENTS.test(goal) || mustUseRealTool)) ? "required" : "auto";
 
+      // Retry up to 3 times on transient provider errors (502, 503, 529)
       for (let attempt = 0; attempt < 3; attempt++) {
         try {
           const reqParams = {
             model: usedModel,
             messages,
             tools: getToolsForRole(agentType, goal),
+            tool_choice: "auto",
             temperature: config.llm.temperature,
             max_tokens: maxOutputTokens ?? config.llm.maxTokens,
           };
-          if (!omitToolChoice) reqParams.tool_choice = toolChoice;
           response = await client.chat.completions.create(reqParams);
         } catch (error) {
           if (providerMode === "system" && isSystemRoleError(error)) {
@@ -221,25 +206,16 @@ export async function agentLoop(goal, maxSteps = config.llm.maxSteps, sessionHis
             attempt -= 1;
             continue;
           }
-          if (toolChoice === "required" && isToolChoiceRequiredError(error)) {
-            toolChoice = "auto";
-            log("agent", "Provider rejected tool_choice=required — retrying with tool_choice=auto");
-            attempt -= 1;
-            continue;
+          // Generic fallback: if provider rejects tool_choice param entirely,
+          // retry once without it (some reasoning/thinking models reject it)
+          try {
+            const fallbackParams = { ...reqParams };
+            delete fallbackParams.tool_choice;
+            response = await client.chat.completions.create(fallbackParams);
+            log("agent", "Provider rejected tool_choice — retrying without it succeeded");
+          } catch {
+            throw error; // retry also failed — throw original error
           }
-          if (!omitToolChoice && isThinkingModeToolChoiceError(error)) {
-            if (toolChoice === "required") {
-              toolChoice = "auto";
-              log("agent", "Provider thinking mode rejected tool_choice=required — retrying with tool_choice=auto");
-              attempt -= 1;
-              continue;
-            }
-            omitToolChoice = true;
-            log("agent", "Provider thinking mode still rejects tool_choice — retrying without it");
-            attempt -= 1;
-            continue;
-          }
-          throw error;
         }
         if (response.choices?.length) break;
         const errCode = response.error?.code;
