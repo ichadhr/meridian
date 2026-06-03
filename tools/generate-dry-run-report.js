@@ -155,11 +155,13 @@ export function generateDryRunReport() {
   const worstStr = stats.worstDay.date ? `${worstSign}$${Math.abs(stats.worstDay.pnl).toFixed(2)}` : "—";
   const totalSign = stats.totalPnl >= 0 ? "+" : "-";
   const avgSign = stats.avgReturn >= 0 ? "+" : "-";
+  const bestCls = stats.bestDay.pnl >= 0 ? "positive" : "negative";
+  const worstCls = stats.worstDay.pnl >= 0 ? "positive" : "negative";
   const statsHtml = `
     <div class="stat"><div class="stat-lbl">Total PnL</div><div class="stat-val ${stats.totalPnl >= 0 ? "positive" : "negative"}">${totalSign}$${Math.abs(stats.totalPnl).toFixed(2)}</div></div>
     <div class="stat"><div class="stat-lbl">Win Rate</div><div class="stat-val neutral">${stats.winRate}%</div></div>
     <div class="stat"><div class="stat-lbl">Avg Return</div><div class="stat-val ${stats.avgReturn >= 0 ? "positive" : "negative"}">${avgSign}$${Math.abs(stats.avgReturn).toFixed(2)}</div></div>
-    <div class="stat"><div class="stat-lbl">Best / Worst</div><div class="stat-val" style="font-size:16px"><span class="positive">${bestStr}</span> / <span class="negative">${worstStr}</span></div></div>
+    <div class="stat"><div class="stat-lbl">Best / Worst</div><div class="stat-val" style="font-size:16px"><span class="${bestCls}">${bestStr}</span> / <span class="${worstCls}">${worstStr}</span></div></div>
   `;
 
   return `<!DOCTYPE html>
