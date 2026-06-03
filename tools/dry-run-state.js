@@ -1,5 +1,6 @@
 import fs from "fs";
 import { log } from "../logger.js";
+import { appendArchiveRecord } from "./position-archive.js";
 
 const STATE_FILE = "./dry-run-state.json";
 
@@ -55,6 +56,10 @@ export function trackVirtualPosition({
    * - xAmount, yAmount: bin's total token amounts at deploy time (for debugging/verification)
    */
   bin_shares,
+  // Screening metadata — used by Virtual Digest for pattern analysis
+  volatility,
+  fee_tvl_ratio,
+  organic_score,
 }) {
   const state = load();
   const vp = {
@@ -76,6 +81,9 @@ export function trackVirtualPosition({
     sol_price_at_deploy: sol_price_at_deploy ?? null,
     deploy_rationale: deploy_rationale || null,
     bin_shares: Array.isArray(bin_shares) && bin_shares.length ? bin_shares : null,
+    volatility: volatility != null ? Number(volatility) : null,
+    fee_tvl_ratio: fee_tvl_ratio != null ? fee_tvl_ratio : null,
+    organic_score: organic_score != null ? organic_score : null,
     total_fees_earned_usd: 0,
     current_value_usd: initial_value_usd,
     last_sync_at: null,
@@ -118,29 +126,6 @@ export function updateVirtualPosition(id, updates) {
   return true;
 }
 
-function getArchivePath() {
-  const month = new Date().toISOString().slice(0, 7); // "2026-06"
-  return `./dry-run-state-archive-${month}.json`;
-}
-
-function appendToArchive(vp) {
-  const file = getArchivePath();
-  let archive = { virtual_positions: [] };
-  try {
-    if (fs.existsSync(file)) {
-      archive = JSON.parse(fs.readFileSync(file, "utf8"));
-    }
-  } catch (e) {
-    log("dry_run_state", `Failed to read archive file, starting fresh: ${e.message}`);
-  }
-  archive.virtual_positions.push(vp);
-  try {
-    fs.writeFileSync(file, JSON.stringify(archive, null, 2));
-  } catch (e) {
-    log("dry_run_state", `Failed to write archive: ${e.message}`);
-  }
-}
-
 export function closeVirtualPosition(id, reason, pnlPct, pnlUsd) {
   const state = load();
   const idx = state.virtual_positions.findIndex((p) => p.id === id);
@@ -151,22 +136,28 @@ export function closeVirtualPosition(id, reason, pnlPct, pnlUsd) {
   vp.close_reason = reason;
   vp.close_pnl_pct = pnlPct;
   vp.close_pnl_usd = pnlUsd;
-  // Move closed position to archive file and remove from active state
-  appendToArchive(vp);
+  // Move closed position to JSONL archive and remove from active state
+  appendArchiveRecord("paper", vp);
   state.virtual_positions.splice(idx, 1);
   save(state);
-  log("dry_run_state", `Virtual ${id} CLOSED: ${reason} PnL=${pnlPct}% — archived to ${getArchivePath()}`);
+  log("dry_run_state", `Virtual ${id} CLOSED: ${reason} PnL=${pnlPct}%`);
   return true;
 }
 
 export function archiveVirtualPositions() {
   const state = load();
   if (state.virtual_positions.length === 0) return;
-  const count = state.virtual_positions.length;
+  const remaining = [];
+  let archived = 0;
   for (const vp of state.virtual_positions) {
-    appendToArchive(vp);
+    if (vp.status === "closed" && vp.closed_at) {
+      appendArchiveRecord("paper", vp);
+      archived++;
+    } else {
+      remaining.push(vp);
+    }
   }
-  state.virtual_positions = [];
+  state.virtual_positions = remaining;
   save(state);
-  log("dry_run_state", `Archived ${count} virtual positions to ${getArchivePath()}`);
+  log("dry_run_state", `Archived ${archived} virtual positions, kept ${remaining.length} open`);
 }

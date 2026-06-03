@@ -941,9 +941,9 @@ Call list_lessons first to find the lesson ID.`,
     type: "function",
     function: {
       name: "get_performance_history",
-      description: `Retrieve closed position records filtered by time window.
-Use when the user asks about recent performance, last 24h positions, how you've been doing, P&L history, etc.
-Returns individual closed positions with PnL, fees, strategy, hold time, and close reason.`,
+      description: `Retrieve closed position records filtered by time window. Merges live and paper (simulated) position history.
+Use when the user asks about recent performance, last 24h positions, how you've been doing, P&L history, or specific patterns (e.g. 'show me high volatility losers').
+Returns individual closed positions with PnL, fees, strategy, volatility, hold time, close reason, and source (live/paper).`,
       parameters: {
         type: "object",
         properties: {
@@ -954,6 +954,27 @@ Returns individual closed positions with PnL, fees, strategy, hold time, and clo
           limit: {
             type: "number",
             description: "Max records to return (default 50)"
+          },
+          source: {
+            type: "string",
+            enum: ["live", "paper"],
+            description: "'live' = real on-chain positions with actual SOL deployed and real PnL/loss. 'paper' = simulated dry-run positions using live DLMM SDK data (real prices, real fee accumulators, no real SOL at stake). Omit for both."
+          },
+          volatility_min: {
+            type: "number",
+            description: "Minimum volatility filter (e.g. 4 = only positions with volatility ≥ 4)"
+          },
+          close_reason: {
+            type: "string",
+            description: "Filter by close reason substring (e.g. 'stop loss', 'OOR', 'trailing TP')"
+          },
+          min_pnl_pct: {
+            type: "number",
+            description: "Minimum PnL % filter. Use -10 for PnL ≥ -10% (includes -5%, 0%, +5%)"
+          },
+          max_pnl_pct: {
+            type: "number",
+            description: "Maximum PnL % filter"
           }
         }
       }

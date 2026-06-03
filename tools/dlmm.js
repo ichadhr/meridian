@@ -673,6 +673,9 @@ export async function deployPosition({
         amount_sol: finalAmountY,
         initial_value_usd: solPrice > 0 ? solPrice * finalAmountY : null,
         bin_shares: binShares,
+        volatility: normalizedVolatility ?? undefined,
+        fee_tvl_ratio: fee_tvl_ratio != null ? Number(fee_tvl_ratio) : undefined,
+        organic_score: organic_score != null ? Number(organic_score) : undefined,
       });
     } catch (e) {
       log("deploy", `DRY_RUN: bin state capture failed for VP tracking: ${e.message}`);

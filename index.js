@@ -52,6 +52,8 @@ if (isMain) {
   ensureAgentId();
   bootstrapHiveMind().catch((error) => log("hivemind_warn", `Bootstrap failed: ${error.message}`));
   startHiveMindBackgroundSync();
+  // One-time migration from old JSON archives to JSONL
+  import("./tools/position-archive.js").then((m) => m.migrateOldArchives()).catch(() => {});
 }
 
 const TP_PCT = config.management.takeProfitPct;
@@ -1535,7 +1537,7 @@ async function telegramHandler(msg) {
   if (text === "/vp" || text === "/vp report") {
     try {
       if (text === "/vp report") {
-        const html = generateDryRunReport();
+        const html = await generateDryRunReport();
         const filePath = path.join(path.dirname(fileURLToPath(import.meta.url)), "dry-run-report.html");
         fs.writeFileSync(filePath, html, "utf8");
         const sent = await sendDocument(filePath, { caption: "📄 Dry-run VP report" });
@@ -2102,7 +2104,7 @@ Focus on: hold duration, entry/exit timing, what win rates look like, whether sc
       await runBusy(async () => {
         if (input === "/vp report") {
           console.log("\nGenerating dry-run report...\n");
-          const html = generateDryRunReport();
+          const html = await generateDryRunReport();
           const filePath = path.join(path.dirname(fileURLToPath(import.meta.url)), "dry-run-report.html");
           fs.writeFileSync(filePath, html, "utf8");
           console.log(`✅ Report saved to ${filePath}\n`);

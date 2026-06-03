@@ -663,36 +663,86 @@ function fmt(lessons) {
  * Get individual performance records filtered by time window.
  * Tool handler: get_performance_history
  *
- * @param {Object} opts
- * @param {number} [opts.hours=24]   - How many hours back to look
- * @param {number} [opts.limit=50]   - Max records to return
+ * Merges live (lessons.json) and virtual (JSONL archives) position history.
+ *
+ * @param {Object}    opts
+ * @param {number}    [opts.hours=24]         How many hours back to look
+ * @param {number}    [opts.limit=50]         Max records to return
+ * @param {"live"|"paper"} [opts.source]    Filter by source (omit = both)
+ * @param {number}    [opts.volatility_min]   Min volatility filter
+ * @param {string}    [opts.close_reason]     Filter by close reason (substring)
+ * @param {number}    [opts.min_pnl_pct]      Min PnL % (e.g. -10 means PnL ≥ -10%)
+ * @param {number}    [opts.max_pnl_pct]      Max PnL %
  */
-export function getPerformanceHistory({ hours = 24, limit = 50 } = {}) {
+export async function getPerformanceHistory({ hours = 24, limit = 50, source = null, volatility_min = null, close_reason = null, min_pnl_pct = null, max_pnl_pct = null } = {}) {
   const data = load();
-  const p = data.performance;
-
-  if (p.length === 0) return { positions: [], count: 0, hours };
-
   const cutoff = new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();
+  const positions = [];
 
-  const filtered = p
-    .filter((r) => r.recorded_at >= cutoff)
-    .slice(-limit)
-    .map((r) => ({
-      pool_name: r.pool_name,
-      pool: r.pool,
-      strategy: r.strategy,
-      pnl_usd: r.pnl_usd,
-      pnl_pct: r.pnl_pct,
-      fees_earned_usd: r.fees_earned_usd,
-      range_efficiency: r.range_efficiency,
-      minutes_held: r.minutes_held,
-      close_reason: r.close_reason,
-      closed_at: r.recorded_at,
-    }));
+  // ── Live positions from lessons.json ──
+  if (source !== "paper") {
+    for (const r of data.performance) {
+      if (r.recorded_at >= cutoff) {
+        positions.push({
+          source: "live",
+          pool_name: r.pool_name,
+          pool: r.pool,
+          strategy: r.strategy,
+          pnl_usd: r.pnl_usd,
+          pnl_pct: r.pnl_pct,
+          fees_earned_usd: r.fees_earned_usd,
+          range_efficiency: r.range_efficiency,
+          minutes_held: r.minutes_held,
+          close_reason: r.close_reason,
+          closed_at: r.recorded_at,
+          volatility: r.volatility ?? null,
+          fee_tvl_ratio: r.fee_tvl_ratio ?? null,
+          organic_score: r.organic_score ?? null,
+        });
+      }
+    }
+  }
+
+  // ── Paper positions from JSONL archives ──
+  if (source !== "live") {
+    try {
+      const { readArchive } = await import("./tools/position-archive.js");
+      const vpRecords = await readArchive({ source: "paper", hours, limit });
+      for (const r of vpRecords) {
+        positions.push({
+          source: "paper",
+          pool_name: r.pair || r.pool_name,
+          pool: r.pool,
+          strategy: r.strategy,
+          pnl_usd: r.close_pnl_usd,
+          pnl_pct: r.close_pnl_pct,
+          fees_earned_usd: r.total_fees_earned_usd,
+          range_efficiency: null,
+          minutes_held: r.minutes_held,
+          close_reason: r.close_reason,
+          closed_at: r.closed_at,
+          volatility: r.volatility,
+          fee_tvl_ratio: r.fee_tvl_ratio,
+          organic_score: r.organic_score,
+        });
+      }
+    } catch { /* VP archive not available */ }
+  }
+
+  // ── Apply filters ──
+  let filtered = positions;
+  if (source) filtered = filtered.filter((p) => p.source === source);
+  if (volatility_min != null) filtered = filtered.filter((p) => Number.isFinite(p.volatility) && p.volatility >= volatility_min);
+  if (close_reason) filtered = filtered.filter((p) => String(p.close_reason || "").toLowerCase().includes(close_reason.toLowerCase()));
+  if (min_pnl_pct != null) filtered = filtered.filter((p) => Number.isFinite(p.pnl_pct) && p.pnl_pct >= min_pnl_pct);
+  if (max_pnl_pct != null) filtered = filtered.filter((p) => Number.isFinite(p.pnl_pct) && p.pnl_pct <= max_pnl_pct);
+
+  // Sort by closed_at desc, limit
+  filtered.sort((a, b) => (b.closed_at || "").localeCompare(a.closed_at || ""));
+  filtered = filtered.slice(0, limit);
 
   const totalPnl = filtered.reduce((s, r) => s + (r.pnl_usd ?? 0), 0);
-  const wins = filtered.filter((r) => r.pnl_usd > 0).length;
+  const wins = filtered.filter((r) => (r.pnl_usd ?? 0) > 0).length;
 
   return {
     hours,

@@ -9,14 +9,15 @@
 import fs from "fs";
 import path from "path";
 import { log } from "../logger.js";
+import { readArchive } from "./position-archive.js";
 
 const STATE_FILE = "./dry-run-state.json";
 
-/** Load all closed positions from the main state file and all archive files. */
-function loadAllClosedPositions() {
+/** Load all closed positions from the main state file and JSONL archives. */
+async function loadAllClosedPositions() {
   const all = [];
 
-  // Main state file
+  // Main state file — open positions
   if (fs.existsSync(STATE_FILE)) {
     try {
       const state = JSON.parse(fs.readFileSync(STATE_FILE, "utf8"));
@@ -28,26 +29,15 @@ function loadAllClosedPositions() {
     }
   }
 
-  // Archive files
-  const cwd = process.cwd();
+  // JSONL archive files — closed positions
   try {
-    const files = fs.readdirSync(cwd).filter(f => f.startsWith("dry-run-state-archive-") && f.endsWith(".json"));
-    for (const file of files) {
-      try {
-        const archive = JSON.parse(fs.readFileSync(path.join(cwd, file), "utf8"));
-        for (const vp of (archive.virtual_positions || [])) {
-          if (vp.status === "closed" && vp.closed_at) {
-            // Tag with archive source so we know it came from archive
-            vp._from_archive = file;
-            all.push(vp);
-          }
-        }
-      } catch (e) {
-        log("dry_run_report", `Failed to read archive ${file}: ${e.message}`);
-      }
+    const vpRecords = await readArchive({ source: "paper", hours: 720, limit: 5000 });
+    for (const r of vpRecords) {
+      r._from_archive = "archives";
+      all.push(r);
     }
   } catch (e) {
-    log("dry_run_report", `Failed to list archive files: ${e.message}`);
+    log("dry_run_report", `Failed to read VP archives: ${e.message}`);
   }
 
   return all;
@@ -134,8 +124,8 @@ function escapeHtml(s) {
 }
 
 /** Generate the full self-contained HTML report. */
-export function generateDryRunReport() {
-  const positions = loadAllClosedPositions();
+export async function generateDryRunReport() {
+  const positions = await loadAllClosedPositions();
   if (positions.length === 0) {
     return `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Dry Run Report</title><style>body{font-family:system-ui,sans-serif;background:#0a0a0f;color:#888;padding:40px;text-align:center;margin-top:80px}h2{color:#fff}</style></head><body><h2>No closed positions yet</h2><p>Dry run has not closed any positions. Deploy first, then check back.</p></body></html>`;
   }

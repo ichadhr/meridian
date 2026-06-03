@@ -596,7 +596,7 @@ switch (subcommand) {
   case "performance": {
     const { getPerformanceHistory, getPerformanceSummary } = await import("./lessons.js");
     const limit = flags.limit ? parseInt(flags.limit) : 200;
-    const history = getPerformanceHistory({ hours: 999999, limit });
+    const history = await getPerformanceHistory({ hours: 999999, limit });
     const summary = getPerformanceSummary();
     out({ summary, ...history });
     break;
