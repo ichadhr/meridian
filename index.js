@@ -1100,6 +1100,7 @@ async function manageVirtualPositions() {
         fees_cumulative_usd: Math.round(totalFeesUsd * 10000) / 10000,
         total_value_usd: Math.round(currentValueUsd * 100) / 100,
         pnl_pct: Math.round(pnlPct * 100) / 100,
+        peak_pnl_pct: Math.round(vp._peak_pnl_pct * 100) / 100,
         oor_minutes: Math.round(oorMinutes * 10) / 10,
       };
 
