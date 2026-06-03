@@ -6,6 +6,7 @@ import {
   closeVirtualPosition,
 } from "./dry-run-state.js";
 import { getWalletBalances } from "./wallet.js";
+import { recordPoolDeploy } from "../pool-memory.js";
 import { config } from "../config.js";
 import { log } from "../logger.js";
 
@@ -178,6 +179,43 @@ export async function runVirtualManagementCycle() {
   // Deduplicate bin fetches: key = "pool:lower:upper"
   const binCache = new Map();
 
+  /**
+   * Record VP close to pool memory (not lessons/evolution — see NOTES.md).
+   * Populates pool-memory.json so the SCREENER can skip pools with past losses.
+   */
+  function recordVpDeployToPoolMemory(vp, pnl, closeReason) {
+    const minutesHeld = vp.deployed_at
+      ? Math.floor((Date.now() - new Date(vp.deployed_at).getTime()) / 60000)
+      : 0;
+    const minutesOOR = vp._oor_minutes || 0;
+    const rangeEfficiency = minutesHeld > 0
+      ? Math.max(0, (minutesHeld - minutesOOR) / minutesHeld * 100)
+      : 0;
+
+    try {
+      recordPoolDeploy(vp.pool, {
+        pool_name: vp.pool_name || vp.pair,
+        base_mint: null,
+        deployed_at: vp.deployed_at,
+        closed_at: new Date().toISOString(),
+        pnl_pct: pnl.pnlPct,
+        pnl_usd: pnl.pnlUsd,
+        range_efficiency: rangeEfficiency,
+        minutes_held: minutesHeld,
+        fees_earned_usd: pnl.unclaimedFeesUsd,
+        fees_earned_sol: pnl.unclaimedFeesSol,
+        fee_earned_pct: vp.initial_value_usd > 0
+          ? ((pnl.unclaimedFeesUsd || 0) / vp.initial_value_usd) * 100
+          : null,
+        close_reason: closeReason,
+        strategy: vp.strategy,
+        volatility: null,
+      });
+    } catch (e) {
+      log("vp", `Failed to record VP deploy to pool memory: ${e.message}`);
+    }
+  }
+
   for (const vp of vpList) {
     try {
       // ── Fetch bin state (cache key includes range) ─────────────────
@@ -291,6 +329,7 @@ export async function runVirtualManagementCycle() {
       if (closeRule) {
         // Persist final state BEFORE closing (preserves snapshot, peak, OOR)
         updateVirtualPosition(vp.id, updates);
+        recordVpDeployToPoolMemory(vp, pnl, closeRule.reason);
         closeVirtualPosition(vp.id, closeRule.reason, pnl.pnlPct, pnl.pnlUsd);
         results.push({
           id: vp.id,
@@ -307,6 +346,7 @@ export async function runVirtualManagementCycle() {
       // ── Trailing TP close (2-cycle confirmed) ──────────────────────
       if (trailingCloseReason) {
         updateVirtualPosition(vp.id, updates);
+        recordVpDeployToPoolMemory(vp, pnl, trailingCloseReason);
         closeVirtualPosition(vp.id, trailingCloseReason, pnl.pnlPct, pnl.pnlUsd);
         results.push({
           id: vp.id,
