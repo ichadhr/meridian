@@ -43,8 +43,7 @@ design/
 # IDE / agent config
 .opencode/
 
-# Package manager lockfiles (repo uses npm)
-bun.lock
+
 
 # Discord listener queue
 discord-signals.json
