@@ -168,9 +168,7 @@ export async function sendLongMessage(text, { parse_mode } = {}) {
   let content = String(text);
   const hasMarkdown = /\*\*.*\*\*|\*[^*\n]+\*|`[^`\n]+`/.test(content);
   const useHtml = (!parse_mode && hasMarkdown) || (parse_mode === "HTML" && hasMarkdown);
-  if (parse_mode === "HTML") {
-    content = content.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-  } else if (useHtml) {
+  if (useHtml) {
     content = formatMarkdownToTelegramHtml(content);
   }
   const effectiveMode = parse_mode === "HTML" ? "HTML" : (useHtml ? "HTML" : undefined);
