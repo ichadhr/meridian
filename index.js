@@ -1049,7 +1049,11 @@ async function manageVirtualPositions() {
         oorMinutes = 0;
       }
 
-      // 10. Close rules (same priority as getDeterministicCloseRule)
+      // 10. Track trailing TP peak (before close rules so they see current peak)
+      const prevPeak = vp._peak_pnl_pct ?? 0;
+      vp._peak_pnl_pct = Math.max(prevPeak, pnlPct);
+
+      // 11. Close rules (same priority as getDeterministicCloseRule)
       const mgmtCfg = config.management;
       let closeReason = null;
 
@@ -1058,6 +1062,12 @@ async function manageVirtualPositions() {
 
       if (!pnlSuspect && pnlPct <= (mgmtCfg.stopLossPct ?? -50)) {
         closeReason = "stop_loss";
+      } else if (
+        !pnlSuspect && mgmtCfg.trailingTakeProfit !== false &&
+        mgmtCfg.trailingTriggerPct != null && pnlPct >= mgmtCfg.trailingTriggerPct &&
+        (vp._peak_pnl_pct ?? pnlPct) - pnlPct >= (mgmtCfg.trailingDropPct ?? 1.5)
+      ) {
+        closeReason = "trailing_tp";
       } else if (!pnlSuspect && pnlPct >= (mgmtCfg.takeProfitPct ?? 5)) {
         closeReason = "take_profit";
       } else if (
@@ -1101,6 +1111,7 @@ async function manageVirtualPositions() {
         current_value_usd: currentValueUsd,
         last_sync_at: new Date().toISOString(),
         _data_fail_count: 0,
+        _peak_pnl_pct: vp._peak_pnl_pct,
         _oor_since: oorSince,
         _oor_minutes: oorMinutes,
         snapshots,

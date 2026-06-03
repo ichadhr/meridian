@@ -72,6 +72,7 @@ export function trackVirtualPosition({
     last_sync_at: null,
     _oor_since: null,
     _oor_minutes: 0,
+    _peak_pnl_pct: 0,
     snapshots: [],
     close_reason: null,
     close_pnl_usd: null,
