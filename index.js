@@ -29,7 +29,7 @@ import {
 import { generateBriefing } from "./briefing.js";
 import { getLastBriefingDate, setLastBriefingDate, getTrackedPosition, getTrackedPositions, setPositionInstruction, updatePnlAndCheckExits, queuePeakConfirmation, resolvePendingPeak, queueTrailingDropConfirmation, resolvePendingTrailingDrop } from "./state.js";
 import { getActiveStrategy } from "./strategy-library.js";
-import { recordPositionSnapshot, recallForPool, addPoolNote } from "./pool-memory.js";
+import { recordPositionSnapshot, recallForPool, addPoolNote, recordPoolDeploy } from "./pool-memory.js";
 import { checkSmartWalletsOnPool } from "./smart-wallets.js";
 import { getTokenNarrative, getTokenInfo } from "./tools/token.js";
 import { stageSignals } from "./signal-tracker.js";
@@ -1108,9 +1108,23 @@ async function manageVirtualPositions() {
 
       if (closeReason) {
         const pnlUsd = currentValueUsd - vp.initial_value_usd;
-        closeVirtualPosition(vp.id, closeReason, Math.round(pnlPct * 100) / 100, Math.round(pnlUsd * 100) / 100);
+        const closedPnlPct = Math.round(pnlPct * 100) / 100;
+        const closedPnlUsd = Math.round(pnlUsd * 100) / 100;
+        closeVirtualPosition(vp.id, closeReason, closedPnlPct, closedPnlUsd);
+        // Record in pool memory so cooldowns apply (same as live mode)
+        try {
+          recordPoolDeploy(vp.pool, {
+            pool_name: vp.pair,
+            pnl_pct: closedPnlPct,
+            close_reason: closeReason,
+            closed_at: new Date().toISOString(),
+            is_virtual: true,
+          });
+        } catch (e) {
+          log("dry_run_mgmt", `Pool memory failed: ${e.message}`);
+        }
         const pnlEmoji = pnlPct >= 0 ? "🟢" : "🔴";
-        lines.push(`${pnlEmoji} ${vp.pair} | CLOSED ${closeReason} | PnL: ${Math.round(pnlPct * 100) / 100}%`);
+        lines.push(`${pnlEmoji} ${vp.pair} | CLOSED ${closeReason} | PnL: ${closedPnlPct}%`);
       } else {
         const rangeStatus = inRange ? "🟢 IN" : "🔴 OOR";
         lines.push(`  ${vp.pair} | ${rangeStatus} | $${Math.round(currentValueUsd * 100) / 100} | PnL: ${Math.round(pnlPct * 100) / 100}%`);

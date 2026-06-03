@@ -134,6 +134,7 @@ export function recordPoolDeploy(poolAddress, deployData) {
     close_reason: deployData.close_reason || null,
     strategy: deployData.strategy || null,
     volatility_at_deploy: deployData.volatility ?? null,
+    is_virtual: deployData.is_virtual === true,
   };
 
   entry.deploys.push(deploy);
@@ -141,8 +142,8 @@ export function recordPoolDeploy(poolAddress, deployData) {
   entry.last_deployed_at = deploy.closed_at;
   entry.last_outcome = (deploy.pnl_pct ?? 0) >= 0 ? "profit" : "loss";
 
-  // Recompute aggregates
-  const withPnl = entry.deploys.filter((d) => d.pnl_pct != null);
+  // Recompute aggregates (exclude virtual deploys to avoid polluting real stats)
+  const withPnl = entry.deploys.filter((d) => d.pnl_pct != null && !d.is_virtual);
   if (withPnl.length > 0) {
     entry.avg_pnl_pct = Math.round(
       (withPnl.reduce((s, d) => s + d.pnl_pct, 0) / withPnl.length) * 100
