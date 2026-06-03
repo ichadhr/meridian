@@ -1028,19 +1028,29 @@ async function manageVirtualPositions() {
 
       // 6. Position value in SOL terms (mark-to-market)
       const solPart = (vp.amount_sol || 0) * (1 - pctConverted);
-      const xPartInSol = (vp.amount_sol || 0) * pctConverted * priceRatio;
+      // DLMM spot distributes Y proportional to bin price; 2-bin harmonic approximation:
+      // factor = 2 * priceRatio / (1 + priceRatio), not just priceRatio
+      const harmonicFactor = priceRatio === 1 ? 1 : (2 * priceRatio) / (1 + priceRatio);
+      const xPartInSol = (vp.amount_sol || 0) * pctConverted * harmonicFactor;
       const positionValueSol = solPart + xPartInSol;
 
       // 7. Fee accrual this cycle
-      // formula: positionValue × sol_price × (fee_per_tvl_24h/100) × (elapsed_minutes/1440) × SINGLE_SIDE_SPOT_FEE_DISCOUNT
+      // fee_per_tvl_24h is in percentage points (0.29 = 0.29%), divide by 100 for math
       const rawFeeThisCycle = positionValueSol * solPrice * (feePerTvl24h / 100) * (elapsedMin / 1440);
       const feeThisCycleUsd = inRange ? rawFeeThisCycle * SINGLE_SIDE_SPOT_FEE_DISCOUNT : 0;
 
       // 8. Total values
       const totalFeesUsd = (vp.total_fees_earned_usd || 0) + feeThisCycleUsd;
       const currentValueUsd = (positionValueSol * solPrice) + totalFeesUsd;
+
+      // SOL-based PnL (used for close rules — isolates pool performance from SOL price noise)
+      const pnlPctSol = vp.amount_sol > 0
+        ? ((positionValueSol - vp.amount_sol) / vp.amount_sol) * 100
+        : 0;
+      // USD PnL (consistent — uses deploy SOL price so SOL price swings don't distort)
+      const deploySolPrice = vp.sol_price_at_deploy || solPrice || 150;
       const pnlPct = vp.initial_value_usd > 0
-        ? ((currentValueUsd - vp.initial_value_usd) / vp.initial_value_usd) * 100
+        ? (((positionValueSol * deploySolPrice) + totalFeesUsd - vp.initial_value_usd) / vp.initial_value_usd) * 100
         : 0;
 
       // 9. Track OOR minutes (before close rules so they see current value)
@@ -1054,26 +1064,26 @@ async function manageVirtualPositions() {
         oorMinutes = 0;
       }
 
-      // 10. Track trailing TP peak (before close rules so they see current peak)
+      // 10. Track trailing TP peak (before close rules so they see current peak, uses SOL PnL)
       const prevPeak = vp._peak_pnl_pct ?? 0;
-      vp._peak_pnl_pct = Math.max(prevPeak, pnlPct);
+      vp._peak_pnl_pct = Math.max(prevPeak, pnlPctSol);
 
-      // 11. Close rules (same priority as getDeterministicCloseRule)
+      // 11. Close rules (same priority as getDeterministicCloseRule) — uses SOL-based PnL
       const mgmtCfg = config.management;
       let closeReason = null;
 
-      // PnL suspect guard: if PnL < -90% but position value isn't near zero, skip PnL-based rules
-      const pnlSuspect = pnlPct < -90 && (positionValueSol * solPrice) > vp.initial_value_usd * 0.1;
+      // PnL suspect guard: if SOL PnL < -90% but position value isn't near zero, skip
+      const pnlSuspect = pnlPctSol < -90 && positionValueSol > vp.amount_sol * 0.1;
 
-      if (!pnlSuspect && pnlPct <= (mgmtCfg.stopLossPct ?? -50)) {
+      if (!pnlSuspect && pnlPctSol <= (mgmtCfg.stopLossPct ?? -50)) {
         closeReason = "stop_loss";
       } else if (
         !pnlSuspect && mgmtCfg.trailingTakeProfit !== false &&
-        mgmtCfg.trailingTriggerPct != null && pnlPct >= mgmtCfg.trailingTriggerPct &&
-        (vp._peak_pnl_pct ?? pnlPct) - pnlPct >= (mgmtCfg.trailingDropPct ?? 1.5)
+        mgmtCfg.trailingTriggerPct != null && pnlPctSol >= mgmtCfg.trailingTriggerPct &&
+        (vp._peak_pnl_pct ?? pnlPctSol) - pnlPctSol >= (mgmtCfg.trailingDropPct ?? 1.5)
       ) {
         closeReason = "trailing_tp";
-      } else if (!pnlSuspect && pnlPct >= (mgmtCfg.takeProfitPct ?? 5)) {
+      } else if (!pnlSuspect && pnlPctSol >= (mgmtCfg.takeProfitPct ?? 5)) {
         closeReason = "take_profit";
       } else if (
         currentActiveBin != null && vp.upper_bin != null &&
@@ -1105,6 +1115,7 @@ async function manageVirtualPositions() {
         fees_cumulative_usd: Math.round(totalFeesUsd * 10000) / 10000,
         total_value_usd: Math.round(currentValueUsd * 100) / 100,
         pnl_pct: Math.round(pnlPct * 100) / 100,
+        pnl_pct_sol: Math.round(pnlPctSol * 100) / 100,
         peak_pnl_pct: Math.round(vp._peak_pnl_pct * 100) / 100,
         oor_minutes: Math.round(oorMinutes * 10) / 10,
       };
@@ -1123,16 +1134,16 @@ async function manageVirtualPositions() {
         snapshots,
       });
 
+      // On close: record SOL-based PnL (what the close rules used) both in archive and pool memory
       if (closeReason) {
-        const pnlUsd = currentValueUsd - vp.initial_value_usd;
-        const closedPnlPct = Math.round(pnlPct * 100) / 100;
-        const closedPnlUsd = Math.round(pnlUsd * 100) / 100;
-        closeVirtualPosition(vp.id, closeReason, closedPnlPct, closedPnlUsd);
-        // Record in pool memory so cooldowns apply (same as live mode)
+        const closedPnlPctSol = Math.round(pnlPctSol * 100) / 100;
+        // USD PnL at deploy SOL price (consistent with initial_value_usd)
+        const closedPnlUsd = Math.round(((positionValueSol - vp.amount_sol) * deploySolPrice + totalFeesUsd) * 100) / 100;
+        closeVirtualPosition(vp.id, closeReason, closedPnlPctSol, closedPnlUsd);
         try {
           recordPoolDeploy(vp.pool, {
             pool_name: vp.pair,
-            pnl_pct: closedPnlPct,
+            pnl_pct: closedPnlPctSol,
             close_reason: closeReason,
             closed_at: new Date().toISOString(),
             is_virtual: true,
@@ -1140,8 +1151,8 @@ async function manageVirtualPositions() {
         } catch (e) {
           log("dry_run_mgmt", `Pool memory failed: ${e.message}`);
         }
-        const pnlEmoji = pnlPct >= 0 ? "🟢" : "🔴";
-        lines.push(`${pnlEmoji} ${vp.pair} | CLOSED ${closeReason} | PnL: ${closedPnlPct}%`);
+        const pnlEmoji = pnlPctSol >= 0 ? "🟢" : "🔴";
+        lines.push(`${pnlEmoji} ${vp.pair} | CLOSED ${closeReason} | PnL: ${closedPnlPctSol}%`);
       } else {
         const rangeStatus = inRange ? "🟢 IN" : "🔴 OOR";
         lines.push(`  ${vp.pair} | ${rangeStatus} | $${Math.round(currentValueUsd * 100) / 100} | PnL: ${Math.round(pnlPct * 100) / 100}%`);

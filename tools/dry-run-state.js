@@ -45,6 +45,7 @@ export function trackVirtualPosition({
   amount_sol,
   fee_per_tvl_24h,
   initial_value_usd,
+  sol_price_at_deploy,
   deploy_rationale,
 }) {
   const state = load();
@@ -66,6 +67,7 @@ export function trackVirtualPosition({
     fee_per_tvl_24h_at_deploy: fee_per_tvl_24h ?? null,
     fee_per_tvl_24h: fee_per_tvl_24h ?? null,
     initial_value_usd,
+    sol_price_at_deploy: sol_price_at_deploy ?? null,
     deploy_rationale: deploy_rationale || null,
     total_fees_earned_usd: 0,
     current_value_usd: initial_value_usd,

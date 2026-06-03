@@ -607,6 +607,13 @@ export async function executeTool(name, args) {
         if (result.dry_run && result.would_deploy && result.would_deploy.pool_address) {
           const deploy = result.would_deploy;
           try {
+            // Fetch actual SOL price at deploy time
+            let solPriceAtDeploy = 150;
+            try {
+              const bal = await getWalletBalances();
+              solPriceAtDeploy = bal.sol_price || 150;
+            } catch {}
+            const amtSol = parseFloat(deploy.amount_y ?? args.amount_y ?? args.amount_sol ?? 0);
             trackVirtualPosition({
               pool: deploy.pool_address || args.pool_address,
               pool_name: deploy.pool_name || args.pool_name || null,
@@ -617,11 +624,12 @@ export async function executeTool(name, args) {
               upper_bin: deploy.upper_bin_id ?? null,
               active_bin: deploy.active_bin_id ?? null,
               bin_step: deploy.bin_step ?? args.bin_step ?? null,
-              amount_sol: parseFloat(deploy.amount_y ?? args.amount_y ?? args.amount_sol ?? 0),
+              amount_sol: amtSol,
               fee_per_tvl_24h: parseFloat(args.fee_tvl_ratio ?? args.fee_per_tvl_24h ?? 0),
               deploy_rationale: args.deploy_rationale || null,
-              // Compute initial_value_usd from SOL amount, ignore LLM's value (often wrong)
-              initial_value_usd: parseFloat(deploy.amount_y ?? args.amount_y ?? args.amount_sol ?? 0) * 150,
+              // initial_value_usd at the actual SOL price at deploy time
+              initial_value_usd: amtSol * solPriceAtDeploy,
+              sol_price_at_deploy: solPriceAtDeploy,
             });
           } catch (e) {
             log("executor_warn", `Failed to record virtual position: ${e.message}`);
