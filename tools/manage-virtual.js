@@ -114,7 +114,12 @@ export function computeVirtualPnl(vp, binData, solPrice) {
 
 /**
  * Deterministic close rules for virtual positions.
- * Simpler than real-position rules — no fee_per_tvl_24h, no trailing TP, no instructions.
+ * Static close rules only — trailing TP handled by the caller.
+ *
+ * NOTE: LOW_YIELD (minFeePerTvl24h / minAgeBeforeYieldCheck) is intentionally
+ * omitted — it relies on the pool-level feePerTvl24h from the Meteora API
+ * (getMyPositions), which VP does not fetch. A synthetic backward-looking
+ * approximation would be semantically different and not worth the complexity.
  *
  * @param {object} vp                Virtual position
  * @param {number} pnlPct            Current PnL percentage
@@ -229,8 +234,40 @@ export async function runVirtualManagementCycle() {
         _peak_pnl_pct: Math.max(vp._peak_pnl_pct || 0, pnl.pnlPct),
         _oor_since: oorSince,
         _oor_minutes: effectiveOorMinutes,
+        _trailing_active: vp._trailing_active || false,
+        _trailing_pending: vp._trailing_pending || false,
+        _trailing_pending_since: vp._trailing_pending_since || null,
         last_sync_at: new Date().toISOString(),
       };
+
+      // ── Trailing TP state machine (2-cycle confirmation) ──────────
+      let trailingActive = updates._trailing_active;
+      let trailingPending = updates._trailing_pending;
+      let trailingCloseReason = null;
+
+      if (mgmtConfig.trailingTakeProfit && !trailingActive && (updates._peak_pnl_pct || 0) >= (mgmtConfig.trailingTriggerPct ?? 6)) {
+        trailingActive = true;
+      }
+
+      if (mgmtConfig.trailingTakeProfit && trailingActive) {
+        const peak = updates._peak_pnl_pct || 0;
+        const dropFromPeak = peak - pnl.pnlPct;
+        const effectiveDropPct = mgmtConfig.trailingDropPct ?? 2.5;
+        if (dropFromPeak >= effectiveDropPct && pnl.pnlPct >= 0) {
+          if (trailingPending) {
+            trailingCloseReason = `trailing TP: peak ${peak.toFixed(2)}% → current ${pnl.pnlPct.toFixed(2)}% (dropped ${dropFromPeak.toFixed(2)}% ≥ ${effectiveDropPct}%)`;
+          } else {
+            trailingPending = true;
+            updates._trailing_pending_since = new Date().toISOString();
+          }
+        } else {
+          trailingPending = false;
+          updates._trailing_pending_since = null;
+        }
+      }
+
+      updates._trailing_active = trailingActive;
+      updates._trailing_pending = trailingPending;
 
       // ── Snapshots ──────────────────────────────────────────────────
       const snapshots = vp.snapshots || [];
@@ -264,6 +301,22 @@ export async function runVirtualManagementCycle() {
           pnl_usd: pnl.pnlUsd,
         });
         log("vp", `VP ${vp.id} (${vp.pair}) CLOSED: ${closeRule.reason} PnL=${pnl.pnlPct.toFixed(2)}%`);
+        continue;
+      }
+
+      // ── Trailing TP close (2-cycle confirmed) ──────────────────────
+      if (trailingCloseReason) {
+        updateVirtualPosition(vp.id, updates);
+        closeVirtualPosition(vp.id, trailingCloseReason, pnl.pnlPct, pnl.pnlUsd);
+        results.push({
+          id: vp.id,
+          pair: vp.pair,
+          action: "CLOSED",
+          reason: trailingCloseReason,
+          pnl_pct: pnl.pnlPct,
+          pnl_usd: pnl.pnlUsd,
+        });
+        log("vp", `VP ${vp.id} (${vp.pair}) CLOSED: ${trailingCloseReason}`);
         continue;
       }
 
