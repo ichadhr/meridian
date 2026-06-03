@@ -772,6 +772,7 @@ async function runSafetyChecks(name, args) {
           reason: `Max positions (${config.risk.maxPositions}) reached. Close a position first.`,
         };
       }
+      // Block duplicate pool in real positions
       const alreadyInPool = positions.positions.some(
         (p) => p.pool === args.pool_address
       );
@@ -780,6 +781,20 @@ async function runSafetyChecks(name, args) {
           pass: false,
           reason: `Already have an open position in pool ${args.pool_address}. Cannot open duplicate.`,
         };
+      }
+      // Block duplicate pool in virtual positions (dry run)
+      if (process.env.DRY_RUN === "true") {
+        try {
+          const { listVirtualPositions } = await import("./dry-run-state.js");
+          const virtualPositions = listVirtualPositions("open");
+          const alreadyVirtual = virtualPositions.some((vp) => vp.pool === args.pool_address);
+          if (alreadyVirtual) {
+            return {
+              pass: false,
+              reason: `Already have a virtual position in pool ${args.pool_address}. Cannot open duplicate.`,
+            };
+          }
+        } catch {} // best-effort — don't block deploy if dry-run-state fails to load
       }
 
       // Block same base token across different pools
