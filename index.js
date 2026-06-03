@@ -10,13 +10,13 @@ import { getWalletBalances } from "./tools/wallet.js";
 import { getTopCandidates } from "./tools/screening.js";
 import { config, reloadScreeningThresholds, computeDeployAmount } from "./config.js";
 import { evolveThresholds, getPerformanceSummary } from "./lessons.js";
-import { executeTool, registerCronRestarter } from "./tools/executor.js";
+import { executeTool, registerCronRestarter, registerScreeningTrigger } from "./tools/executor.js";
 import {
   startPolling,
   stopPolling,
   sendMessage,
   sendMessageWithButtons,
-  sendHTML,
+  sendLongMessage,
   editMessage,
   editMessageWithButtons,
   answerCallbackQuery,
@@ -34,6 +34,7 @@ import { stageSignals } from "./signal-tracker.js";
 import { getWeightsSummary } from "./signal-weights.js";
 import { bootstrapHiveMind, ensureAgentId, getHiveMindPullMode, isHiveMindEnabled, pullHiveMindLessons, pullHiveMindPresets, registerHiveMindAgent, startHiveMindBackgroundSync } from "./hivemind.js";
 import { appendDecision } from "./decision-log.js";
+import { runVirtualManagementCycle } from "./tools/manage-virtual.js";
 
 const entrypointPath = process.env.pm_exec_path || process.argv[1];
 const isMain = entrypointPath
@@ -86,6 +87,7 @@ let _cronTasks = [];
 let _managementBusy = false; // prevents overlapping management cycles
 let _screeningBusy = false;  // prevents overlapping screening cycles
 let _screeningLastTriggered = 0; // epoch ms — prevents management from spamming screening
+const SCREENING_COOLDOWN_MS = 5 * 60 * 1000; // minimum gap between screening cycles
 let _pollTriggeredAt = 0; // epoch ms — cooldown for poller-triggered management
 const _peakConfirmTimers = new Map();
 const _trailingDropConfirmTimers = new Map();
@@ -163,7 +165,7 @@ async function runBriefing() {
   try {
     const briefing = await generateBriefing();
     if (telegramEnabled()) {
-      await sendHTML(briefing);
+      await sendLongMessage(briefing, { parse_mode: "HTML" });
     }
     setLastBriefingDate();
   } catch (error) {
@@ -204,8 +206,6 @@ export async function runManagementCycle({ silent = false } = {}) {
   let mgmtReport = null;
   let positions = [];
   let liveMessage = null;
-  const screeningCooldownMs = 5 * 60 * 1000;
-
   try {
     if (!silent && telegramEnabled()) {
       liveMessage = await createLiveMessage("🔄 Management Cycle", "Evaluating positions...");
@@ -216,7 +216,7 @@ export async function runManagementCycle({ silent = false } = {}) {
     if (positions.length === 0) {
       log("cron", "No open positions — triggering screening cycle");
       mgmtReport = "No open positions. Triggering screening cycle.";
-      runScreeningCycle().catch((e) => log("cron_error", `Triggered screening failed: ${e.message}`));
+      tryStartScreening("mgmt-no-positions");
       return mgmtReport;
     }
 
@@ -349,12 +349,40 @@ After executing, write a brief one-line result per position.
       await liveMessage?.note("No tool actions needed.");
     }
 
+    // ── Virtual positions management (deterministic, no LLM) ──────
+    const vpResults = [];
+    if (process.env.DRY_RUN === "true") {
+      try {
+        const results = await runVirtualManagementCycle();
+        vpResults.push(...results);
+        const vpClosed = results.filter(r => r.action === "CLOSED");
+        const vpStay = results.filter(r => r.action === "STAY");
+        if (results.length > 0) {
+          log("cron", `Virtual positions: ${vpStay.length} active, ${vpClosed.length} closed`);
+        }
+      } catch (e) {
+        log("cron_error", `Virtual position management failed: ${e.message}`);
+      }
+    }
+
+    // Append VP summary to management report
+    if (vpResults.length > 0) {
+      const vpLines = vpResults.map(r => {
+        if (r.action === "CLOSED") {
+          return `🎭 **${r.pair}** (VP) CLOSED: ${r.reason} | PnL: ${r.pnl_pct?.toFixed(2)}%`;
+        }
+        const val = config.management.solMode ? `◎${(r.value_sol ?? 0).toFixed(4)}` : `$${(r.value_usd ?? 0).toFixed(4)}`;
+        const fees = config.management.solMode ? `◎${(r.unclaimed_fees_usd ?? 0).toFixed(4)}` : `$${(r.unclaimed_fees_usd ?? 0).toFixed(4)}`;
+        return `🎭 **${r.pair}** (VP) | Val: ${val} | Fees: ${fees} | PnL: ${r.pnl_pct?.toFixed(2)}% | ${r.oor}`;
+      }).join("\n");
+      mgmtReport += `\n\n---\n**Virtual Positions**\n${vpLines}`;
+    }
+
     // Trigger screening after management
     const afterPositions = await getMyPositions({ force: true }).catch(() => null);
     const afterCount = afterPositions?.positions?.length ?? 0;
-    if (afterCount < config.risk.maxPositions && Date.now() - _screeningLastTriggered > screeningCooldownMs) {
-      log("cron", `Post-management: ${afterCount}/${config.risk.maxPositions} positions — triggering screening`);
-      runScreeningCycle().catch((e) => log("cron_error", `Triggered screening failed: ${e.message}`));
+    if (afterCount < config.risk.maxPositions) {
+      tryStartScreening("mgmt-post-management");
     }
   } catch (error) {
     log("cron_error", `Management cycle failed: ${error.message}`);
@@ -364,7 +392,7 @@ After executing, write a brief one-line result per position.
     if (!silent && telegramEnabled()) {
       if (mgmtReport) {
         if (liveMessage) await liveMessage.finalize(stripThink(mgmtReport)).catch(() => {});
-        else sendMessage(`🔄 Management Cycle\n\n${stripThink(mgmtReport)}`).catch(() => { });
+        else sendLongMessage(`🔄 Management Cycle\n\n${stripThink(mgmtReport)}`).catch(() => { });
       }
       for (const p of positions) {
         if (!p.in_range && p.minutes_out_of_range >= config.management.outOfRangeWaitMinutes) {
@@ -376,13 +404,31 @@ After executing, write a brief one-line result per position.
   return mgmtReport;
 }
 
+/**
+ * Fire screening cycle if not already running and cooldown has elapsed.
+ * All callers should use this instead of calling runScreeningCycle directly,
+ * to avoid overlapping cycles and provide clear source attribution in logs.
+ */
+function tryStartScreening(source, silent = false) {
+  if (_screeningBusy) {
+    log("cron", `Screening skipped (${source}) — already running`);
+    return false;
+  }
+  if (Date.now() - _screeningLastTriggered < SCREENING_COOLDOWN_MS) {
+    const remaining = Math.ceil((SCREENING_COOLDOWN_MS - (Date.now() - _screeningLastTriggered)) / 1000);
+    log("cron", `Screening skipped (${source}) — cooldown active (${remaining}s remaining)`);
+    return false;
+  }
+  runScreeningCycle({ silent }).catch(e => log("cron_error", `${source} failed: ${e.message}`));
+  return true;
+}
+
 export async function runScreeningCycle({ silent = false } = {}) {
   if (_screeningBusy) {
     log("cron", "Screening skipped — previous cycle still running");
     return null;
   }
   _screeningBusy = true; // set immediately — prevents TOCTOU race with concurrent callers
-  _screeningLastTriggered = Date.now();
 
   // Hard guards — don't even run the agent if preconditions aren't met
   let prePositions, preBalance;
@@ -422,6 +468,7 @@ export async function runScreeningCycle({ silent = false } = {}) {
     _screeningBusy = false;
     return screenReport;
   }
+  _screeningLastTriggered = Date.now();
   if (!silent && telegramEnabled()) {
     liveMessage = await createLiveMessage("🔍 Screening Cycle", "Scanning candidates...");
   }
@@ -718,7 +765,7 @@ IMPORTANT:
     if (!silent && telegramEnabled()) {
       if (screenReport) {
         if (liveMessage) await liveMessage.finalize(stripThink(screenReport)).catch(() => {});
-        else sendMessage(`🔍 Screening Cycle\n\n${stripThink(screenReport)}`).catch(() => { });
+        else sendLongMessage(`🔍 Screening Cycle\n\n${stripThink(screenReport)}`).catch(() => { });
       }
     }
   }
@@ -1350,7 +1397,6 @@ async function deployLatestCandidate(index) {
     volatility: candidate.volatility,
     fee_tvl_ratio: candidate.fee_active_tvl_ratio ?? candidate.fee_tvl_ratio,
     organic_score: candidate.organic_score,
-    initial_value_usd: candidate.tvl ?? candidate.active_tvl ?? null,
   });
   if (result?.success === false || result?.error) {
     throw new Error(result.error || "Deploy failed");
@@ -1381,7 +1427,7 @@ async function drainTelegramQueue() {
 }
 
 async function telegramHandler(msg) {
-  const text = msg?.text?.trim();
+  const text = msg?.text?.trim().split("@")[0];
   if (!text) return;
   if (msg?.isCallback && text.startsWith("cfg:")) {
     try {
@@ -1408,7 +1454,7 @@ async function telegramHandler(msg) {
   if (text === "/briefing") {
     try {
       const briefing = await generateBriefing();
-      await sendHTML(briefing);
+      await sendLongMessage(briefing, { parse_mode: "HTML" });
     } catch (e) {
       await sendMessage(`Error: ${e.message}`).catch(() => {});
     }
@@ -1490,6 +1536,8 @@ async function telegramHandler(msg) {
         const closeTxs = result.close_txs?.length ? result.close_txs : result.txs;
         const claimNote = result.claim_txs?.length ? `\nClaim txs: ${result.claim_txs.join(", ")}` : "";
         await sendMessage(`✅ Closed ${pos.pair}\nPnL: ${config.management.solMode ? "◎" : "$"}${result.pnl_usd ?? "?"} | close txs: ${closeTxs?.join(", ") || "n/a"}${claimNote}`);
+        // Screening trigger — slot freed, don't let SOL sit idle
+        tryStartScreening("telegram-close", true);
       } else {
         await sendMessage(`❌ Close failed: ${JSON.stringify(result)}`);
       }
@@ -1512,6 +1560,8 @@ async function telegramHandler(msg) {
         }
       }
       await sendMessage(`Close-all finished.\n\n${results.join("\n")}`).catch(() => {});
+      // Screening trigger — slot(s) freed
+      tryStartScreening("telegram-closeall", true);
     } catch (e) {
       await sendMessage(`Error: ${e.message}`).catch(() => {});
     }
@@ -1655,7 +1705,7 @@ async function telegramHandler(msg) {
     });
     appendHistory(text, content);
     if (liveMessage) await liveMessage.finalize(stripThink(content));
-    else await sendMessage(stripThink(content));
+    else await sendLongMessage(stripThink(content));
   } catch (e) {
     if (liveMessage) await liveMessage.fail(e.message).catch(() => {});
     else await sendMessage(`Error: ${e.message}`).catch(() => {});
@@ -1707,6 +1757,7 @@ function computeBinsBelow(volatility) {
 
 // Register restarter — when update_config changes intervals, running cron jobs get replaced
 registerCronRestarter(() => { if (cronStarted) startCronJobs(); });
+registerScreeningTrigger(() => tryStartScreening("post-close-executor", true));
 
 if (isMain && isTTY) {
   const rl = readline.createInterface({

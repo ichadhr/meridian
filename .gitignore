@@ -12,6 +12,11 @@ user-config.json
 
 # Runtime state (position tracking, lessons — user-specific)
 state.json
+dry-run-state.json
+dry-run-state-archive-*.json
+
+# Generated reports
+dry-run-report.html
 lessons.json
 smart-wallets.json
 pool-memory.json
@@ -32,6 +37,14 @@ context.md
 CONTEXT.md
 dev-blocklist.json
 docs/
+DESIGN.md
+design/
+
+# IDE / agent config
+.opencode/
+
+# Package manager lockfiles (repo uses npm)
+bun.lock
 
 # Discord listener queue
 discord-signals.json

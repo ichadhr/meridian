@@ -141,6 +141,70 @@ export async function sendHTML(html) {
   return postTelegram("sendMessage", { text: html.slice(0, 4096), parse_mode: "HTML" });
 }
 
+/**
+ * Convert common markdown patterns to Telegram-safe HTML.
+ * Covers **bold**, *italic*, `code` — the patterns LLMs most commonly generate.
+ * Headers, tables, and lists are left as plain text (safe, no rejection risk).
+ */
+function formatMarkdownToTelegramHtml(text) {
+  // Must escape HTML entities first (before markdown conversion adds tags)
+  // so literal < > & in text don't cause parse_mode="HTML" rejections.
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\*\*(.+?)\*\*/g, "<b>$1</b>")
+    .replace(/\*([^*\n]+?)\*/g, "<i>$1</i>")
+    .replace(/`([^`\n]+?)`/g, "<code>$1</code>");
+}
+
+/**
+ * Send a long message by splitting at paragraph boundaries under 4096 chars.
+ * Falls back to sendMessage for short messages. Supports optional parse_mode.
+ * When no parse_mode is specified, auto-formats markdown patterns to HTML.
+ */
+export async function sendLongMessage(text, { parse_mode } = {}) {
+  if (!TOKEN || !chatId) return;
+  let content = String(text);
+  const hasMarkdown = /\*\*.*\*\*|\*[^*\n]+\*|`[^`\n]+`/.test(content);
+  const useHtml = (!parse_mode && hasMarkdown) || (parse_mode === "HTML" && hasMarkdown);
+  if (parse_mode === "HTML") {
+    content = content.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  } else if (useHtml) {
+    content = formatMarkdownToTelegramHtml(content);
+  }
+  const effectiveMode = parse_mode === "HTML" ? "HTML" : (useHtml ? "HTML" : undefined);
+  const maxLen = 4096;
+  let remaining = content;
+  let isFirst = true;
+
+  while (remaining.length > 0) {
+    const chunk = remaining.length <= maxLen
+      ? remaining
+      : splitAtBoundary(remaining, maxLen);
+
+    const payload = { text: isFirst ? chunk : "🔍 Continued...\n\n" + chunk };
+    if (effectiveMode) payload.parse_mode = effectiveMode;
+    await postTelegram("sendMessage", payload);
+
+    if (remaining.length <= maxLen) return;
+    remaining = remaining.slice(chunk.length).trimStart();
+    isFirst = false;
+  }
+}
+
+function splitAtBoundary(text, maxLen) {
+  let at = text.lastIndexOf("\n\n", maxLen);
+  if (at < maxLen / 2) at = text.lastIndexOf("\n", maxLen);
+  if (at < maxLen / 2) at = maxLen;
+  // Don't split inside a UTF-16 surrogate pair
+  if (at > 0 && at < text.length) {
+    const code = text.charCodeAt(at - 1);
+    if (code >= 0xD800 && code <= 0xDBFF) at--; // high surrogate → back up
+  }
+  return text.slice(0, at);
+}
+
 export async function editMessage(text, messageId) {
   if (!TOKEN || !chatId || !messageId) return null;
   return postTelegram("editMessageText", {
@@ -252,6 +316,8 @@ export async function createLiveMessage(title, intro = "Starting...") {
   if (!TOKEN || !chatId) return null;
   const typing = createTypingIndicator();
 
+  let _lastParseMode = null;
+
   const state = {
     title,
     intro,
@@ -268,19 +334,24 @@ export async function createLiveMessage(title, intro = "Starting...") {
     if (state.intro) sections.push(state.intro);
     if (state.toolLines.length > 0) sections.push(state.toolLines.join("\n"));
     if (state.footer) sections.push(state.footer);
-    return sections.join("\n\n").slice(0, 4096);
+    const text = sections.join("\n\n").slice(0, 4096);
+    const hasHtml = /<\/?[a-z][^>]*>|\*\*|\*[^*\n]+\*|`[^`\n]+`/.test(text);
+    _lastParseMode = hasHtml ? "HTML" : null;
+    return hasHtml ? formatMarkdownToTelegramHtml(text) : text;
   }
 
   async function flushNow() {
     state.flushTimer = null;
     state.flushRequested = false;
     const text = render();
+    const params = { text };
+    if (_lastParseMode) params.parse_mode = _lastParseMode;
     if (!state.messageId) {
-      const sent = await sendMessage(text);
+      const sent = await postTelegram("sendMessage", params);
       state.messageId = sent?.result?.message_id ?? null;
       return;
     }
-    await editMessage(text, state.messageId);
+    await postTelegram("editMessageText", { message_id: state.messageId, ...params });
   }
 
   function scheduleFlush(delay = 300) {

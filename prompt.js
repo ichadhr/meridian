@@ -99,6 +99,8 @@ IMPORTANT: fee_active_tvl_ratio values are ALREADY in percentage form. 0.29 = 0.
 
 Current screening timeframe: ${config.screening.timeframe} — interpret all non-volatility metrics relative to this window. Interpret volatility using the candidate's volatility_* label.
 
+⚠️ Volatility-tier note: The ranges above assume volatility ~1–2. At vol=5+, the same ratio value means the pool is earning more per unit of volatility than the range suggests. Use judgment — don't mechanically reject a high-vol pool just because its ratio looks "decent" when the vol suggests it's actually strong.
+
 `;
 
   if (agentType === "SCREENER") {

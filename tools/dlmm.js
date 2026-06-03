@@ -23,6 +23,7 @@ import {
   minutesOutOfRange,
   syncOpenPositions,
 } from "../state.js";
+import { trackVirtualPosition } from "./dry-run-state.js";
 import { recordPerformance } from "../lessons.js";
 import { isBaseMintOnCooldown, isPoolOnCooldown } from "../pool-memory.js";
 import { normalizeMint } from "./wallet.js";
@@ -447,6 +448,29 @@ export async function getActiveBin({ pool_address }) {
   };
 }
 
+// ─── Get Bins In Range ─────────────────────────────────────────
+export async function getBinsInRange({ pool_address, lower_bin, upper_bin }) {
+  pool_address = normalizeMint(pool_address);
+  const pool = await getPool(pool_address);
+  // Guard against swapped bounds (SDK may error or return empty if lower > upper)
+  const minBin = Math.min(lower_bin, upper_bin);
+  const maxBin = Math.max(lower_bin, upper_bin);
+  const result = await pool.getBinsBetweenLowerAndUpperBound(minBin, maxBin);
+  return {
+    activeBin: result.activeBin,
+    bins: result.bins.map((b) => ({
+      binId: b.binId,
+      xAmount: b.xAmount?.toString?.() ?? null,
+      yAmount: b.yAmount?.toString?.() ?? null,
+      supply: b.supply?.toString?.() ?? null,
+      feeAmountXPerTokenStored: b.feeAmountXPerTokenStored?.toString?.() ?? null,
+      feeAmountYPerTokenStored: b.feeAmountYPerTokenStored?.toString?.() ?? null,
+      price: b.price?.toString?.() ?? null,
+      priceHuman: pool.fromPricePerLamport(Number(b.price)),
+    })),
+  };
+}
+
 // ─── Deploy Position ───────────────────────────────────────────
 export async function deployPosition({
   pool_address,
@@ -465,7 +489,6 @@ export async function deployPosition({
   volatility,
   fee_tvl_ratio,
   organic_score,
-  initial_value_usd,
 }) {
   pool_address = normalizeMint(pool_address);
   const activeStrategy = strategy || config.strategy.strategy;
@@ -483,7 +506,7 @@ export async function deployPosition({
     return { success: false, error: "Pool on cooldown — was recently closed with a cooldown reason. Try a different pool." };
   }
 
-  const { StrategyType, getBinIdFromPrice, getPriceOfBinByBinId } = await getDLMM();
+  const { DLMM, StrategyType, getBinIdFromPrice, getPriceOfBinByBinId } = await getDLMM();
   const pool = await getPool(pool_address);
   const baseMint = pool.lbPair.tokenXMint.toString();
   if (isBaseMintOnCooldown(baseMint)) {
@@ -527,10 +550,12 @@ export async function deployPosition({
 
   // Calculate amounts
   // If no explicit SOL amount is provided, fall back to the configured dynamic deploy size.
+  const walletBalances = await getWalletBalances();
   const fallbackAmountY =
     amount_y == null && amount_sol == null
-      ? computeDeployAmount((await getWalletBalances()).sol)
+      ? computeDeployAmount(walletBalances.sol)
       : 0;
+  const solPrice = walletBalances.sol_price || 0;
   const finalAmountY = Number(amount_y ?? amount_sol ?? fallbackAmountY);
   const finalAmountX = Number(amount_x ?? 0);
   if (!Number.isFinite(finalAmountY) || !Number.isFinite(finalAmountX) || finalAmountY < 0 || finalAmountX < 0) {
@@ -570,24 +595,7 @@ export async function deployPosition({
     );
   }
 
-  if (process.env.DRY_RUN === "true") {
-    return {
-      dry_run: true,
-      would_deploy: {
-        pool_address,
-        strategy: activeStrategy,
-        bins_below: activeBinsBelow,
-        bins_above: activeBinsAbove,
-        downside_pct: downside_pct ?? null,
-        upside_pct: upside_pct ?? null,
-        amount_x: finalAmountX,
-        amount_y: finalAmountY,
-        wide_range: totalBins > 69,
-      },
-      message: "DRY RUN — no transaction sent",
-    };
-  }
-
+  // Compute bin range and deposit amounts (needed for both dry-run and real deploy)
   const isWideRange = totalBins > 69;
   const minBinId = activeBin.binId - activeBinsBelow;
   const maxBinId = isSingleSidedSol ? activeBin.binId : activeBin.binId + activeBinsAbove;
@@ -601,6 +609,97 @@ export async function deployPosition({
     );
   }
 
+  const totalYLamports = new BN(Math.floor(finalAmountY * 1e9));
+
+  // ── DRY RUN: track as virtual position ─────────────────────────
+  if (process.env.DRY_RUN === "true") {
+    if (activeStrategy !== "spot") {
+      throw new Error(`Dry-run only supports spot strategy, got: ${activeStrategy}. Use strategy: "spot" for virtual deployments.`);
+    }
+    let vpId = null;
+    try {
+      const { bins } = await getBinsInRange({ pool_address, lower_bin: minBinId, upper_bin: maxBinId });
+      const SCALE = new BN(1).shln(64); // Q64.64 scaling factor
+
+      // Spot strategy distributes Y unevenly across bins:
+      //   - Regular Y-side bins (strictly below active) get weight 1.0 each
+      //   - Active bin gets weight 0.5
+      // This matches the SDK's calculateSpotDistribution logic.
+      const yBinCount = activeBin.binId - minBinId;
+      const totalYBinCapacity = yBinCount + 0.5;
+      const yBinBps = Math.floor(10000 / totalYBinCapacity);
+      const yActiveBinBps = 10000 - yBinBps * yBinCount;
+
+      const binShares = bins.map((b) => {
+        const depositBps = b.binId === activeBin.binId ? yActiveBinBps : yBinBps;
+        const depositY = totalYLamports.mul(new BN(depositBps)).div(new BN(10000));
+
+        // Full liquidity-based share formula (matches SDK's simulateDepositBin):
+        //   inLiquidity = depositY * 2^64            (single-side Y, depositX = 0)
+        //   binLiquidity = price * binX + binY * 2^64
+        //   shares = inLiquidity * binSupply / binLiquidity
+        const priceBN = new BN(b.price ?? "0");
+        const binXBN = new BN(b.xAmount ?? "0");
+        const binYBN = new BN(b.yAmount ?? "0");
+        const binSupplyBN = new BN(b.supply ?? "0");
+
+        const inLiquidity = depositY.mul(SCALE);
+        const binLiquidity = priceBN.mul(binXBN).add(binYBN.mul(SCALE));
+        const shares = binLiquidity.isZero()
+          ? inLiquidity
+          : inLiquidity.mul(binSupplyBN).div(binLiquidity);
+
+        return {
+          binId: b.binId,
+          shares: shares.toString(10),
+          price: b.price,
+          feeXPerTokenComplete: b.feeAmountXPerTokenStored ?? "0",
+          feeYPerTokenComplete: b.feeAmountYPerTokenStored ?? "0",
+          xAmount: b.xAmount,
+          yAmount: b.yAmount,
+        };
+      });
+
+      vpId = trackVirtualPosition({
+        pool: pool_address,
+        pool_name: pool_name ?? null,
+        pair: pool_name ?? null,
+        strategy: activeStrategy,
+        bins_below: activeBinsBelow,
+        lower_bin: minBinId,
+        upper_bin: maxBinId,
+        active_bin: activeBin.binId,
+        bin_step: actualBinStep,
+        amount_sol: finalAmountY,
+        initial_value_usd: solPrice > 0 ? solPrice * finalAmountY : null,
+        bin_shares: binShares,
+      });
+    } catch (e) {
+      log("deploy", `DRY_RUN: bin state capture failed for VP tracking: ${e.message}`);
+    }
+
+    return {
+      dry_run: true,
+      virtual_position_id: vpId,
+      would_deploy: {
+        pool_address,
+        strategy: activeStrategy,
+        bins_below: activeBinsBelow,
+        bins_above: activeBinsAbove,
+        downside_pct: downside_pct ?? null,
+        upside_pct: upside_pct ?? null,
+        amount_x: finalAmountX,
+        amount_y: finalAmountY,
+        wide_range: isWideRange,
+      },
+      message: vpId
+        ? `DRY RUN — virtual position ${vpId} created`
+        : "DRY RUN — no transaction sent (bin capture failed)",
+    };
+  }
+
+  // ── REAL DEPLOY ──────────────────────────────────────────────
+
   await assertRangeDoesNotRequireBinArrayInitialization(pool, minBinId, maxBinId);
 
   const minPrice = Number(getPriceOfBinByBinId(minBinId, actualBinStep).toString());
@@ -609,11 +708,24 @@ export async function deployPosition({
   const upsideCoveragePct = activePrice > 0 ? ((maxPrice - activePrice) / activePrice) * 100 : null;
   const totalWidthPct = minPrice > 0 ? ((maxPrice - minPrice) / minPrice) * 100 : null;
 
-  // Read base fee directly from pool — baseFactor * binStep / 10^6 gives fee in %
-  const baseFactor = pool.lbPair.parameters?.baseFactor ?? 0;
-  const actualBaseFee = base_fee ?? (baseFactor > 0 ? parseFloat((baseFactor * actualBinStep / 1e6 * 100).toFixed(4)) : null);
+  // Use SDK's canonical base fee formula to avoid manual math errors.
+  // SDK: base_fee_rate = baseFactor * binStep * 10 * 10^baseFeePowerFactor
+  //      baseFeeRatePercentage = (baseFeeRate * 100) / 1e9
+  // Note: base_fee param is currently never set by the screening pipeline
+  // (condensePool returns fee_pct, not base_fee). Kept as defensive override.
+  const params = pool.lbPair.parameters ?? {};
+  const baseFactor = params.baseFactor ?? 0;
+  const baseFeePowerFactor = params.baseFeePowerFactor ?? 0;
+  let actualBaseFee = base_fee ?? null;
+  if (actualBaseFee == null && baseFactor > 0) {
+    try {
+      const feeInfo = DLMM.calculateFeeInfo(baseFactor, actualBinStep, baseFeePowerFactor);
+      actualBaseFee = parseFloat(feeInfo.baseFeeRatePercentage.toFixed(4));
+    } catch (err) {
+      log("deploy", `WARN: calculateFeeInfo failed for pool ${pool_address}: ${err.message}`);
+    }
+  }
 
-  const totalYLamports = new BN(Math.floor(finalAmountY * 1e9));
   // Token X amount uses mint decimals when available, falling back to 9.
   let totalXLamports = new BN(0);
   if (finalAmountX > 0) {
@@ -644,7 +756,7 @@ export async function deployPosition({
           percentX: finalAmountX > 0 && finalAmountY > 0 ? 0.5 : 0,
           fromBinId: minBinId,
           toBinId: maxBinId,
-          slippageBps: 500,
+          slippageBps: 150, // 1.5% (matches local SDK path)
           provider: "JUPITER_ULTRA",
         }),
       });
@@ -700,8 +812,7 @@ export async function deployPosition({
           amount_sol: finalAmountY,
           amount_x: finalAmountX,
           active_bin: activeBin.binId,
-          initial_value_usd,
-          signal_snapshot: signalSnapshot,
+          initial_value_usd: solPrice > 0 ? solPrice * finalAmountY : null,
         });
       }
 
@@ -765,6 +876,15 @@ export async function deployPosition({
   log("deploy", `Amount: ${finalAmountX} X, ${finalAmountY} Y`);
   log("deploy", `Position: ${newPosition.publicKey.toString()}`);
 
+  // Warn if active bin drifted during deploy window (observability, no abort)
+  try {
+    const freshBin = await pool.getActiveBin();
+    const binDrift = Math.abs(freshBin.binId - activeBin.binId);
+    if (binDrift > 0) {
+      log("deploy_warn", `Active bin drifted ${binDrift} bin(s) during deploy window for ${pool_address.slice(0, 8)} (range: ${totalBins} bins)`);
+    }
+  } catch { /* best-effort */ }
+
   try {
     const txHashes = [];
 
@@ -797,7 +917,7 @@ export async function deployPosition({
         totalXAmount: totalXLamports,
         totalYAmount: totalYLamports,
         strategy: { minBinId, maxBinId, strategyType },
-        slippage: 10, // 10%
+        slippage: 1.5, // 1.5%
       });
       const addTxArray = Array.isArray(addTxs) ? addTxs : [addTxs];
       for (let i = 0; i < addTxArray.length; i++) {
@@ -813,7 +933,7 @@ export async function deployPosition({
         totalXAmount: totalXLamports,
         totalYAmount: totalYLamports,
         strategy: { maxBinId, minBinId, strategyType },
-        slippage: 1000, // 10% in bps
+        slippage: 1.5, // 1.5%
       });
       const txHash = await sendAndConfirmTransaction(getConnection(), tx, [wallet, newPosition]);
       txHashes.push(txHash);
@@ -838,7 +958,7 @@ export async function deployPosition({
       amount_sol: finalAmountY,
       amount_x: finalAmountX,
       active_bin: activeBin.binId,
-      initial_value_usd,
+      initial_value_usd: solPrice > 0 ? solPrice * finalAmountY : null,
       signal_snapshot: signalSnapshot,
     });
 
@@ -936,7 +1056,7 @@ async function fetchDlmmPnlForPool(poolAddress, walletAddress) {
     if (!res.ok) {
       const body = await res.text().catch(() => "");
       log("pnl_api", `HTTP ${res.status} for pool ${poolAddress.slice(0, 8)}: ${body.slice(0, 120)}`);
-      return {};
+      return { _api_error: true, _http_status: res.status };
     }
     const data = await res.json();
     const positions = data.positions || data.data || [];
@@ -951,7 +1071,7 @@ async function fetchDlmmPnlForPool(poolAddress, walletAddress) {
     return byAddress;
   } catch (e) {
     log("pnl_api", `Fetch error for pool ${poolAddress.slice(0, 8)}: ${e.message}`);
-    return {};
+    return { _api_error: true, _http_status: null };
   }
 }
 
@@ -987,6 +1107,7 @@ export async function getPositionPnl({ pool_address, position_address }) {
   }
   try {
     const byAddress = await fetchDlmmPnlForPool(pool_address, walletAddress);
+    if (byAddress._api_error) return { error: "PnL API unavailable — cannot evaluate position", api_available: false };
     const p = byAddress[position_address];
     if (!p) return { error: "Position not found in PnL API" };
 
@@ -1475,13 +1596,13 @@ export async function claimFees({ position_address }) {
     const pool = await getPool(poolAddress);
 
     const positionData = await pool.getPosition(new PublicKey(position_address));
-    const txs = await pool.claimSwapFee({
+    const txs = await pool.claimAllRewardsByPosition({
       owner: wallet.publicKey,
       position: positionData,
     });
 
     if (!txs || txs.length === 0) {
-      return { success: false, error: "No fees to claim — transaction is empty" };
+      return { success: false, error: "No fees or rewards to claim — transaction is empty" };
     }
 
     const txHashes = [];
