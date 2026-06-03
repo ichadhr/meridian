@@ -620,7 +620,8 @@ export async function executeTool(name, args) {
               amount_sol: parseFloat(deploy.amount_y ?? args.amount_y ?? args.amount_sol ?? 0),
               fee_per_tvl_24h: parseFloat(args.fee_tvl_ratio ?? args.fee_per_tvl_24h ?? 0),
               deploy_rationale: args.deploy_rationale || null,
-              initial_value_usd: parseFloat(args.initial_value_usd ?? parseFloat(deploy.amount_y ?? args.amount_y ?? args.amount_sol ?? 0) * 150),
+              // Compute initial_value_usd from SOL amount, ignore LLM's value (often wrong)
+              initial_value_usd: parseFloat(deploy.amount_y ?? args.amount_y ?? args.amount_sol ?? 0) * 150,
             });
           } catch (e) {
             log("executor_warn", `Failed to record virtual position: ${e.message}`);
