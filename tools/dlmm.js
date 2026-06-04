@@ -28,6 +28,7 @@ import { recordPerformance } from "../lessons.js";
 import { isBaseMintOnCooldown, isPoolOnCooldown } from "../pool-memory.js";
 import { getWalletBalances, normalizeMint, fetchSolPrice } from "./wallet.js";
 import { appendDecision } from "../decision-log.js";
+import { estimateDeployGasSol, estimateCloseGasSol, samplePriorityFee } from "./gas-estimator.js";
 import { agentMeridianJson, getAgentIdForRequests, getAgentMeridianHeaders } from "./agent-meridian.js";
 import { getAndClearStagedSignals } from "../signal-tracker.js";
 
@@ -824,6 +825,29 @@ export async function deployPosition({
         };
       });
 
+      // Estimate per-VP gas cost: deploy is frozen at deploy time, close is
+      // initially captured here and re-estimated on every PnL cycle + at close.
+      // Uses SDK default CU constants + sampled priority fee + base fee.
+      // Rent (~0.145 SOL) is recoverable on close.
+      let gasEstimate = null;
+      try {
+        const conn = getConnection();
+        const [deployGasSol, closeGasSol] = await Promise.all([
+          estimateDeployGasSol(conn),
+          estimateCloseGasSol(conn),
+        ]);
+        // Sample once to get priority fee for logging + storage
+        const pf = await samplePriorityFee(conn);
+        gasEstimate = {
+          deployGasSol,
+          closeGasSol,
+          priorityFee: pf,
+        };
+        log("deploy", `DRY_RUN: gas estimate = deploy=${deployGasSol.toFixed(6)} + close=${closeGasSol.toFixed(6)} = ${(deployGasSol + closeGasSol).toFixed(6)} SOL (pf=${pf} µl/CU)`);
+      } catch (e) {
+        log("deploy", `DRY_RUN: gas estimate failed — ${e.message}; using config default`);
+      }
+
       vpId = trackVirtualPosition({
         pool: pool_address,
         pool_name: pool_name ?? null,
@@ -842,6 +866,12 @@ export async function deployPosition({
         volatility: normalizedVolatility ?? undefined,
         fee_tvl_ratio: fee_tvl_ratio != null ? Number(fee_tvl_ratio) : undefined,
         organic_score: organic_score != null ? Number(organic_score) : undefined,
+        // New VPs: store deploy + close separately
+        deploy_gas_sol: gasEstimate?.deployGasSol,
+        close_gas_sol: gasEstimate?.closeGasSol,
+        gas_priority_fee: gasEstimate?.priorityFee,
+        // Legacy field for back-compat with any in-flight VPs from previous version
+        gas_cost_sol: gasEstimate ? (gasEstimate.deployGasSol + gasEstimate.closeGasSol) : undefined,
       });
     } catch (e) {
       log("deploy", `DRY_RUN: bin state capture failed — ${e.message}`);

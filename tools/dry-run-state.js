@@ -61,6 +61,13 @@ export function trackVirtualPosition({
   volatility,
   fee_tvl_ratio,
   organic_score,
+  // Real-time gas estimate — deploy gas is frozen at deploy time, close gas
+  // is refreshed on every PnL cycle and re-estimated at close with a fresh
+  // priority fee sample.
+  deploy_gas_sol,
+  close_gas_sol,
+  gas_priority_fee, // priority fee (µl/CU) at deploy time, for reference
+  gas_cost_sol,     // legacy: kept for back-compat with VPs deployed under prev. version
 }) {
   const state = load();
   const vp = {
@@ -86,6 +93,15 @@ export function trackVirtualPosition({
     volatility: volatility != null ? Number(volatility) : null,
     fee_tvl_ratio: fee_tvl_ratio != null ? fee_tvl_ratio : null,
     organic_score: organic_score != null ? organic_score : null,
+    // Per-VP gas estimate (SOL) — deploy frozen at deploy time, close refreshed
+    // on every PnL cycle. Falls back to config.management.vpGasCostSol.
+    deploy_gas_sol: deploy_gas_sol != null ? Number(deploy_gas_sol) : null,
+    close_gas_sol: close_gas_sol != null ? Number(close_gas_sol) : null,
+    gas_priority_fee: gas_priority_fee != null ? Number(gas_priority_fee) : null,
+    // Legacy: total gas estimate (used by VPs deployed under the previous
+    // single-field version). computeVirtualPnl falls back to this when
+    // deploy_gas_sol + close_gas_sol are absent.
+    gas_cost_sol: gas_cost_sol != null ? Number(gas_cost_sol) : null,
     total_fees_earned_usd: 0,
     current_value_usd: initial_value_usd,
     last_sync_at: null,

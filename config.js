@@ -120,7 +120,10 @@ export const config = {
     // SOL mode — positions, PnL, and balances reported in SOL instead of USD
     solMode:               u.solMode               ?? false,
     // VP simulation costs (dry-run only — deducted from VP PnL for realism)
-    vpGasCostSol:          u.vpGasCostSol          ?? 0.007,  // estimated deploy + close gas
+    // Measured via scripts/measure-gas.js: 1.58M CU (deploy+close) at 0 priority fee
+    // + 0.00001 SOL base fees. Rent (~0.145 SOL) is fully recovered on close.
+    // 0.0002 covers quiet-to-normal network; ~0.001 covers busy/high-priority.
+    vpGasCostSol:          u.vpGasCostSol          ?? 0.0002,  // deploy + close tx fees
     vpSlippagePct:         u.vpSlippagePct         ?? 0.3,    // estimated entry/exit slippage %
     vpTrendExitCycles:     u.vpTrendExitCycles     ?? 3,      // number of consecutive down cycles under loss to trigger early exit
   },

@@ -1,5 +1,5 @@
 import BN from "bn.js";
-import { getBinsInRange } from "./dlmm.js";
+import { getBinsInRange, getConnection } from "./dlmm.js";
 import {
   listVirtualPositions,
   updateVirtualPosition,
@@ -9,6 +9,7 @@ import { fetchSolPrice } from "./wallet.js";
 import { recordPoolDeploy } from "../pool-memory.js";
 import { config } from "../config.js";
 import { log } from "../logger.js";
+import { estimateCloseGasSol, samplePriorityFee } from "./gas-estimator.js";
 
 const ZERO = new BN(0);
 const LAMPORTS_PER_SOL = 1_000_000_000;
@@ -39,7 +40,10 @@ function mulShr(a, b, shift) {
  * @param {number}   solPrice Current SOL/USD price (0 = skip USD calcs)
  * @returns {{ positionValueSol, unclaimedFeesSol, unclaimedFeesUsd, pnlUsd, pnlPct, currentValueUsd, initialValueUsd, perBin }}
  */
-export function computeVirtualPnl(vp, binData, solPrice) {
+export function computeVirtualPnl(vp, binData, solPrice, opts = {}) {
+  // Optional override for close gas (in SOL). Pass in to re-estimate close
+  // gas at the current priority fee. If omitted, uses vp.close_gas_sol.
+  const { closeGasSolOverride = null } = opts;
   const shareMap = new Map();
   for (const s of vp.bin_shares || []) {
     shareMap.set(s.binId, s);
@@ -115,10 +119,38 @@ export function computeVirtualPnl(vp, binData, solPrice) {
   const unclaimedFeesSol = Number(totalFeeYLamports) / LAMPORTS_PER_SOL;
 
   // Deduct simulated transaction costs for realistic VP PnL:
-  //   - Gas: flat SOL cost for deploy + close transactions (~0.007 SOL)
+  //   - Deploy gas: frozen at deploy time (vp.deploy_gas_sol) — represents
+  //     the actual cost paid to put the position on-chain.
+  //   - Close gas: re-estimated at close time using current priority fee,
+  //     passed in via closeGasSolOverride. Falls back to vp.close_gas_sol
+  //     (initial deploy-time estimate) when not provided.
   //   - Slippage: dynamic based on bin_step (half a bin width per entry/exit)
   //     bin_step 80 → 0.40%, bin_step 100 → 0.50%, bin_step 125 → 0.625%
-  const gasCostSol = config.management.vpGasCostSol ?? 0.007;
+  // Migration: VPs deployed under the previous version have only
+  // vp.gas_cost_sol (a single total). Split it by CU ratio to approximate
+  // the real deploy vs. close cost (1.38M deploy CU + 300k close CU = 1.68M).
+  const configFallback = config.management.vpGasCostSol ?? 0.0002;
+  // CU ratio: deploy is 82% of total, close is 18% (see tools/gas-estimator.js)
+  const DEPLOY_CU = 1_380_000;
+  const CLOSE_CU = 300_000;
+  const DEPLOY_RATIO = DEPLOY_CU / (DEPLOY_CU + CLOSE_CU); // 0.8214
+  let deployGasSol, closeGasSol;
+  if (vp.deploy_gas_sol != null || vp.close_gas_sol != null) {
+    // New schema: deploy + close tracked separately
+    deployGasSol = vp.deploy_gas_sol != null ? vp.deploy_gas_sol : configFallback * DEPLOY_RATIO;
+    closeGasSol = closeGasSolOverride != null
+      ? closeGasSolOverride
+      : (vp.close_gas_sol != null ? vp.close_gas_sol : configFallback * (1 - DEPLOY_RATIO));
+  } else if (vp.gas_cost_sol != null) {
+    // Legacy: single total field — split by CU ratio (82/18)
+    deployGasSol = vp.gas_cost_sol * DEPLOY_RATIO;
+    closeGasSol = closeGasSolOverride != null ? closeGasSolOverride : vp.gas_cost_sol * (1 - DEPLOY_RATIO);
+  } else {
+    // No gas data — use config fallback (split by CU ratio)
+    deployGasSol = configFallback * DEPLOY_RATIO;
+    closeGasSol = closeGasSolOverride != null ? closeGasSolOverride : configFallback * (1 - DEPLOY_RATIO);
+  }
+  const gasCostSol = deployGasSol + closeGasSol;
   const slippagePct = vp.bin_step
     ? (vp.bin_step / 10000 / 2) * 100   // half a bin width as %
     : (config.management.vpSlippagePct ?? 0.3);
@@ -162,7 +194,9 @@ export function computeVirtualPnl(vp, binData, solPrice) {
     // PnL breakdown (SOL)
     rawPnlSol,                  // mark-to-market PnL before fees/costs
     feesSol: unclaimedFeesSol,
-    gasCostSol,
+    deployGasSol,               // frozen at deploy time
+    closeGasSol,                // re-estimated on each cycle / at close
+    gasCostSol,                 // = deploy + close
     slippageSol,
     totalCostSol,
     netPnlSol,              // net PnL in SOL (after IL + fees - costs)
@@ -275,6 +309,28 @@ export function getVirtualCloseRule(vp, pnlPct, currentValueUsd, activeBin, mgmt
 }
 
 /**
+ * Re-estimate close gas with a FRESH priority fee sample (bypass cache) so
+ * the close PnL reflects the real network state at close time. Falls back
+ * to the cycle value on RPC failure (logs a warning).
+ *
+ * Used by both close-rule and trailing-TP close paths in
+ * runVirtualManagementCycle.
+ *
+ * @param {number} cycleCloseGasSol  the cached value from the start of the cycle
+ * @param {string} vpId              for logging
+ * @returns {Promise<number>}        close gas in SOL
+ */
+async function getFreshCloseGasSol(cycleCloseGasSol, vpId) {
+  try {
+    const freshPf = await samplePriorityFee(getConnection(), { fresh: true });
+    return await estimateCloseGasSol(getConnection(), freshPf);
+  } catch (e) {
+    log("vp", `Fresh close gas estimate failed for ${vpId}: ${e.message} — using cycle value`);
+    return cycleCloseGasSol;
+  }
+}
+
+/**
  * Run one management cycle for all open virtual positions.
  * Fetches live bin state, computes PnL, updates state, auto-closes on exit conditions.
  *
@@ -289,6 +345,16 @@ export async function runVirtualManagementCycle() {
     log("vp", "Management cycle skipped: could not fetch valid SOL price");
     return [];
   }
+
+  // Re-estimate close gas once per cycle (cache-deduped — same value used for
+  // all VPs in this cycle). Falls back to 0 on RPC failure (logs warning).
+  let cycleCloseGasSol = null;
+  try {
+    cycleCloseGasSol = await estimateCloseGasSol(getConnection());
+  } catch (e) {
+    log("vp", `Failed to estimate close gas: ${e.message} — using stored vp.close_gas_sol`);
+  }
+
   const mgmtConfig = config.management || {};
   const results = [];
 
@@ -356,7 +422,11 @@ export async function runVirtualManagementCycle() {
       }
 
       // ── Compute PnL ───────────────────────────────────────────────
-      const pnl = computeVirtualPnl(vp, binResult.bins, solPrice);
+      // Pass cycleCloseGasSol so close gas reflects current priority fee
+      // (re-estimated once per cycle for all VPs).
+      const pnl = computeVirtualPnl(vp, binResult.bins, solPrice, {
+        closeGasSolOverride: cycleCloseGasSol,
+      });
       const activeBin = binResult.activeBin;
       const now = Date.now();
       const isOOR = activeBin > vp.upper_bin;
@@ -454,60 +524,74 @@ export async function runVirtualManagementCycle() {
       if (closeRule) {
         // Persist final state BEFORE closing (preserves snapshot, peak, OOR)
         updateVirtualPosition(vp.id, updates);
-        const closed = closeVirtualPosition(vp.id, closeRule.reason, pnl.pnlPct, pnl.pnlUsd, {
-          close_pnl_sol_pct: pnl.pnlSolPct,
-          close_pnl_sol: pnl.netPnlSol,
-          close_il_sol: pnl.rawPnlSol,
-          close_fees_sol: pnl.feesSol,
-          close_cost_sol: pnl.totalCostSol,
-          close_il_usd: pnl.ilUsd,
-          close_fees_usd: pnl.feesUsd,
-          close_cost_usd: pnl.totalCostUsd,
+
+        // Recompute PnL with a FRESH close-gas estimate (bypasses 60s cache)
+        const finalCloseGasSol = await getFreshCloseGasSol(cycleCloseGasSol, vp.id);
+        const finalPnl = computeVirtualPnl(vp, binResult.bins, solPrice, {
+          closeGasSolOverride: finalCloseGasSol,
+        });
+
+        const closed = closeVirtualPosition(vp.id, closeRule.reason, finalPnl.pnlPct, finalPnl.pnlUsd, {
+          close_pnl_sol_pct: finalPnl.pnlSolPct,
+          close_pnl_sol: finalPnl.netPnlSol,
+          close_il_sol: finalPnl.rawPnlSol,
+          close_fees_sol: finalPnl.feesSol,
+          close_cost_sol: finalPnl.totalCostSol,
+          close_il_usd: finalPnl.ilUsd,
+          close_fees_usd: finalPnl.feesUsd,
+          close_cost_usd: finalPnl.totalCostUsd,
         });
         if (!closed) {
           log("vp", `VP ${vp.id} (${vp.pair}) close ABORTED — archive write failed, retrying next cycle`);
           continue;
         }
-        recordVpDeployToPoolMemory(vp, pnl, closeRule.reason);
+        recordVpDeployToPoolMemory(vp, finalPnl, closeRule.reason);
         results.push({
           id: vp.id, pair: vp.pair, action: "CLOSED", reason: closeRule.reason,
           age_minutes: vpAgeMinutes,
-          pnl_pct: pnl.pnlPct, pnl_usd: pnl.pnlUsd,
-          pnl_sol_pct: pnl.pnlSolPct, pnl_sol: pnl.netPnlSol,
-          il_sol: pnl.rawPnlSol, unclaimed_fees_sol: pnl.feesSol,
-          cost_sol: pnl.totalCostSol, il_usd: pnl.ilUsd,
-          unclaimed_fees_usd: pnl.feesUsd, cost_usd: pnl.totalCostUsd,
+          pnl_pct: finalPnl.pnlPct, pnl_usd: finalPnl.pnlUsd,
+          pnl_sol_pct: finalPnl.pnlSolPct, pnl_sol: finalPnl.netPnlSol,
+          il_sol: finalPnl.rawPnlSol, unclaimed_fees_sol: finalPnl.feesSol,
+          cost_sol: finalPnl.totalCostSol, il_usd: finalPnl.ilUsd,
+          unclaimed_fees_usd: finalPnl.feesUsd, cost_usd: finalPnl.totalCostUsd,
         });
-        log("vp", `VP ${vp.id} (${vp.pair}) CLOSED: ${closeRule.reason} PnL=${pnl.pnlPct.toFixed(2)}% (SOL: ${pnl.pnlSolPct.toFixed(2)}%)`);
+        log("vp", `VP ${vp.id} (${vp.pair}) CLOSED: ${closeRule.reason} PnL=${finalPnl.pnlPct.toFixed(2)}% (SOL: ${finalPnl.pnlSolPct.toFixed(2)}%) deployGas=${finalPnl.deployGasSol.toFixed(6)} closeGas=${finalPnl.closeGasSol.toFixed(6)}`);
         continue;
       }
 
       // ── Trailing TP close (2-cycle confirmed) ──────────────────────
       if (trailingCloseReason) {
         updateVirtualPosition(vp.id, updates);
-        const closed = closeVirtualPosition(vp.id, trailingCloseReason, pnl.pnlPct, pnl.pnlUsd, {
-          close_pnl_sol_pct: pnl.pnlSolPct,
-          close_pnl_sol: pnl.netPnlSol,
-          close_il_sol: pnl.rawPnlSol,
-          close_fees_sol: pnl.feesSol,
-          close_cost_sol: pnl.totalCostSol,
-          close_il_usd: pnl.ilUsd,
-          close_fees_usd: pnl.feesUsd,
-          close_cost_usd: pnl.totalCostUsd,
+
+        // Fresh re-estimate of close gas (same helper as rule-based close)
+        const trailingCloseGasSol = await getFreshCloseGasSol(cycleCloseGasSol, vp.id);
+        const trailingFinalPnl = computeVirtualPnl(vp, binResult.bins, solPrice, {
+          closeGasSolOverride: trailingCloseGasSol,
+        });
+
+        const closed = closeVirtualPosition(vp.id, trailingCloseReason, trailingFinalPnl.pnlPct, trailingFinalPnl.pnlUsd, {
+          close_pnl_sol_pct: trailingFinalPnl.pnlSolPct,
+          close_pnl_sol: trailingFinalPnl.netPnlSol,
+          close_il_sol: trailingFinalPnl.rawPnlSol,
+          close_fees_sol: trailingFinalPnl.feesSol,
+          close_cost_sol: trailingFinalPnl.totalCostSol,
+          close_il_usd: trailingFinalPnl.ilUsd,
+          close_fees_usd: trailingFinalPnl.feesUsd,
+          close_cost_usd: trailingFinalPnl.totalCostUsd,
         });
         if (!closed) {
           log("vp", `VP ${vp.id} (${vp.pair}) close ABORTED — archive write failed, retrying next cycle`);
           continue;
         }
-        recordVpDeployToPoolMemory(vp, pnl, trailingCloseReason);
+        recordVpDeployToPoolMemory(vp, trailingFinalPnl, trailingCloseReason);
         results.push({
           id: vp.id, pair: vp.pair, action: "CLOSED", reason: trailingCloseReason,
           age_minutes: vpAgeMinutes,
-          pnl_pct: pnl.pnlPct, pnl_usd: pnl.pnlUsd,
-          pnl_sol_pct: pnl.pnlSolPct, pnl_sol: pnl.netPnlSol,
-          il_sol: pnl.rawPnlSol, unclaimed_fees_sol: pnl.feesSol,
-          cost_sol: pnl.totalCostSol, il_usd: pnl.ilUsd,
-          unclaimed_fees_usd: pnl.feesUsd, cost_usd: pnl.totalCostUsd,
+          pnl_pct: trailingFinalPnl.pnlPct, pnl_usd: trailingFinalPnl.pnlUsd,
+          pnl_sol_pct: trailingFinalPnl.pnlSolPct, pnl_sol: trailingFinalPnl.netPnlSol,
+          il_sol: trailingFinalPnl.rawPnlSol, unclaimed_fees_sol: trailingFinalPnl.feesSol,
+          cost_sol: trailingFinalPnl.totalCostSol, il_usd: trailingFinalPnl.ilUsd,
+          unclaimed_fees_usd: trailingFinalPnl.feesUsd, cost_usd: trailingFinalPnl.totalCostUsd,
         });
         log("vp", `VP ${vp.id} (${vp.pair}) CLOSED: ${trailingCloseReason}`);
         continue;
