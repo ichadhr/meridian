@@ -26,7 +26,7 @@ import {
 import { trackVirtualPosition } from "./dry-run-state.js";
 import { recordPerformance } from "../lessons.js";
 import { isBaseMintOnCooldown, isPoolOnCooldown } from "../pool-memory.js";
-import { getWalletBalances, normalizeMint } from "./wallet.js";
+import { getWalletBalances, normalizeMint, fetchSolPrice } from "./wallet.js";
 import { appendDecision } from "../decision-log.js";
 import { agentMeridianJson, getAgentIdForRequests, getAgentMeridianHeaders } from "./agent-meridian.js";
 import { getAndClearStagedSignals } from "../signal-tracker.js";
@@ -82,14 +82,13 @@ async function getDLMM() {
 export function decimalPriceToQ64(priceStr) {
   if (!priceStr || priceStr === "0") return new BN(0);
   const s = String(priceStr);
-  // Defensive: if the string looks like a Q64.64 integer (all digits, >20 chars),
-  // the SDK returned a BN object that toString'd into an integer string.
-  // Treat it as already Q64.64 rather than double-shifting by 2^64.
-  if (/^\d{20,}$/.test(s)) {
-    return new BN(s);
-  }
+  // SDK b.price is always a Decimal.js string: (1 + binStep/BASIS_POINT_MAX)^binId
+  // e.g. "1.0423", "0.9987", or "1" for binId=0.
+  // - With decimal point  → human-readable decimal → convert to Q64.64
+  // - Without decimal point → human-readable integer (e.g. "1" for binId=0)
+  //   → scale by 2^64 to get Q64.64
   const dot = s.indexOf(".");
-  if (dot === -1) return new BN(s).shln(64); // integer value * 2^64
+  if (dot === -1) return new BN(s).shln(64); // human-readable int → Q64.64
   const intPart = s.slice(0, dot);
   const fracPart = s.slice(dot + 1);
   const combined = intPart + fracPart;
@@ -488,7 +487,9 @@ export async function getBinsInRange({ pool_address, lower_bin, upper_bin }) {
       // priceQ64 field so callers never have to guess the format.
       let priceQ64 = null;
       const rawPrice = b.price?.toString?.() ?? null;
-      if (BN.isBN(b.price)) {
+      // BN.isBN checks constructor.name === 'BN' which can fail across bn.js versions.
+      // Fall back to checking BN's internal structure (words array) as a robust backup.
+      if (BN.isBN(b.price) || (b.price && typeof b.price === 'object' && Array.isArray(b.price.words))) {
         priceQ64 = b.price.toString(10);
       } else if (rawPrice !== null) {
         priceQ64 = decimalPriceToQ64(rawPrice).toString(10);
@@ -592,7 +593,10 @@ export async function deployPosition({
     amount_y == null && amount_sol == null
       ? computeDeployAmount(walletBalances.sol)
       : 0;
-  const solPrice = walletBalances.sol_price || 0;
+  const solPrice = await fetchSolPrice();
+  if (solPrice == null) {
+    throw new Error("Cannot deploy: could not fetch a valid SOL/USD price. Refusing to store garbage initial_value_usd.");
+  }
   const finalAmountY = Number(amount_y ?? amount_sol ?? fallbackAmountY);
   const finalAmountX = Number(amount_x ?? 0);
   if (!Number.isFinite(finalAmountY) || !Number.isFinite(finalAmountX) || finalAmountY < 0 || finalAmountX < 0) {
@@ -716,6 +720,7 @@ export async function deployPosition({
         bin_step: actualBinStep,
         amount_sol: finalAmountY,
         initial_value_usd: solPrice > 0 ? solPrice * finalAmountY : null,
+        sol_price_at_deploy: solPrice > 0 ? solPrice : null,
         bin_shares: binShares,
         volatility: normalizedVolatility ?? undefined,
         fee_tvl_ratio: fee_tvl_ratio != null ? Number(fee_tvl_ratio) : undefined,

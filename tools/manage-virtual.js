@@ -5,7 +5,7 @@ import {
   updateVirtualPosition,
   closeVirtualPosition,
 } from "./dry-run-state.js";
-import { getWalletBalances } from "./wallet.js";
+import { fetchSolPrice } from "./wallet.js";
 import { recordPoolDeploy } from "../pool-memory.js";
 import { config } from "../config.js";
 import { log } from "../logger.js";
@@ -180,8 +180,11 @@ export async function runVirtualManagementCycle() {
   const vpList = listVirtualPositions("open");
   if (vpList.length === 0) return [];
 
-  const wallet = await getWalletBalances();
-  const solPrice = wallet.sol_price || 0;
+  const solPrice = await fetchSolPrice();
+  if (solPrice == null) {
+    log("vp", "Management cycle skipped: could not fetch valid SOL price");
+    return [];
+  }
   const mgmtConfig = config.management || {};
   const results = [];
 

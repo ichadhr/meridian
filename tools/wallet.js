@@ -29,6 +29,10 @@ const JUPITER_PRICE_API = "https://api.jup.ag/price/v3";
 const JUPITER_SWAP_V2_API = "https://api.jup.ag/swap/v2";
 const DEFAULT_JUPITER_API_KEY = "b15d42e9-e0e4-4f90-a424-ae41ceeaa382";
 
+/** Valid SOL price range — outside this means garbage data */
+const MIN_SOL_PRICE = 1;
+const MAX_SOL_PRICE = 1000;
+
 function getJupiterApiKey() {
   return config.jupiter.apiKey || process.env.JUPITER_API_KEY || DEFAULT_JUPITER_API_KEY;
 }
@@ -248,4 +252,43 @@ export async function swapToken({
     log("swap_error", error.message);
     return { success: false, error: error.message };
   }
+}
+
+/**
+ * Fetch validated SOL/USD price with Jupiter primary + fallback chain.
+ * Returns a validated price in [MIN_SOL_PRICE, MAX_SOL_PRICE] or null if unavailable.
+ */
+export async function fetchSolPrice() {
+  // ── Primary: Jupiter Price API ──────────────────────────────
+  try {
+    const res = await fetch(`${JUPITER_PRICE_API}?ids=${config.tokens.SOL}`, {
+      signal: AbortSignal.timeout(5000),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      const price = data?.[config.tokens.SOL]?.usdPrice;
+      if (typeof price === "number" && Number.isFinite(price) && price >= MIN_SOL_PRICE && price <= MAX_SOL_PRICE) {
+        return price;
+      }
+      log("wallet_error", `Jupiter returned invalid SOL price: ${price}`);
+    } else {
+      log("wallet_error", `Jupiter price API error: ${res.status}`);
+    }
+  } catch (err) {
+    log("wallet_error", `Jupiter price fetch failed: ${err.message}`);
+  }
+
+  // ── Fallback: Helius wallet balances ────────────────────────
+  // The pricePerToken field can be garbage when rate-limited, but it's better than nothing.
+  try {
+    const balances = await getWalletBalances();
+    if (typeof balances.sol_price === "number" && Number.isFinite(balances.sol_price) && balances.sol_price >= MIN_SOL_PRICE && balances.sol_price <= MAX_SOL_PRICE) {
+      return balances.sol_price;
+    }
+    log("wallet_error", `Helius returned invalid SOL price: ${balances.sol_price}`);
+  } catch (err) {
+    log("wallet_error", `Helius balance fetch failed: ${err.message}`);
+  }
+
+  return null;
 }
