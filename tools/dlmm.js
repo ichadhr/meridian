@@ -104,7 +104,7 @@ export function decimalPriceToQ64(priceStr) {
 let _connection = null;
 let _wallet = null;
 
-function getConnection() {
+export function getConnection() {
   if (!_connection) {
     _connection = new Connection(process.env.RPC_URL, "confirmed");
   }
