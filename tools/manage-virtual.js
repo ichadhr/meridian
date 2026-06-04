@@ -60,8 +60,22 @@ export function computeVirtualPnl(vp, binData, solPrice) {
     // If bin missing from RPC or has no supply → 0 value, 0 fees
     const xAmount = b ? new BN(b.xAmount ?? "0") : ZERO;
     const yAmount = b ? new BN(b.yAmount ?? "0") : ZERO;
-    const ourX = supply.isZero() ? ZERO : shares.mul(xAmount).div(supply);
-    const ourY = supply.isZero() ? ZERO : shares.mul(yAmount).div(supply);
+
+    // VP shares are computed as if we deposited (inLiquidity * supply / binLiquidity),
+    // but the on-chain supply never includes our virtual deposit. We must add our
+    // shares to supply to simulate the deposit — otherwise for bins that were empty
+    // at deploy time (shares = depositY * 2^64, supply = 0 → later non-zero),
+    // the withdrawal ratio shares/supply is inflated by ~2^64 ≈ 1.84×10¹⁹.
+    //
+    // Trade-off: as real LPs deposit/withdraw, on-chain supply changes but our
+    // shares stay fixed — the VP's simulated share fraction shifts over time.
+    // This models dilution realistically in direction, but has a second-order gap:
+    // real subsequent depositors' shares would be computed against a supply that
+    // includes ours, so their share count would differ slightly. For typical deploy
+    // sizes (< 5% of bin liquidity) this is negligible.
+    const effectiveSupply = supply.add(shares);
+    const ourX = effectiveSupply.isZero() ? ZERO : shares.mul(xAmount).div(effectiveSupply);
+    const ourY = effectiveSupply.isZero() ? ZERO : shares.mul(yAmount).div(effectiveSupply);
 
     // Convert X lamports to Y (SOL) lamports: ourX * price / 2^64
     const ourXInYLamports = mulShr(ourX, priceBN, 64);
@@ -96,8 +110,20 @@ export function computeVirtualPnl(vp, binData, solPrice) {
     });
   }
 
-  const positionValueSol = Number(totalValueYLamports) / LAMPORTS_PER_SOL;
+  const rawPositionValueSol = Number(totalValueYLamports) / LAMPORTS_PER_SOL;
   const unclaimedFeesSol = Number(totalFeeYLamports) / LAMPORTS_PER_SOL;
+
+  // Deduct simulated transaction costs for realistic VP PnL:
+  //   - Gas: flat SOL cost for deploy + close transactions (~0.007 SOL)
+  //   - Slippage: dynamic based on bin_step (half a bin width per entry/exit)
+  //     bin_step 80 → 0.40%, bin_step 100 → 0.50%, bin_step 125 → 0.625%
+  const gasCostSol = config.management.vpGasCostSol ?? 0.007;
+  const slippagePct = vp.bin_step
+    ? (vp.bin_step / 10000 / 2) * 100   // half a bin width as %
+    : (config.management.vpSlippagePct ?? 0.3);
+  const slippageMultiplier = 1 - slippagePct / 100;
+  const positionValueSol = Math.max(0, rawPositionValueSol - gasCostSol) * slippageMultiplier;
+
   const unclaimedFeesUsd = unclaimedFeesSol * solPrice;
   const currentValueUsd = positionValueSol * solPrice + unclaimedFeesUsd;
   const initialValueUsd = vp.initial_value_usd || 0;
@@ -106,7 +132,7 @@ export function computeVirtualPnl(vp, binData, solPrice) {
 
   // Log anomaly when PnL is absurd (> 1,000,000%) — likely a price conversion issue
   if (pnlPct > 1_000_000) {
-    log("vp_anomaly", `Virual ${vp.id} absurd PnL ${pnlPct.toExponential(4)}%. initialUSD=${initialValueUsd}, currentUSD=${currentValueUsd}, posSol=${positionValueSol}`);
+    log("vp_anomaly", `Virtual ${vp.id} absurd PnL ${pnlPct.toExponential(4)}%. initialUSD=${initialValueUsd}, currentUSD=${currentValueUsd}, posSol=${positionValueSol}`);
     for (const pb of perBin) {
       const b = binData.find((x) => x.binId === pb.binId);
       log("vp_anomaly", `  bin ${pb.binId}: price=${b?.price}, ourX=${pb.ourX}, ourY=${pb.ourY}, valYLamports=${pb.binValueYLamports}`);
@@ -129,12 +155,14 @@ export function computeVirtualPnl(vp, binData, solPrice) {
  * Deterministic close rules for virtual positions.
  * Static close rules only — trailing TP handled by the caller.
  *
- * NOTE: LOW_YIELD (minFeePerTvl24h / minAgeBeforeYieldCheck) is intentionally
- * omitted — it relies on the pool-level feePerTvl24h from the Meteora API
- * (getMyPositions), which VP does not fetch. A synthetic backward-looking
- * approximation would be semantically different and not worth the complexity.
+ * Rules mirror live getDeterministicCloseRule (index.js):
+ *   1. Stop loss
+ *   2. Take profit
+ *   3. Pumped far above range
+ *   4. OOR too long
+ *   5. Low yield (synthetic — uses VP's accumulated fee data instead of Meteora API)
  *
- * @param {object} vp                Virtual position
+ * @param {object} vp                Virtual position (with total_fees_earned_usd, deployed_at)
  * @param {number} pnlPct            Current PnL percentage
  * @param {number} currentValueUsd   Current position value in USD
  * @param {number} activeBin         Current pool active bin
@@ -168,6 +196,25 @@ export function getVirtualCloseRule(vp, pnlPct, currentValueUsd, activeBin, mgmt
   // OOR too long (uses THIS cycle's accumulated OOR minutes, not stale stored value)
   if (activeBin > vp.upper_bin && effectiveOorMinutes >= oorWaitMinutes) {
     return { action: "CLOSE", rule: 4, reason: "OOR" };
+  }
+
+  // Low yield — synthetic approximation of live Rule 5.
+  // Live uses Meteora API's fee_per_tvl_24h; VP computes a backward-looking
+  // equivalent from its own accumulated fee data:
+  //   syntheticYield = (totalFeesUsd / currentValueUsd) * (1440 / ageMinutes) * 100
+  // This extrapolates the actual fee-to-TVL ratio to a 24h window.
+  const minFeePerTvl24h = mgmtConfig.minFeePerTvl24h ?? 7;
+  const minAgeForYieldCheck = mgmtConfig.minAgeBeforeYieldCheck ?? 60;
+  const ageMinutes = vp.deployed_at
+    ? Math.floor((Date.now() - new Date(vp.deployed_at).getTime()) / 60000)
+    : 0;
+
+  if (ageMinutes >= minAgeForYieldCheck && currentValueUsd > 0) {
+    const totalFeesUsd = vp.total_fees_earned_usd || 0;
+    const syntheticFeeYield = (totalFeesUsd / currentValueUsd) * (1440 / ageMinutes) * 100;
+    if (syntheticFeeYield < minFeePerTvl24h) {
+      return { action: "CLOSE", rule: 5, reason: "low yield" };
+    }
   }
 
   return null;

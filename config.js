@@ -119,6 +119,9 @@ export const config = {
     pnlSanityMaxDiffPct:   u.pnlSanityMaxDiffPct   ?? 5,    // max allowed diff between reported and derived pnl % before ignoring a tick
     // SOL mode — positions, PnL, and balances reported in SOL instead of USD
     solMode:               u.solMode               ?? false,
+    // VP simulation costs (dry-run only — deducted from VP PnL for realism)
+    vpGasCostSol:          u.vpGasCostSol          ?? 0.007,  // estimated deploy + close gas
+    vpSlippagePct:         u.vpSlippagePct         ?? 0.3,    // estimated entry/exit slippage %
   },
 
   // ─── Strategy Mapping ───────────────────
