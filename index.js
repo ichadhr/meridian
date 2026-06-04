@@ -39,6 +39,7 @@ import { appendDecision } from "./decision-log.js";
 import { runVirtualManagementCycle } from "./tools/manage-virtual.js";
 import { listVirtualPositions } from "./tools/dry-run-state.js";
 import { generateDryRunReport } from "./tools/generate-dry-run-report.js";
+import { readArchive, compileVpStats } from "./tools/position-archive.js";
 
 const entrypointPath = process.env.pm_exec_path || process.argv[1];
 const isMain = entrypointPath
@@ -1556,11 +1557,15 @@ async function telegramHandler(msg) {
   if (text === "/vp" || text === "/vp report") {
     try {
       if (text === "/vp report") {
+        const records = await readArchive({ source: "paper", hours: 720, limit: 5000 });
+        const statsMsg = compileVpStats(records);
+        await sendLongMessage(statsMsg);
+
         const html = await generateDryRunReport();
         const filePath = path.join(path.dirname(fileURLToPath(import.meta.url)), "dry-run-report.html");
         fs.writeFileSync(filePath, html, "utf8");
         const sent = await sendDocument(filePath, { caption: "📄 Dry-run VP report" });
-        if (!sent) await sendMessage("❌ Failed to upload report — check logs.");
+        if (!sent) await sendMessage("❌ Failed to upload HTML report — check logs.");
       } else {
         const vps = listVirtualPositions("open");
         if (vps.length === 0) { await sendMessage("No open virtual positions."); return; }

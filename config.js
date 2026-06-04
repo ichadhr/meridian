@@ -122,6 +122,7 @@ export const config = {
     // VP simulation costs (dry-run only — deducted from VP PnL for realism)
     vpGasCostSol:          u.vpGasCostSol          ?? 0.007,  // estimated deploy + close gas
     vpSlippagePct:         u.vpSlippagePct         ?? 0.3,    // estimated entry/exit slippage %
+    vpTrendExitCycles:     u.vpTrendExitCycles     ?? 3,      // number of consecutive down cycles under loss to trigger early exit
   },
 
   // ─── Strategy Mapping ───────────────────

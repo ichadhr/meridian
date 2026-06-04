@@ -399,6 +399,78 @@ test("SOL-mode PnL and breakdown matches computeVirtualPnl logic", () => {
 });
 
 // ════════════════════════════════════════════════════════════
+//  SECTION 8: Snapshot-based Trend Exit (Rule 6)
+// ════════════════════════════════════════════════════════════
+
+function checkTrendExit(vp, mgmtConfig = {}) {
+  const trendCycles = mgmtConfig.vpTrendExitCycles ?? 3;
+  if (trendCycles != null && trendCycles > 0 && vp.snapshots && vp.snapshots.length >= trendCycles + 1) {
+    const isSol = !!mgmtConfig.solMode;
+    const pnlField = isSol ? "pnl_sol_pct" : "pnl_pct";
+    const recent = vp.snapshots.slice(-(trendCycles + 1));
+    const currentPnl = recent[recent.length - 1][pnlField] ?? 0;
+    
+    if (currentPnl < 0) {
+      let isTrendingDown = true;
+      for (let i = 1; i < recent.length; i++) {
+        const prev = recent[i - 1][pnlField] ?? 0;
+        const curr = recent[i][pnlField] ?? 0;
+        if (curr >= prev) {
+          isTrendingDown = false;
+          break;
+        }
+      }
+      if (isTrendingDown) {
+        return { rule: 6, reason: `consecutive down-trend (${trendCycles} cycles)` };
+      }
+    }
+  }
+  return null;
+}
+
+test("Trend exit (Rule 6): triggers when in a loss and decreasing for 3 consecutive cycles", () => {
+  const vp = {
+    snapshots: [
+      { pnl_pct: -1.0 },
+      { pnl_pct: -2.0 },
+      { pnl_pct: -3.0 },
+      { pnl_pct: -4.0 }
+    ]
+  };
+  const result = checkTrendExit(vp, { vpTrendExitCycles: 3 });
+  console.log(`  result: ${result?.reason ?? "no trigger"}`);
+  if (!result || result.rule !== 6) throw new Error("Expected trend exit trigger");
+});
+
+test("Trend exit (Rule 6): does NOT trigger when currently profitable", () => {
+  const vp = {
+    snapshots: [
+      { pnl_pct: 10.0 },
+      { pnl_pct: 9.0 },
+      { pnl_pct: 8.0 },
+      { pnl_pct: 7.0 }
+    ]
+  };
+  const result = checkTrendExit(vp, { vpTrendExitCycles: 3 });
+  console.log(`  result: ${result ? "triggered (BAD)" : "skipped (correct — profitable)"}`);
+  if (result) throw new Error("Should NOT trigger when profitable");
+});
+
+test("Trend exit (Rule 6): does NOT trigger when trend is broken", () => {
+  const vp = {
+    snapshots: [
+      { pnl_pct: -1.0 },
+      { pnl_pct: -2.0 },
+      { pnl_pct: -1.5 },
+      { pnl_pct: -3.0 }
+    ]
+  };
+  const result = checkTrendExit(vp, { vpTrendExitCycles: 3 });
+  console.log(`  result: ${result ? "triggered (BAD)" : "skipped (correct — trend broken)"}`);
+  if (result) throw new Error("Should NOT trigger when trend is broken");
+});
+
+// ════════════════════════════════════════════════════════════
 console.log(`\n${passed + failed} tests: ${passed} passed, ${failed} failed`);
 if (failed > 0) process.exitCode = 1;
 

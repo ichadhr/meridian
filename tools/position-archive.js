@@ -51,6 +51,8 @@ const KNOWN_FIELDS = [
   "bin_step", "amount_sol", "initial_value_usd", "sol_price_at_deploy",
   "deployed_at", "closed_at", "minutes_held", "minutes_in_range",
   "range_efficiency", "close_reason", "close_pnl_pct", "close_pnl_usd",
+  "close_pnl_sol_pct", "close_pnl_sol", "close_il_sol", "close_fees_sol",
+  "close_cost_sol", "close_il_usd", "close_fees_usd", "close_cost_usd",
   "total_fees_earned_usd", "volatility", "fee_tvl_ratio", "organic_score",
   "deploy_rationale", "signal_snapshot", "bin_shares", "tx_hashes", "relay",
 ];
@@ -273,4 +275,86 @@ export function purgeCorruptedArchiveRecords() {
   } catch (e) {
     log("position_archive", `Archive purge failed: ${e.message}`);
   }
+}
+
+/**
+ * Compile aggregate performance statistics from closed VP archive records.
+ * Returns a formatted text report.
+ *
+ * @param {object[]} records
+ * @returns {string}
+ */
+export function compileVpStats(records) {
+  if (!records || records.length === 0) {
+    return "📊 **VP Performance Summary (Last 30 Days)**\nNo closed virtual positions found in the archive.";
+  }
+
+  let total = records.length;
+  let wins = 0;
+  let totalPnLUsd = 0;
+  let totalPnLSol = 0;
+  let totalHoldMinutes = 0;
+  
+  let totalILUsd = 0;
+  let totalILSol = 0;
+  let totalFeesUsd = 0;
+  let totalFeesSol = 0;
+  let totalCostUsd = 0;
+  let totalCostSol = 0;
+
+  const reasons = {};
+
+  for (const r of records) {
+    const pnlPct = r.close_pnl_pct ?? 0;
+    if (pnlPct > 0) wins++;
+
+    totalPnLUsd += r.close_pnl_usd ?? 0;
+    totalPnLSol += r.close_pnl_sol ?? 0;
+    totalHoldMinutes += r.minutes_held ?? 0;
+
+    totalILUsd += r.close_il_usd ?? 0;
+    totalILSol += r.close_il_sol ?? 0;
+    totalFeesUsd += r.close_fees_usd ?? r.total_fees_earned_usd ?? 0;
+    totalFeesSol += r.close_fees_sol ?? 0;
+    totalCostUsd += r.close_cost_usd ?? 0;
+    totalCostSol += r.close_cost_sol ?? 0;
+
+    const reason = r.close_reason || "unknown";
+    reasons[reason] = (reasons[reason] || 0) + 1;
+  }
+
+  const winRate = (wins / total) * 100;
+  const avgHoldMinutes = totalHoldMinutes / total;
+  const avgHoldHours = avgHoldMinutes / 60;
+  const avgPnLUsd = totalPnLUsd / total;
+  const avgPnLSol = totalPnLSol / total;
+
+  const avgILUsd = totalILUsd / total;
+  const avgILSol = totalILSol / total;
+  const avgFeesUsd = totalFeesUsd / total;
+  const avgFeesSol = totalFeesSol / total;
+  const avgCostUsd = totalCostUsd / total;
+  const avgCostSol = totalCostSol / total;
+
+  const reasonLines = Object.entries(reasons)
+    .sort((a, b) => b[1] - a[1])
+    .map(([r, count]) => `  • ${r}: ${count} (${((count/total)*100).toFixed(1)}%)`)
+    .join("\n");
+
+  return [
+    `📈 **VP Performance Summary (Last 30 Days)**`,
+    `• **Total Closed**: ${total}`,
+    `• **Win Rate**: ${winRate.toFixed(1)}% (${wins}/${total} wins)`,
+    `• **Avg Hold Time**: ${avgHoldHours.toFixed(1)} hours (${Math.round(avgHoldMinutes)} mins)`,
+    `• **Aggregate PnL**: $${totalPnLUsd.toFixed(2)} | ◎${totalPnLSol.toFixed(4)}`,
+    `• **Avg PnL per Position**: $${avgPnLUsd.toFixed(2)} | ◎${avgPnLSol.toFixed(4)}`,
+    ``,
+    `🔍 **Average Position Breakdown**:`,
+    `  • IL: $${avgILUsd.toFixed(2)} | ◎${avgILSol.toFixed(4)}`,
+    `  • Fees: $${avgFeesUsd.toFixed(2)} | ◎${avgFeesSol.toFixed(4)}`,
+    `  • Cost: $${avgCostUsd.toFixed(2)} | ◎${avgCostSol.toFixed(4)}`,
+    ``,
+    `🚪 **Close Reasons**:`,
+    reasonLines
+  ].join("\n");
 }

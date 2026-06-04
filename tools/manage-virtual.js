@@ -243,6 +243,33 @@ export function getVirtualCloseRule(vp, pnlPct, currentValueUsd, activeBin, mgmt
     }
   }
 
+  // Rule 6: Consecutive down trend exit (early warning)
+  const trendCycles = mgmtConfig.vpTrendExitCycles ?? 3;
+  if (trendCycles != null && trendCycles > 0 && vp.snapshots && vp.snapshots.length >= trendCycles + 1) {
+    const isSol = !!mgmtConfig.solMode;
+    const pnlField = isSol ? "pnl_sol_pct" : "pnl_pct";
+    
+    // Get the last trendCycles + 1 snapshots to check trendCycles drops
+    const recent = vp.snapshots.slice(-(trendCycles + 1));
+    const currentPnl = recent[recent.length - 1][pnlField] ?? 0;
+    
+    // Rule only applies when currently in a loss
+    if (currentPnl < 0) {
+      let isTrendingDown = true;
+      for (let i = 1; i < recent.length; i++) {
+        const prev = recent[i - 1][pnlField] ?? 0;
+        const curr = recent[i][pnlField] ?? 0;
+        if (curr >= prev) {
+          isTrendingDown = false;
+          break;
+        }
+      }
+      if (isTrendingDown) {
+        return { action: "CLOSE", rule: 6, reason: `consecutive down-trend (${trendCycles} cycles)` };
+      }
+    }
+  }
+
   return null;
 }
 
@@ -400,6 +427,7 @@ export async function runVirtualManagementCycle() {
       snapshots.push({
         at: new Date().toISOString(),
         pnl_pct: pnl.pnlPct,
+        pnl_sol_pct: pnl.pnlSolPct,
         value_usd: pnl.currentValueUsd,
         value_sol: pnl.positionValueSol,
         unclaimed_fees_usd: pnl.unclaimedFeesUsd,
