@@ -87,11 +87,7 @@ export const config = {
     blockedLaunchpads:  u.blockedLaunchpads  ?? [],  // e.g. ["letsbonk.fun", "pump.fun"]
     minTokenAgeHours:   u.minTokenAgeHours   ?? null, // null = no minimum
     maxTokenAgeHours:   u.maxTokenAgeHours   ?? null, // null = no maximum
-    athFilterPct:             u.athFilterPct             ?? null, // e.g. -20 = only deploy if price is >= 20% below ATH
-    // Deploy-time re-check on the user's screening timeframe (same as screening filter).
-    // Short timeframes (5m) can roll to zero during LLM deliberation; if false
-    // positives are frequent, increase config timeframe to 30m+. null = disabled.
-    minFeeActiveTvlRatioDeploy: u.minFeeActiveTvlRatioDeploy ?? null,
+    athFilterPct:       u.athFilterPct       ?? null, // e.g. -20 = only deploy if price is >= 20% below ATH
   },
 
   // ─── Position Management ────────────────
@@ -247,9 +243,8 @@ export function reloadScreeningThresholds() {
     if (!fs.existsSync(USER_CONFIG_PATH)) return;
     const fresh = JSON.parse(fs.readFileSync(USER_CONFIG_PATH, "utf8"));
     const s = config.screening;
-    if (fresh.minFeeActiveTvlRatio        != null) s.minFeeActiveTvlRatio        = fresh.minFeeActiveTvlRatio;
-    if (fresh.minFeeActiveTvlRatioDeploy   !== undefined) s.minFeeActiveTvlRatioDeploy = fresh.minFeeActiveTvlRatioDeploy;
-    if (fresh.minTokenFeesSol              != null) s.minTokenFeesSol              = fresh.minTokenFeesSol;
+    if (fresh.minFeeActiveTvlRatio != null) s.minFeeActiveTvlRatio = fresh.minFeeActiveTvlRatio;
+    if (fresh.minTokenFeesSol  != null) s.minTokenFeesSol  = fresh.minTokenFeesSol;
     if (fresh.maxTop10Pct      != null) s.maxTop10Pct      = fresh.maxTop10Pct;
     if (fresh.useDiscordSignals !== undefined) s.useDiscordSignals = fresh.useDiscordSignals;
     if (fresh.discordSignalMode != null) s.discordSignalMode = fresh.discordSignalMode;

@@ -142,25 +142,15 @@ async function validateDeployPoolThresholds(args) {
     };
   }
 
-  // ── Deploy-time fee/active-TVL gate ────────────────────────────
-  // Uses the user's screening timeframe (same as screening filter).
-  // Short timeframes (5m) can roll to zero during LLM deliberation;
-  // if false positives are frequent, increase config timeframe to 30m+.
-  const detailTimeframe = config.screening.timeframe || "5m";
-  const feeRatio = poolDetailFeeActiveTvlRatio(detail, detailTimeframe);
-  // Hard reject: zero fee activity in current window = dead pool
+  // ── Deploy-time dead-pool guard ─────────────────────────────────
+  // Reject pools with zero fee activity in the current screening window.
+  // Short timeframes (5m) can roll to zero during LLM deliberation; if
+  // false positives are frequent, increase config timeframe to 30m+.
+  const feeRatio = poolDetailFeeActiveTvlRatio(detail, config.screening.timeframe || "5m");
   if (feeRatio != null && feeRatio <= 0) {
     return {
       pass: false,
-      reason: `Pool ${detailTimeframe} fee/active-TVL is zero — no trading activity.`,
-    };
-  }
-  // Configurable threshold (null = disabled, no magic numbers)
-  const minDeployFee = numberOrNull(config.screening.minFeeActiveTvlRatioDeploy);
-  if (minDeployFee != null && minDeployFee > 0 && (feeRatio == null || feeRatio < minDeployFee)) {
-    return {
-      pass: false,
-      reason: `Pool ${detailTimeframe} fee/active-TVL ${feeRatio ?? "unknown"} is below deploy threshold ${minDeployFee}.`,
+      reason: `Pool fee/active-TVL is zero — no trading activity in current window.`,
     };
   }
 
@@ -352,8 +342,7 @@ const toolMap = {
     // Flat key → config section mapping (covers everything in config.js)
     const CONFIG_MAP = {
       // screening
-      minFeeActiveTvlRatio:      ["screening", "minFeeActiveTvlRatio"],
-      minFeeActiveTvlRatioDeploy: ["screening", "minFeeActiveTvlRatioDeploy"],
+      minFeeActiveTvlRatio: ["screening", "minFeeActiveTvlRatio"],
       excludeHighSupplyConcentration: ["screening", "excludeHighSupplyConcentration"],
       minTvl: ["screening", "minTvl"],
       maxTvl: ["screening", "maxTvl"],
