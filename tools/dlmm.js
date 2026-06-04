@@ -74,6 +74,24 @@ async function getDLMM() {
   };
 }
 
+/**
+ * Convert a human-readable price-per-lamport decimal string (e.g. "0.0000006756")
+ * to a Q64.64 fixed-point BN for use in the LP share formula.
+ * Inverse of whatever fromPricePerLamport does.
+ */
+export function decimalPriceToQ64(priceStr) {
+  if (!priceStr || priceStr === "0") return new BN(0);
+  const s = String(priceStr);
+  const dot = s.indexOf(".");
+  if (dot === -1) return new BN(s).shln(64); // integer value * 2^64
+  const intPart = s.slice(0, dot);
+  const fracPart = s.slice(dot + 1);
+  const combined = intPart + fracPart;
+  const decimals = fracPart.length;
+  // value * 2^64 / 10^decimals
+  return new BN(combined).mul(new BN(1).shln(64)).div(new BN(10).pow(new BN(decimals)));
+}
+
 // ─── Lazy wallet/connection init ──────────────────────────────
 // Avoids crashing on import when WALLET_PRIVATE_KEY is not yet set
 // (e.g. during screening-only tests).
@@ -642,7 +660,7 @@ export async function deployPosition({
         //   inLiquidity = depositY * 2^64            (single-side Y, depositX = 0)
         //   binLiquidity = price * binX + binY * 2^64
         //   shares = inLiquidity * binSupply / binLiquidity
-        const priceBN = new BN(b.price ?? "0");
+        const priceBN = decimalPriceToQ64(b.price);
         const binXBN = new BN(b.xAmount ?? "0");
         const binYBN = new BN(b.yAmount ?? "0");
         const binSupplyBN = new BN(b.supply ?? "0");

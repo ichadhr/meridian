@@ -1,5 +1,5 @@
 import BN from "bn.js";
-import { getBinsInRange } from "./dlmm.js";
+import { getBinsInRange, decimalPriceToQ64 } from "./dlmm.js";
 import {
   listVirtualPositions,
   updateVirtualPosition,
@@ -55,7 +55,7 @@ export function computeVirtualPnl(vp, binData, solPrice) {
 
     const shares = new BN(share.shares);
     const supply = b ? new BN(b.supply ?? "0") : ZERO;
-    const priceBN = b ? new BN(b.price ?? "0") : ZERO;
+    const priceBN = b ? decimalPriceToQ64(b.price) : ZERO;
 
     // If bin missing from RPC or has no supply → 0 value, 0 fees
     const xAmount = b ? new BN(b.xAmount ?? "0") : ZERO;
