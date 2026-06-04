@@ -181,14 +181,13 @@ export async function agentLoop(goal, maxSteps = config.llm.maxSteps, sessionHis
   let sawDeployTool = false;
   let noToolRetryCount = 0;
 
-  // If this role uses a thinking model, reserve extra token budget for reasoning.
-  // Reasoning models consume max_tokens for both thinking + visible output.
-  // Without this buffer, they run out of tokens mid-reasoning and return empty.
+  // If this role uses a thinking model, the hardcoded maxOutputTokens floor
+  // (2048 from index.js) is too small — reasoning consumes most of it, leaving
+  // nothing for visible output. Use config.llm.maxTokens (default 4096) instead.
   const isThinking = agentType === "SCREENER" ? config.llm.thinkingScreening
     : agentType === "MANAGER" ? config.llm.thinkingManagement
     : config.llm.thinkingGeneral;
-  const effectiveMaxTokens = maxOutputTokens ?? config.llm.maxTokens;
-  const tokenBudget = isThinking ? effectiveMaxTokens * 2 : effectiveMaxTokens;
+  const tokenBudget = isThinking ? config.llm.maxTokens : (maxOutputTokens ?? config.llm.maxTokens);
 
   let emptyStreak = 0;
   for (let step = 0; step < maxSteps; step++) {
