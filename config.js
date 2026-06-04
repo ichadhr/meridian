@@ -144,6 +144,11 @@ export const config = {
     managementModel: u.managementModel ?? process.env.LLM_MODEL ?? "openrouter/healer-alpha",
     screeningModel:  u.screeningModel  ?? process.env.LLM_MODEL ?? "openrouter/hunter-alpha",
     generalModel:    u.generalModel    ?? process.env.LLM_MODEL ?? "openrouter/healer-alpha",
+    // Thinking/reasoning models consume max_tokens for internal reasoning.
+    // When enabled, the token budget is doubled to leave room for visible output.
+    thinkingManagement: u.thinkingManagement ?? false,
+    thinkingScreening:  u.thinkingScreening  ?? true,
+    thinkingGeneral:    u.thinkingGeneral    ?? false,
   },
 
   // ─── Darwinian Signal Weighting ───────

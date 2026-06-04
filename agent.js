@@ -181,6 +181,15 @@ export async function agentLoop(goal, maxSteps = config.llm.maxSteps, sessionHis
   let sawDeployTool = false;
   let noToolRetryCount = 0;
 
+  // If this role uses a thinking model, reserve extra token budget for reasoning.
+  // Reasoning models consume max_tokens for both thinking + visible output.
+  // Without this buffer, they run out of tokens mid-reasoning and return empty.
+  const isThinking = agentType === "SCREENER" ? config.llm.thinkingScreening
+    : agentType === "MANAGER" ? config.llm.thinkingManagement
+    : config.llm.thinkingGeneral;
+  const effectiveMaxTokens = maxOutputTokens ?? config.llm.maxTokens;
+  const tokenBudget = isThinking ? effectiveMaxTokens * 2 : effectiveMaxTokens;
+
   let emptyStreak = 0;
   for (let step = 0; step < maxSteps; step++) {
     log("agent", `Step ${step + 1}/${maxSteps}`);
@@ -201,7 +210,7 @@ export async function agentLoop(goal, maxSteps = config.llm.maxSteps, sessionHis
             tools: getToolsForRole(agentType, goal),
             tool_choice: "auto",
             temperature: config.llm.temperature,
-            max_tokens: maxOutputTokens ?? config.llm.maxTokens,
+            max_tokens: tokenBudget,
           };
           response = await client.chat.completions.create(reqParams);
         } catch (error) {
