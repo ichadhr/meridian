@@ -118,7 +118,9 @@ export function getVirtualPosition(id) {
 }
 
 const UPDATE_PROTECTED = new Set([
-  "status", "closed_at", "close_reason", "close_pnl_pct", "close_pnl_usd",
+  "id", "status", "closed_at", "close_reason", "close_pnl_pct", "close_pnl_usd",
+  "close_pnl_sol_pct", "close_pnl_sol", "close_il_sol", "close_fees_sol",
+  "close_cost_sol", "close_il_usd", "close_fees_usd", "close_cost_usd",
 ]);
 
 export function updateVirtualPosition(id, updates) {

@@ -160,7 +160,7 @@ export function computeVirtualPnl(vp, binData, solPrice) {
     currentValueUsd,
     initialValueUsd,
     // PnL breakdown (SOL)
-    rawPnlSol,                  // impermanent loss in SOL (negative = lost value)
+    rawPnlSol,                  // mark-to-market PnL before fees/costs
     feesSol: unclaimedFeesSol,
     gasCostSol,
     slippageSol,
@@ -451,8 +451,7 @@ export async function runVirtualManagementCycle() {
       if (closeRule) {
         // Persist final state BEFORE closing (preserves snapshot, peak, OOR)
         updateVirtualPosition(vp.id, updates);
-        recordVpDeployToPoolMemory(vp, pnl, closeRule.reason);
-        closeVirtualPosition(vp.id, closeRule.reason, pnl.pnlPct, pnl.pnlUsd, {
+        const closed = closeVirtualPosition(vp.id, closeRule.reason, pnl.pnlPct, pnl.pnlUsd, {
           close_pnl_sol_pct: pnl.pnlSolPct,
           close_pnl_sol: pnl.netPnlSol,
           close_il_sol: pnl.rawPnlSol,
@@ -462,21 +461,18 @@ export async function runVirtualManagementCycle() {
           close_fees_usd: pnl.feesUsd,
           close_cost_usd: pnl.totalCostUsd,
         });
+        if (!closed) {
+          log("vp", `VP ${vp.id} (${vp.pair}) close ABORTED — archive write failed, retrying next cycle`);
+          continue;
+        }
+        recordVpDeployToPoolMemory(vp, pnl, closeRule.reason);
         results.push({
-          id: vp.id,
-          pair: vp.pair,
-          action: "CLOSED",
-          reason: closeRule.reason,
-          pnl_pct: pnl.pnlPct,
-          pnl_usd: pnl.pnlUsd,
-          pnl_sol_pct: pnl.pnlSolPct,
-          pnl_sol: pnl.netPnlSol,
-          il_sol: pnl.rawPnlSol,
-          unclaimed_fees_sol: pnl.feesSol,
-          cost_sol: pnl.totalCostSol,
-          il_usd: pnl.ilUsd,
-          unclaimed_fees_usd: pnl.feesUsd,
-          cost_usd: pnl.totalCostUsd,
+          id: vp.id, pair: vp.pair, action: "CLOSED", reason: closeRule.reason,
+          pnl_pct: pnl.pnlPct, pnl_usd: pnl.pnlUsd,
+          pnl_sol_pct: pnl.pnlSolPct, pnl_sol: pnl.netPnlSol,
+          il_sol: pnl.rawPnlSol, unclaimed_fees_sol: pnl.feesSol,
+          cost_sol: pnl.totalCostSol, il_usd: pnl.ilUsd,
+          unclaimed_fees_usd: pnl.feesUsd, cost_usd: pnl.totalCostUsd,
         });
         log("vp", `VP ${vp.id} (${vp.pair}) CLOSED: ${closeRule.reason} PnL=${pnl.pnlPct.toFixed(2)}% (SOL: ${pnl.pnlSolPct.toFixed(2)}%)`);
         continue;
@@ -485,8 +481,7 @@ export async function runVirtualManagementCycle() {
       // ── Trailing TP close (2-cycle confirmed) ──────────────────────
       if (trailingCloseReason) {
         updateVirtualPosition(vp.id, updates);
-        recordVpDeployToPoolMemory(vp, pnl, trailingCloseReason);
-        closeVirtualPosition(vp.id, trailingCloseReason, pnl.pnlPct, pnl.pnlUsd, {
+        const closed = closeVirtualPosition(vp.id, trailingCloseReason, pnl.pnlPct, pnl.pnlUsd, {
           close_pnl_sol_pct: pnl.pnlSolPct,
           close_pnl_sol: pnl.netPnlSol,
           close_il_sol: pnl.rawPnlSol,
@@ -496,21 +491,18 @@ export async function runVirtualManagementCycle() {
           close_fees_usd: pnl.feesUsd,
           close_cost_usd: pnl.totalCostUsd,
         });
+        if (!closed) {
+          log("vp", `VP ${vp.id} (${vp.pair}) close ABORTED — archive write failed, retrying next cycle`);
+          continue;
+        }
+        recordVpDeployToPoolMemory(vp, pnl, trailingCloseReason);
         results.push({
-          id: vp.id,
-          pair: vp.pair,
-          action: "CLOSED",
-          reason: trailingCloseReason,
-          pnl_pct: pnl.pnlPct,
-          pnl_usd: pnl.pnlUsd,
-          pnl_sol_pct: pnl.pnlSolPct,
-          pnl_sol: pnl.netPnlSol,
-          il_sol: pnl.rawPnlSol,
-          unclaimed_fees_sol: pnl.feesSol,
-          cost_sol: pnl.totalCostSol,
-          il_usd: pnl.ilUsd,
-          unclaimed_fees_usd: pnl.feesUsd,
-          cost_usd: pnl.totalCostUsd,
+          id: vp.id, pair: vp.pair, action: "CLOSED", reason: trailingCloseReason,
+          pnl_pct: pnl.pnlPct, pnl_usd: pnl.pnlUsd,
+          pnl_sol_pct: pnl.pnlSolPct, pnl_sol: pnl.netPnlSol,
+          il_sol: pnl.rawPnlSol, unclaimed_fees_sol: pnl.feesSol,
+          cost_sol: pnl.totalCostSol, il_usd: pnl.ilUsd,
+          unclaimed_fees_usd: pnl.feesUsd, cost_usd: pnl.totalCostUsd,
         });
         log("vp", `VP ${vp.id} (${vp.pair}) CLOSED: ${trailingCloseReason}`);
         continue;
