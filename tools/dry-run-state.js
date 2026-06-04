@@ -126,7 +126,7 @@ export function updateVirtualPosition(id, updates) {
   return true;
 }
 
-export function closeVirtualPosition(id, reason, pnlPct, pnlUsd) {
+export function closeVirtualPosition(id, reason, pnlPct, pnlUsd, extraFields = {}) {
   const state = load();
   const idx = state.virtual_positions.findIndex((p) => p.id === id);
   if (idx === -1) return false;
@@ -136,6 +136,7 @@ export function closeVirtualPosition(id, reason, pnlPct, pnlUsd) {
   vp.close_reason = reason;
   vp.close_pnl_pct = pnlPct;
   vp.close_pnl_usd = pnlUsd;
+  Object.assign(vp, extraFields);
   // Move closed position to JSONL archive and remove from active state
   appendArchiveRecord("paper", vp);
   state.virtual_positions.splice(idx, 1);

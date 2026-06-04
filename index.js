@@ -241,12 +241,20 @@ export async function runManagementCycle({ silent = false } = {}) {
       let report = "No open positions. Triggering screening cycle.";
       if (vpEarlyResults.length > 0) {
         const vpLines = vpEarlyResults.map(r => {
+          const isSol = !!config.management.solMode;
+          const cur = isSol ? "◎" : "$";
+          const pnlVal = isSol ? (r.pnl_sol_pct ?? 0) : (r.pnl_pct ?? 0);
+          const ilVal = isSol ? (r.il_sol ?? 0) : (r.il_usd ?? 0);
+          const feeVal = isSol ? (r.unclaimed_fees_sol ?? 0) : (r.unclaimed_fees_usd ?? 0);
+          const costVal = isSol ? (r.cost_sol ?? 0) : (r.cost_usd ?? 0);
+          const breakdown = `(IL: ${cur}${ilVal >= 0 ? "+" : ""}${ilVal.toFixed(4)}, Fees: ${cur}+${feeVal.toFixed(4)}, Cost: ${cur}-${costVal.toFixed(4)})`;
+
           if (r.action === "CLOSED") {
-            return `🎭 **${r.pair}** (VP) CLOSED: ${r.reason} | PnL: ${r.pnl_pct?.toFixed(2)}%`;
+            return `🎭 **${r.pair}** (VP) CLOSED: ${r.reason} | PnL: ${pnlVal.toFixed(2)}% | ${breakdown}`;
           }
-          const val = config.management.solMode ? `◎${(r.value_sol ?? 0).toFixed(4)}` : `$${(r.value_usd ?? 0).toFixed(4)}`;
-          const fees = config.management.solMode ? `◎${(r.unclaimed_fees_usd ?? 0).toFixed(4)}` : `$${(r.unclaimed_fees_usd ?? 0).toFixed(4)}`;
-          return `🎭 **${r.pair}** (VP) | Val: ${val} | Fees: ${fees} | PnL: ${r.pnl_pct?.toFixed(2)}% | ${r.oor}`;
+          const val = isSol ? `◎${(r.value_sol ?? 0).toFixed(4)}` : `$${(r.value_usd ?? 0).toFixed(4)}`;
+          const fees = isSol ? `◎${(r.unclaimed_fees_sol ?? 0).toFixed(4)}` : `$${(r.unclaimed_fees_usd ?? 0).toFixed(4)}`;
+          return `🎭 **${r.pair}** (VP) | Val: ${val} | Fees: ${fees} | PnL: ${pnlVal.toFixed(2)}% | ${breakdown} | ${r.oor}`;
         }).join("\n");
         report += `\n\n---\n**Virtual Positions**\n${vpLines}`;
       }
@@ -403,12 +411,20 @@ After executing, write a brief one-line result per position.
     // Append VP summary to management report
     if (vpResults.length > 0) {
       const vpLines = vpResults.map(r => {
+        const isSol = !!config.management.solMode;
+        const cur = isSol ? "◎" : "$";
+        const pnlVal = isSol ? (r.pnl_sol_pct ?? 0) : (r.pnl_pct ?? 0);
+        const ilVal = isSol ? (r.il_sol ?? 0) : (r.il_usd ?? 0);
+        const feeVal = isSol ? (r.unclaimed_fees_sol ?? 0) : (r.unclaimed_fees_usd ?? 0);
+        const costVal = isSol ? (r.cost_sol ?? 0) : (r.cost_usd ?? 0);
+        const breakdown = `(IL: ${cur}${ilVal >= 0 ? "+" : ""}${ilVal.toFixed(4)}, Fees: ${cur}+${feeVal.toFixed(4)}, Cost: ${cur}-${costVal.toFixed(4)})`;
+
         if (r.action === "CLOSED") {
-          return `🎭 **${r.pair}** (VP) CLOSED: ${r.reason} | PnL: ${r.pnl_pct?.toFixed(2)}%`;
+          return `🎭 **${r.pair}** (VP) CLOSED: ${r.reason} | PnL: ${pnlVal.toFixed(2)}% | ${breakdown}`;
         }
-        const val = config.management.solMode ? `◎${(r.value_sol ?? 0).toFixed(4)}` : `$${(r.value_usd ?? 0).toFixed(4)}`;
-        const fees = config.management.solMode ? `◎${(r.unclaimed_fees_usd ?? 0).toFixed(4)}` : `$${(r.unclaimed_fees_usd ?? 0).toFixed(4)}`;
-        return `🎭 **${r.pair}** (VP) | Val: ${val} | Fees: ${fees} | PnL: ${r.pnl_pct?.toFixed(2)}% | ${r.oor}`;
+        const val = isSol ? `◎${(r.value_sol ?? 0).toFixed(4)}` : `$${(r.value_usd ?? 0).toFixed(4)}`;
+        const fees = isSol ? `◎${(r.unclaimed_fees_sol ?? 0).toFixed(4)}` : `$${(r.unclaimed_fees_usd ?? 0).toFixed(4)}`;
+        return `🎭 **${r.pair}** (VP) | Val: ${val} | Fees: ${fees} | PnL: ${pnlVal.toFixed(2)}% | ${breakdown} | ${r.oor}`;
       }).join("\n");
       mgmtReport += `\n\n---\n**Virtual Positions**\n${vpLines}`;
     }

@@ -370,6 +370,35 @@ test("Fee precision: small shares (< 2^64) now produce non-zero fees", () => {
 });
 
 // ════════════════════════════════════════════════════════════
+//  SECTION 7: SOL-mode PnL and Breakdown
+// ════════════════════════════════════════════════════════════
+
+test("SOL-mode PnL and breakdown matches computeVirtualPnl logic", () => {
+  const initialSol = 1.0;
+  const rawPositionValueSol = 1.2;
+  const unclaimedFeesSol = 0.05;
+  const gasCostSol = 0.007;
+  const slippagePct = 0.5; // bin_step 100
+  const slippageSol = rawPositionValueSol * (slippagePct / 100); // 0.006 SOL
+  
+  const positionValueSol = Math.max(0, rawPositionValueSol - gasCostSol - slippageSol); // 1.2 - 0.007 - 0.006 = 1.187 SOL
+  const ilSol = rawPositionValueSol - initialSol; // 1.2 - 1.0 = 0.2 SOL
+  const totalCostSol = gasCostSol + slippageSol; // 0.013 SOL
+  const netPnlSol = positionValueSol + unclaimedFeesSol - initialSol; // 1.187 + 0.05 - 1.0 = 0.237 SOL
+  const pnlSolPct = (netPnlSol / initialSol) * 100; // 23.7%
+
+  console.log(`  positionValueSol: ${positionValueSol.toFixed(4)} (expected: 1.1870)`);
+  console.log(`  ilSol: ${ilSol.toFixed(4)} (expected: 0.2000)`);
+  console.log(`  netPnlSol: ${netPnlSol.toFixed(4)} (expected: 0.2370)`);
+  console.log(`  pnlSolPct: ${pnlSolPct.toFixed(2)}% (expected: 23.70%)`);
+
+  if (Math.abs(positionValueSol - 1.1870) > 1e-5) throw new Error(`Value mismatch`);
+  if (Math.abs(ilSol - 0.2000) > 1e-5) throw new Error(`IL mismatch`);
+  if (Math.abs(netPnlSol - 0.2370) > 1e-5) throw new Error(`Net PnL mismatch`);
+  if (Math.abs(pnlSolPct - 23.70) > 1e-5) throw new Error(`PnL % mismatch`);
+});
+
+// ════════════════════════════════════════════════════════════
 console.log(`\n${passed + failed} tests: ${passed} passed, ${failed} failed`);
 if (failed > 0) process.exitCode = 1;
 

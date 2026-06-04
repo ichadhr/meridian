@@ -122,8 +122,14 @@ export function computeVirtualPnl(vp, binData, solPrice) {
   const slippagePct = vp.bin_step
     ? (vp.bin_step / 10000 / 2) * 100   // half a bin width as %
     : (config.management.vpSlippagePct ?? 0.3);
-  const slippageMultiplier = 1 - slippagePct / 100;
-  const positionValueSol = Math.max(0, rawPositionValueSol - gasCostSol) * slippageMultiplier;
+  const slippageSol = rawPositionValueSol * (slippagePct / 100);
+  const positionValueSol = Math.max(0, rawPositionValueSol - gasCostSol - slippageSol);
+
+  // ── PnL breakdown (SOL-denominated for consistency) ─────────────
+  const initialSol = vp.amount_sol || 0;
+  const ilSol = rawPositionValueSol - initialSol;          // IL only (before fees/costs)
+  const totalCostSol = gasCostSol + slippageSol;           // simulated costs
+  const netPnlSol = positionValueSol + unclaimedFeesSol - initialSol;  // net PnL in SOL
 
   const unclaimedFeesUsd = unclaimedFeesSol * solPrice;
   const currentValueUsd = positionValueSol * solPrice + unclaimedFeesUsd;
@@ -140,6 +146,11 @@ export function computeVirtualPnl(vp, binData, solPrice) {
     }
   }
 
+  const pnlSolPct = initialSol > 0 ? (netPnlSol / initialSol) * 100 : 0;
+  const ilUsd = ilSol * solPrice;
+  const totalCostUsd = totalCostSol * solPrice;
+  const feesUsd = unclaimedFeesUsd;
+
   return {
     positionValueSol,
     unclaimedFeesSol,
@@ -148,6 +159,20 @@ export function computeVirtualPnl(vp, binData, solPrice) {
     pnlPct,
     currentValueUsd,
     initialValueUsd,
+    // PnL breakdown (SOL)
+    ilSol,                  // impermanent loss in SOL (negative = lost value)
+    feesSol: unclaimedFeesSol,
+    gasCostSol,
+    slippageSol,
+    totalCostSol,
+    netPnlSol,              // net PnL in SOL (after IL + fees - costs)
+    pnlSolPct,              // SOL PnL %
+    // PnL breakdown (USD)
+    ilUsd,
+    feesUsd,
+    gasCostUsd: gasCostSol * solPrice,
+    slippageCostUsd: slippageSol * solPrice,
+    totalCostUsd,
     perBin,
   };
 }
@@ -398,7 +423,16 @@ export async function runVirtualManagementCycle() {
         // Persist final state BEFORE closing (preserves snapshot, peak, OOR)
         updateVirtualPosition(vp.id, updates);
         recordVpDeployToPoolMemory(vp, pnl, closeRule.reason);
-        closeVirtualPosition(vp.id, closeRule.reason, pnl.pnlPct, pnl.pnlUsd);
+        closeVirtualPosition(vp.id, closeRule.reason, pnl.pnlPct, pnl.pnlUsd, {
+          close_pnl_sol_pct: pnl.pnlSolPct,
+          close_pnl_sol: pnl.netPnlSol,
+          close_il_sol: pnl.ilSol,
+          close_fees_sol: pnl.feesSol,
+          close_cost_sol: pnl.totalCostSol,
+          close_il_usd: pnl.ilUsd,
+          close_fees_usd: pnl.feesUsd,
+          close_cost_usd: pnl.totalCostUsd,
+        });
         results.push({
           id: vp.id,
           pair: vp.pair,
@@ -406,8 +440,16 @@ export async function runVirtualManagementCycle() {
           reason: closeRule.reason,
           pnl_pct: pnl.pnlPct,
           pnl_usd: pnl.pnlUsd,
+          pnl_sol_pct: pnl.pnlSolPct,
+          pnl_sol: pnl.netPnlSol,
+          il_sol: pnl.ilSol,
+          unclaimed_fees_sol: pnl.feesSol,
+          cost_sol: pnl.totalCostSol,
+          il_usd: pnl.ilUsd,
+          unclaimed_fees_usd: pnl.feesUsd,
+          cost_usd: pnl.totalCostUsd,
         });
-        log("vp", `VP ${vp.id} (${vp.pair}) CLOSED: ${closeRule.reason} PnL=${pnl.pnlPct.toFixed(2)}%`);
+        log("vp", `VP ${vp.id} (${vp.pair}) CLOSED: ${closeRule.reason} PnL=${pnl.pnlPct.toFixed(2)}% (SOL: ${pnl.pnlSolPct.toFixed(2)}%)`);
         continue;
       }
 
@@ -415,7 +457,16 @@ export async function runVirtualManagementCycle() {
       if (trailingCloseReason) {
         updateVirtualPosition(vp.id, updates);
         recordVpDeployToPoolMemory(vp, pnl, trailingCloseReason);
-        closeVirtualPosition(vp.id, trailingCloseReason, pnl.pnlPct, pnl.pnlUsd);
+        closeVirtualPosition(vp.id, trailingCloseReason, pnl.pnlPct, pnl.pnlUsd, {
+          close_pnl_sol_pct: pnl.pnlSolPct,
+          close_pnl_sol: pnl.netPnlSol,
+          close_il_sol: pnl.ilSol,
+          close_fees_sol: pnl.feesSol,
+          close_cost_sol: pnl.totalCostSol,
+          close_il_usd: pnl.ilUsd,
+          close_fees_usd: pnl.feesUsd,
+          close_cost_usd: pnl.totalCostUsd,
+        });
         results.push({
           id: vp.id,
           pair: vp.pair,
@@ -423,6 +474,14 @@ export async function runVirtualManagementCycle() {
           reason: trailingCloseReason,
           pnl_pct: pnl.pnlPct,
           pnl_usd: pnl.pnlUsd,
+          pnl_sol_pct: pnl.pnlSolPct,
+          pnl_sol: pnl.netPnlSol,
+          il_sol: pnl.ilSol,
+          unclaimed_fees_sol: pnl.feesSol,
+          cost_sol: pnl.totalCostSol,
+          il_usd: pnl.ilUsd,
+          unclaimed_fees_usd: pnl.feesUsd,
+          cost_usd: pnl.totalCostUsd,
         });
         log("vp", `VP ${vp.id} (${vp.pair}) CLOSED: ${trailingCloseReason}`);
         continue;
@@ -436,9 +495,17 @@ export async function runVirtualManagementCycle() {
         pair: vp.pair,
         action: "STAY",
         pnl_pct: pnl.pnlPct,
+        pnl_sol: pnl.netPnlSol,
+        pnl_sol_pct: pnl.pnlSolPct,
         value_sol: pnl.positionValueSol,
         value_usd: pnl.currentValueUsd,
         unclaimed_fees_usd: pnl.unclaimedFeesUsd,
+        unclaimed_fees_sol: pnl.feesSol,
+        il_sol: pnl.ilSol,
+        cost_sol: pnl.totalCostSol,
+        il_usd: pnl.ilUsd,
+        unclaimed_fees_usd: pnl.feesUsd,
+        cost_usd: pnl.totalCostUsd,
         oor: oorLabel,
       });
     } catch (e) {
