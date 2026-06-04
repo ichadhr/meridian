@@ -678,7 +678,9 @@ export async function deployPosition({
         organic_score: organic_score != null ? Number(organic_score) : undefined,
       });
     } catch (e) {
-      log("deploy", `DRY_RUN: bin state capture failed for VP tracking: ${e.message}`);
+      log("deploy", `DRY_RUN: bin state capture failed — ${e.message}`);
+      log("deploy", `DRY_RUN: pool=${pool_address}, activeBin=${activeBin.binId}, range=${minBinId}-${maxBinId}`);
+      if (e.stack) log("deploy", `DRY_RUN: stack=${e.stack.slice(0, 1000)}`);
     }
 
     return {
