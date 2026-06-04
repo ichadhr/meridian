@@ -509,6 +509,125 @@ export async function getBinsInRange({ pool_address, lower_bin, upper_bin }) {
   };
 }
 
+// ─── VP Strategy Distribution ──────────────────────────────────
+// Computes per-bin Y-side BPS (basis points out of 10000) allocation for
+// virtual position deploys. Matches the SDK's calculateSpotDistribution,
+// calculateBidAskDistribution, and calculateNormalDistribution logic.
+
+/**
+ * Minimal Gaussian PDF for VP distribution — avoids external 'gaussian' dependency.
+ * @param {number} mean   Center of distribution
+ * @param {number} variance  Variance (σ²)
+ * @returns {(x: number) => number}  PDF function
+ */
+function gaussianPdf(mean, variance) {
+  const stdDev = Math.sqrt(variance);
+  const coeff = 1 / (stdDev * Math.sqrt(2 * Math.PI));
+  return (x) => coeff * Math.exp(-0.5 * ((x - mean) / stdDev) ** 2);
+}
+
+/**
+ * Compute per-bin Y-side BPS allocation for a VP deploy.
+ *
+ * For single-sided SOL (Y-only) deposits where all bins are ≤ active bin,
+ * this computes how to distribute totalY across the bins.
+ *
+ * @param {string} strategy   "spot" | "bid_ask" | "curve"
+ * @param {number} activeBinId  The pool's current active bin ID
+ * @param {number[]} binIds  Sorted array of bin IDs in the position range
+ * @returns {Map<number, number>}  Map of binId → yBps (basis points, totaling ~10000)
+ */
+function computeVpYDistribution(strategy, activeBinId, binIds) {
+  const result = new Map();
+  if (binIds.length === 0) return result;
+
+  // Y-side bins = bins strictly below active + active bin itself (gets half weight for Y)
+  const yBins = binIds.filter(id => id <= activeBinId);
+  if (yBins.length === 0) {
+    // All bins above active — no Y allocation (shouldn't happen for SOL-only deploy)
+    for (const id of binIds) result.set(id, 0);
+    return result;
+  }
+
+  if (strategy === "spot" || !strategy) {
+    // ── Spot: uniform weight, active bin gets half ──
+    const belowCount = yBins.filter(id => id < activeBinId).length;
+    const hasActive = yBins.includes(activeBinId);
+    const totalCapacity = belowCount + (hasActive ? 0.5 : 0);
+
+    if (totalCapacity <= 0) {
+      // Only the active bin
+      result.set(activeBinId, 10000);
+    } else {
+      const perBinBps = Math.floor(10000 / totalCapacity);
+      let assigned = 0;
+      for (const id of yBins) {
+        if (id === activeBinId) {
+          const activeBps = 10000 - perBinBps * belowCount;
+          result.set(id, activeBps);
+          assigned += activeBps;
+        } else {
+          result.set(id, perBinBps);
+          assigned += perBinBps;
+        }
+      }
+    }
+  } else if (strategy === "bid_ask" || strategy === "curve") {
+    // ── Gaussian-based: bid_ask uses inverted Gaussian, curve uses normal ──
+    // Both use the same Gaussian shape but bid_ask inverts the PDF (1/pdf)
+    // so edges get more weight, while curve concentrates at center.
+    const invert = strategy === "bid_ask";
+
+    // Build Gaussian centered on active bin (or nearest edge)
+    const smallestBin = Math.min(...yBins);
+    const largestBin = Math.max(...yBins);
+    let mean;
+    if (yBins.includes(activeBinId)) {
+      mean = activeBinId;
+    } else if (activeBinId < smallestBin) {
+      mean = smallestBin;
+    } else {
+      mean = largestBin;
+    }
+
+    const TWO_STANDARD_DEVIATION = 4;
+    const stdDev = (largestBin - smallestBin) / TWO_STANDARD_DEVIATION;
+    const variance = Math.max(stdDev ** 2, 1);
+    const pdf = gaussianPdf(mean, variance);
+
+    // Compute raw allocations
+    const allocations = yBins.map(id => invert ? 1 / pdf(id) : pdf(id));
+    const totalAlloc = allocations.reduce((sum, a) => sum + a, 0);
+
+    // Normalize to BPS
+    let totalBps = 0;
+    const bpsValues = allocations.map(a => {
+      const bps = Math.floor((a / totalAlloc) * 10000);
+      totalBps += bps;
+      return bps;
+    });
+
+    // Distribute rounding loss to first bin
+    const loss = 10000 - totalBps;
+    bpsValues[0] += loss;
+
+    for (let i = 0; i < yBins.length; i++) {
+      result.set(yBins[i], bpsValues[i]);
+    }
+  } else {
+    // Unknown strategy — fall back to spot
+    log("deploy", `VP: unknown strategy "${strategy}", falling back to spot`);
+    return computeVpYDistribution("spot", activeBinId, binIds);
+  }
+
+  // Set X-side bins (above active) to 0 — VP only deposits Y
+  for (const id of binIds) {
+    if (!result.has(id)) result.set(id, 0);
+  }
+
+  return result;
+}
+
 // ─── Deploy Position ───────────────────────────────────────────
 export async function deployPosition({
   pool_address,
@@ -654,37 +773,34 @@ export async function deployPosition({
 
   // ── DRY RUN: track as virtual position ─────────────────────────
   if (process.env.DRY_RUN === "true") {
-    if (activeStrategy !== "spot") {
-      throw new Error(`Dry-run only supports spot strategy, got: ${activeStrategy}. Use strategy: "spot" for virtual deployments.`);
-    }
     let vpId = null;
     try {
       const { bins } = await getBinsInRange({ pool_address, lower_bin: minBinId, upper_bin: maxBinId });
-      log("deploy", `DRY_RUN: bins=${bins.length}, activeBin=${activeBin.binId}, hasActive=${bins.some(b => b.binId === activeBin.binId)}`);
+      log("deploy", `DRY_RUN: bins=${bins.length}, activeBin=${activeBin.binId}, hasActive=${bins.some(b => b.binId === activeBin.binId)}, strategy=${activeStrategy}`);
       if (bins.length > 0) {
         log("deploy", `DRY_RUN: sample0=price=${bins[0].price}, xAmt=${bins[0].xAmount}, yAmt=${bins[0].yAmount}, supply=${bins[0].supply}`);
       }
       const SCALE = new BN(1).shln(64); // Q64.64 scaling factor
 
-      // Spot strategy distributes Y unevenly across bins:
-      //   - Regular Y-side bins (strictly below active) get weight 1.0 each
-      //   - Active bin gets weight 0.5
-      // This matches the SDK's calculateSpotDistribution logic.
-      const yBinCount = activeBin.binId - minBinId;
-      const totalYBinCapacity = yBinCount + 0.5;
-      const yBinBps = Math.floor(10000 / totalYBinCapacity);
-      const yActiveBinBps = 10000 - yBinBps * yBinCount;
+      // ── Strategy-aware Y-side BPS distribution ──────────────────
+      // Computes per-bin yBps (basis points out of 10000) for how to
+      // distribute totalYLamports across bins below the active bin.
+      //
+      // Strategies:
+      //   spot:    uniform distribution (equal weight per bin, active gets half)
+      //   bid_ask: inverted Gaussian (more liquidity at edges, less at center)
+      //   curve:   normal Gaussian (more liquidity at center, less at edges)
+      const binIds = bins.map(b => b.binId).sort((a, b) => a - b);
+      const yBpsMap = computeVpYDistribution(activeStrategy, activeBin.binId, binIds);
 
       const binShares = bins.map((b) => {
-        const depositBps = b.binId === activeBin.binId ? yActiveBinBps : yBinBps;
+        const depositBps = yBpsMap.get(b.binId) || 0;
         const depositY = totalYLamports.mul(new BN(depositBps)).div(new BN(10000));
 
         // Full liquidity-based share formula (matches SDK's simulateDepositBin):
         //   inLiquidity = depositY * 2^64            (single-side Y, depositX = 0)
         //   binLiquidity = price * binX + binY * 2^64
         //   shares = inLiquidity * binSupply / binLiquidity
-        // b.priceQ64 is the SDK bin price as a consistent Q64.64 integer string
-        // (normalized by getBinsInRange from either BN or decimal string)
         const priceBN = new BN(b.priceQ64);
         const binXBN = new BN(b.xAmount ?? "0");
         const binYBN = new BN(b.yAmount ?? "0");

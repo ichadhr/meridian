@@ -52,8 +52,11 @@ if (isMain) {
   ensureAgentId();
   bootstrapHiveMind().catch((error) => log("hivemind_warn", `Bootstrap failed: ${error.message}`));
   startHiveMindBackgroundSync();
-  // One-time migration from old JSON archives to JSONL
-  import("./tools/position-archive.js").then((m) => m.migrateOldArchives()).catch(() => {});
+  // One-time migration from old JSON archives to JSONL, then purge corrupted records
+  import("./tools/position-archive.js").then((m) => {
+    m.migrateOldArchives();
+    m.purgeCorruptedArchiveRecords();
+  }).catch(() => {});
 }
 
 const TP_PCT = config.management.takeProfitPct;

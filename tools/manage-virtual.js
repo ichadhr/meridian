@@ -89,11 +89,12 @@ export function computeVirtualPnl(vp, binData, solPrice) {
     const feeXDelta = BN.max(currentFeeX.sub(storedFeeX), ZERO);
     const feeYDelta = BN.max(currentFeeY.sub(storedFeeY), ZERO);
 
-    // Shares carry a 2^64 scaling factor from the SDK's liquidity math (SCALE).
-    // The SDK right-shifts by 64 before computing fees, matching the on-chain
-    // claim path. Without this, fees are inflated by 2^64 ≈ 1.84×10¹⁹.
-    const unclaimedFeeX = mulShr(shares.shrn(64), feeXDelta, 64); // in X lamports
-    const unclaimedFeeY = mulShr(shares.shrn(64), feeYDelta, 64); // in Y lamports
+    // Fee = shares × feeDelta / 2^128
+    // shares carry 2^64 from SDK liquidity math; feePerToken carries another 2^64.
+    // Multiplying first then shifting by 128 avoids precision loss for small positions
+    // (the old shares.shrn(64) approach truncated to zero when shares < 2^64).
+    const unclaimedFeeX = mulShr(shares, feeXDelta, 128); // in X lamports
+    const unclaimedFeeY = mulShr(shares, feeYDelta, 128); // in Y lamports
     // Convert X fee lamports to Y (SOL) lamports using the same Q64.64 price
     const unclaimedFeeXInYLamports = mulShr(unclaimedFeeX, priceBN, 64);
 
@@ -385,8 +386,13 @@ export async function runVirtualManagementCycle() {
       updates.snapshots = snapshots;
 
       // ── Exit rules (pass freshly computed OOR minutes) ─────────────
+      // Guard against suspect PnL (matches live getDeterministicCloseRule logic)
+      const pnlSuspect = pnl.pnlPct < -90 && pnl.currentValueUsd > 0.01;
+      if (pnlSuspect) {
+        log("vp", `Suspect PnL for ${vp.pair}: ${pnl.pnlPct.toFixed(2)}% but position still has value $${pnl.currentValueUsd.toFixed(2)} — skipping PnL rules`);
+      }
       const closeRule = getVirtualCloseRule(
-        vp, pnl.pnlPct, pnl.currentValueUsd, activeBin, mgmtConfig, effectiveOorMinutes,
+        { ...vp, ...updates }, pnlSuspect ? null : pnl.pnlPct, pnl.currentValueUsd, activeBin, mgmtConfig, effectiveOorMinutes,
       );
       if (closeRule) {
         // Persist final state BEFORE closing (preserves snapshot, peak, OOR)

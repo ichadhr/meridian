@@ -222,3 +222,55 @@ export function migrateOldArchives() {
   }
   log("position_archive", `Migration complete: ${migrated} records migrated from ${files.length} archive file(s)`);
 }
+
+/**
+ * Purge VP archive records with corrupted PnL from the pre-fix era.
+ * Records with |close_pnl_pct| > 100,000% are clearly from the 2^64 overflow
+ * bug and would poison the Virtual Digest / Darwin weighting.
+ * Rewrites affected files in-place, keeping only valid records.
+ * Idempotent — safe to call on every startup.
+ */
+export function purgeCorruptedArchiveRecords() {
+  ensureDir();
+  const PNL_ABSURD_THRESHOLD = 100_000; // 100,000% is clearly impossible
+  try {
+    const files = fs.readdirSync(ARCHIVE_DIR).filter(
+      (f) => /^vp-archive-\d{4}-\d{2}\.jsonl$/.test(f),
+    );
+    let totalPurged = 0;
+    for (const file of files) {
+      const filePath = path.join(ARCHIVE_DIR, file);
+      try {
+        const content = fs.readFileSync(filePath, "utf8");
+        const lines = content.trim().split("\n").filter(Boolean);
+        const validLines = [];
+        let purgedInFile = 0;
+        for (const line of lines) {
+          try {
+            const record = JSON.parse(line);
+            if (record.close_pnl_pct != null && Math.abs(record.close_pnl_pct) > PNL_ABSURD_THRESHOLD) {
+              purgedInFile++;
+              continue;
+            }
+            validLines.push(line);
+          } catch {
+            validLines.push(line); // keep unparseable lines as-is
+          }
+        }
+        if (purgedInFile > 0) {
+          fs.writeFileSync(filePath, validLines.join("\n") + (validLines.length ? "\n" : ""));
+          totalPurged += purgedInFile;
+          log("position_archive", `Purged ${purgedInFile} corrupted records from ${file}`);
+        }
+      } catch (e) {
+        log("position_archive", `Failed to process ${file} during purge: ${e.message}`);
+      }
+    }
+    if (totalPurged > 0) {
+      invalidateCache();
+      log("position_archive", `Archive purge complete: ${totalPurged} corrupted records removed`);
+    }
+  } catch (e) {
+    log("position_archive", `Archive purge failed: ${e.message}`);
+  }
+}
