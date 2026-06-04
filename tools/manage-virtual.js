@@ -1,5 +1,5 @@
 import BN from "bn.js";
-import { getBinsInRange, decimalPriceToQ64 } from "./dlmm.js";
+import { getBinsInRange } from "./dlmm.js";
 import {
   listVirtualPositions,
   updateVirtualPosition,
@@ -55,7 +55,7 @@ export function computeVirtualPnl(vp, binData, solPrice) {
 
     const shares = new BN(share.shares);
     const supply = b ? new BN(b.supply ?? "0") : ZERO;
-    const priceBN = b ? decimalPriceToQ64(b.price) : ZERO;
+    const priceBN = b ? new BN(b.priceQ64) : ZERO;
 
     // If bin missing from RPC or has no supply → 0 value, 0 fees
     const xAmount = b ? new BN(b.xAmount ?? "0") : ZERO;
@@ -100,6 +100,15 @@ export function computeVirtualPnl(vp, binData, solPrice) {
   const initialValueUsd = vp.initial_value_usd || 0;
   const pnlUsd = currentValueUsd - initialValueUsd;
   const pnlPct = initialValueUsd > 0 ? (pnlUsd / initialValueUsd) * 100 : 0;
+
+  // Log anomaly when PnL is absurd (> 1,000,000%) — likely a price conversion issue
+  if (pnlPct > 1_000_000) {
+    log("vp_anomaly", `Virual ${vp.id} absurd PnL ${pnlPct.toExponential(4)}%. initialUSD=${initialValueUsd}, currentUSD=${currentValueUsd}, posSol=${positionValueSol}`);
+    for (const pb of perBin) {
+      const b = binData.find((x) => x.binId === pb.binId);
+      log("vp_anomaly", `  bin ${pb.binId}: price=${b?.price}, ourX=${pb.ourX}, ourY=${pb.ourY}, valYLamports=${pb.binValueYLamports}`);
+    }
+  }
 
   return {
     positionValueSol,

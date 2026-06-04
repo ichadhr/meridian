@@ -82,6 +82,12 @@ async function getDLMM() {
 export function decimalPriceToQ64(priceStr) {
   if (!priceStr || priceStr === "0") return new BN(0);
   const s = String(priceStr);
+  // Defensive: if the string looks like a Q64.64 integer (all digits, >20 chars),
+  // the SDK returned a BN object that toString'd into an integer string.
+  // Treat it as already Q64.64 rather than double-shifting by 2^64.
+  if (/^\d{20,}$/.test(s)) {
+    return new BN(s);
+  }
   const dot = s.indexOf(".");
   if (dot === -1) return new BN(s).shln(64); // integer value * 2^64
   const intPart = s.slice(0, dot);
@@ -476,16 +482,29 @@ export async function getBinsInRange({ pool_address, lower_bin, upper_bin }) {
   const result = await pool.getBinsBetweenLowerAndUpperBound(minBin, maxBin);
   return {
     activeBin: result.activeBin,
-    bins: result.bins.map((b) => ({
-      binId: b.binId,
-      xAmount: b.xAmount?.toString?.() ?? null,
-      yAmount: b.yAmount?.toString?.() ?? null,
-      supply: b.supply?.toString?.() ?? null,
-      feeAmountXPerTokenStored: b.feeAmountXPerTokenStored?.toString?.() ?? null,
-      feeAmountYPerTokenStored: b.feeAmountYPerTokenStored?.toString?.() ?? null,
-      price: b.price?.toString?.() ?? null,
-      priceHuman: pool.fromPricePerLamport(Number(b.price)),
-    })),
+    bins: result.bins.map((b) => {
+      // SDK sometimes returns b.price as a BN object (Q64.64 integer) and
+      // sometimes as a human-readable decimal string. Normalize to a consistent
+      // priceQ64 field so callers never have to guess the format.
+      let priceQ64 = null;
+      const rawPrice = b.price?.toString?.() ?? null;
+      if (BN.isBN(b.price)) {
+        priceQ64 = b.price.toString(10);
+      } else if (rawPrice !== null) {
+        priceQ64 = decimalPriceToQ64(rawPrice).toString(10);
+      }
+      return {
+        binId: b.binId,
+        xAmount: b.xAmount?.toString?.() ?? null,
+        yAmount: b.yAmount?.toString?.() ?? null,
+        supply: b.supply?.toString?.() ?? null,
+        feeAmountXPerTokenStored: b.feeAmountXPerTokenStored?.toString?.() ?? null,
+        feeAmountYPerTokenStored: b.feeAmountYPerTokenStored?.toString?.() ?? null,
+        price: rawPrice,
+        priceQ64,
+        priceHuman: pool.fromPricePerLamport(Number(b.price)),
+      };
+    }),
   };
 }
 
@@ -660,7 +679,9 @@ export async function deployPosition({
         //   inLiquidity = depositY * 2^64            (single-side Y, depositX = 0)
         //   binLiquidity = price * binX + binY * 2^64
         //   shares = inLiquidity * binSupply / binLiquidity
-        const priceBN = decimalPriceToQ64(b.price);
+        // b.priceQ64 is the SDK bin price as a consistent Q64.64 integer string
+        // (normalized by getBinsInRange from either BN or decimal string)
+        const priceBN = new BN(b.priceQ64);
         const binXBN = new BN(b.xAmount ?? "0");
         const binYBN = new BN(b.yAmount ?? "0");
         const binSupplyBN = new BN(b.supply ?? "0");
@@ -675,6 +696,7 @@ export async function deployPosition({
           binId: b.binId,
           shares: shares.toString(10),
           price: b.price,
+          priceQ64: b.priceQ64,
           feeXPerTokenComplete: b.feeAmountXPerTokenStored ?? "0",
           feeYPerTokenComplete: b.feeAmountYPerTokenStored ?? "0",
           xAmount: b.xAmount,
