@@ -747,16 +747,30 @@ async function runSafetyChecks(name, args) {
 
       // Check position count limit + duplicate pool guard — force fresh scan to avoid stale cache
       const positions = await getMyPositions({ force: true });
-      if (positions.total_positions >= config.risk.maxPositions) {
+      let totalPositions = positions.total_positions;
+      const occupiedPools = new Set(positions.positions.map((p) => p.pool));
+      const occupiedMints = new Set(positions.positions.map((p) => p.base_mint).filter(Boolean));
+
+      // In DRY_RUN mode, also count virtual positions toward limits
+      if (process.env.DRY_RUN === "true") {
+        try {
+          const { listVirtualPositions } = await import("./dry-run-state.js");
+          const vps = listVirtualPositions("open");
+          totalPositions += vps.length;
+          for (const vp of vps) {
+            occupiedPools.add(vp.pool);
+            if (vp.base_mint) occupiedMints.add(vp.base_mint);
+          }
+        } catch (e) { log("safety_block", `VP import failed: ${e.message}`); }
+      }
+
+      if (totalPositions >= config.risk.maxPositions) {
         return {
           pass: false,
           reason: `Max positions (${config.risk.maxPositions}) reached. Close a position first.`,
         };
       }
-      const alreadyInPool = positions.positions.some(
-        (p) => p.pool === args.pool_address
-      );
-      if (alreadyInPool) {
+      if (occupiedPools.has(args.pool_address)) {
         return {
           pass: false,
           reason: `Already have an open position in pool ${args.pool_address}. Cannot open duplicate.`,
@@ -764,16 +778,11 @@ async function runSafetyChecks(name, args) {
       }
 
       // Block same base token across different pools
-      if (args.base_mint) {
-        const alreadyHasMint = positions.positions.some(
-          (p) => p.base_mint === args.base_mint
-        );
-        if (alreadyHasMint) {
-          return {
-            pass: false,
-            reason: `Already holding base token ${args.base_mint} in another pool. One position per token only.`,
-          };
-        }
+      if (args.base_mint && occupiedMints.has(args.base_mint)) {
+        return {
+          pass: false,
+          reason: `Already holding base token ${args.base_mint} in another pool. One position per token only.`,
+        };
       }
 
       // Check amount limits

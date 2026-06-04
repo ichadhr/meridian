@@ -837,6 +837,7 @@ export async function deployPosition({
         amount_sol: finalAmountY,
         initial_value_usd: solPrice > 0 ? solPrice * finalAmountY : null,
         sol_price_at_deploy: solPrice > 0 ? solPrice : null,
+        base_mint: baseMint,
         bin_shares: binShares,
         volatility: normalizedVolatility ?? undefined,
         fee_tvl_ratio: fee_tvl_ratio != null ? Number(fee_tvl_ratio) : undefined,

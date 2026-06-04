@@ -311,7 +311,7 @@ export async function runVirtualManagementCycle() {
     try {
       recordPoolDeploy(vp.pool, {
         pool_name: vp.pool_name || vp.pair,
-        base_mint: null,
+        base_mint: vp.base_mint ?? null,
         deployed_at: vp.deployed_at,
         closed_at: new Date().toISOString(),
         pnl_pct: pnl.pnlPct,

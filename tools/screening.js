@@ -552,6 +552,18 @@ export async function getTopCandidates({ limit = 10 } = {}) {
   const { positions } = await getMyPositions();
   const occupiedPools = new Set(positions.map((p) => p.pool));
   const occupiedMints = new Set(positions.map((p) => p.base_mint).filter(Boolean));
+
+  // In DRY_RUN mode, also exclude pools where wallet has a virtual position
+  if (process.env.DRY_RUN === "true") {
+    try {
+      const { listVirtualPositions } = await import("./dry-run-state.js");
+      for (const vp of listVirtualPositions("open")) {
+        occupiedPools.add(vp.pool);
+        if (vp.base_mint) occupiedMints.add(vp.base_mint);
+      }
+    } catch (e) { log("screening", `VP import failed: ${e.message}`); }
+  }
+
   const minTvl = Number(config.screening.minTvl ?? 0);
   const maxTvl = config.screening.maxTvl == null ? null : Number(config.screening.maxTvl);
   const minFeeActiveTvlRatio = Number(config.screening.minFeeActiveTvlRatio ?? 0);

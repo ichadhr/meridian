@@ -47,6 +47,7 @@ export function trackVirtualPosition({
   initial_value_usd,
   sol_price_at_deploy,
   deploy_rationale,
+  base_mint,
   /**
    * @type {{ binId: number, shares: string, price: string|null, feeXPerTokenComplete: string|null, feeYPerTokenComplete: string|null, xAmount: string|null, yAmount: string|null }[]}
    * Per-bin LP position at deploy time. All numeric fields stored as BN strings for JSON safety.
@@ -81,6 +82,7 @@ export function trackVirtualPosition({
     sol_price_at_deploy: sol_price_at_deploy ?? null,
     deploy_rationale: deploy_rationale || null,
     bin_shares: Array.isArray(bin_shares) && bin_shares.length ? bin_shares : null,
+    base_mint: base_mint || null,
     volatility: volatility != null ? Number(volatility) : null,
     fee_tvl_ratio: fee_tvl_ratio != null ? fee_tvl_ratio : null,
     organic_score: organic_score != null ? organic_score : null,
