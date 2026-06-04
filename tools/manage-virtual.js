@@ -75,8 +75,11 @@ export function computeVirtualPnl(vp, binData, solPrice) {
     const feeXDelta = BN.max(currentFeeX.sub(storedFeeX), ZERO);
     const feeYDelta = BN.max(currentFeeY.sub(storedFeeY), ZERO);
 
-    const unclaimedFeeX = mulShr(shares, feeXDelta, 64); // in X lamports
-    const unclaimedFeeY = mulShr(shares, feeYDelta, 64); // in Y lamports
+    // Shares carry a 2^64 scaling factor from the SDK's liquidity math (SCALE).
+    // The SDK right-shifts by 64 before computing fees, matching the on-chain
+    // claim path. Without this, fees are inflated by 2^64 ≈ 1.84×10¹⁹.
+    const unclaimedFeeX = mulShr(shares.shrn(64), feeXDelta, 64); // in X lamports
+    const unclaimedFeeY = mulShr(shares.shrn(64), feeYDelta, 64); // in Y lamports
     // Convert X fee lamports to Y (SOL) lamports using the same Q64.64 price
     const unclaimedFeeXInYLamports = mulShr(unclaimedFeeX, priceBN, 64);
 
