@@ -619,6 +619,10 @@ export async function deployPosition({
     let vpId = null;
     try {
       const { bins } = await getBinsInRange({ pool_address, lower_bin: minBinId, upper_bin: maxBinId });
+      log("deploy", `DRY_RUN: bins=${bins.length}, activeBin=${activeBin.binId}, hasActive=${bins.some(b => b.binId === activeBin.binId)}`);
+      if (bins.length > 0) {
+        log("deploy", `DRY_RUN: sample0=price=${bins[0].price}, xAmt=${bins[0].xAmount}, yAmt=${bins[0].yAmount}, supply=${bins[0].supply}`);
+      }
       const SCALE = new BN(1).shln(64); // Q64.64 scaling factor
 
       // Spot strategy distributes Y unevenly across bins:
