@@ -143,14 +143,16 @@ async function validateDeployPoolThresholds(args) {
   }
 
   // ── Deploy-time fee/active-TVL gate ────────────────────────────
-  // Uses the volatility timeframe (30m+) data, which is stable enough that
-  // the rolling window won't shift between screening and deploy.
-  const feeRatio = poolDetailFeeActiveTvlRatio(volatilityDetail, volatilityTimeframe);
-  // Hard reject: zero fee activity in 30m+ = dead pool
+  // Uses the user's screening timeframe (same as screening filter).
+  // Short timeframes (5m) can roll to zero during LLM deliberation;
+  // if false positives are frequent, increase config timeframe to 30m+.
+  const detailTimeframe = config.screening.timeframe || "5m";
+  const feeRatio = poolDetailFeeActiveTvlRatio(detail, detailTimeframe);
+  // Hard reject: zero fee activity in current window = dead pool
   if (feeRatio != null && feeRatio <= 0) {
     return {
       pass: false,
-      reason: `Pool ${volatilityTimeframe} fee/active-TVL is zero — no trading activity.`,
+      reason: `Pool ${detailTimeframe} fee/active-TVL is zero — no trading activity.`,
     };
   }
   // Configurable threshold (null = disabled, no magic numbers)
@@ -158,7 +160,7 @@ async function validateDeployPoolThresholds(args) {
   if (minDeployFee != null && minDeployFee > 0 && (feeRatio == null || feeRatio < minDeployFee)) {
     return {
       pass: false,
-      reason: `Pool ${volatilityTimeframe} fee/active-TVL ${feeRatio ?? "unknown"} is below deploy threshold ${minDeployFee}.`,
+      reason: `Pool ${detailTimeframe} fee/active-TVL ${feeRatio ?? "unknown"} is below deploy threshold ${minDeployFee}.`,
     };
   }
 
