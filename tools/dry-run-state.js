@@ -117,11 +117,18 @@ export function getVirtualPosition(id) {
   return pos ? { ...pos } : null;
 }
 
+const UPDATE_PROTECTED = new Set([
+  "status", "closed_at", "close_reason", "close_pnl_pct", "close_pnl_usd",
+]);
+
 export function updateVirtualPosition(id, updates) {
   const state = load();
   const idx = state.virtual_positions.findIndex((p) => p.id === id);
   if (idx === -1) return false;
-  Object.assign(state.virtual_positions[idx], updates);
+  const pos = state.virtual_positions[idx];
+  for (const key of Object.keys(updates)) {
+    if (!UPDATE_PROTECTED.has(key)) pos[key] = updates[key];
+  }
   save(state);
   return true;
 }
@@ -146,7 +153,10 @@ export function closeVirtualPosition(id, reason, pnlPct, pnlUsd, extraFields = {
     if (CLOSE_EXTRA_ALLOWED.has(key)) vp[key] = extraFields[key];
   }
   // Move closed position to JSONL archive and remove from active state
-  appendArchiveRecord("paper", vp);
+  if (!appendArchiveRecord("paper", vp)) {
+    log("dry_run_state", `Virtual ${id} close ABORTED — archive write failed`);
+    return false;
+  }
   state.virtual_positions.splice(idx, 1);
   save(state);
   log("dry_run_state", `Virtual ${id} CLOSED: ${reason} PnL=${pnlPct}%`);

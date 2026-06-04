@@ -97,8 +97,10 @@ export function appendArchiveRecord(source, rawRecord) {
   try {
     fs.appendFileSync(file, JSON.stringify(record) + "\n");
     invalidateCache();
+    return true;
   } catch (e) {
     log("position_archive", `Failed to append ${source} record: ${e.message}`);
+    return false;
   }
 }
 

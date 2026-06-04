@@ -127,7 +127,7 @@ export function computeVirtualPnl(vp, binData, solPrice) {
 
   // ── PnL breakdown (SOL-denominated for consistency) ─────────────
   const initialSol = vp.amount_sol || 0;
-  const ilSol = rawPositionValueSol - initialSol;          // mark-to-market PnL before fees/costs (not pure IL)
+  const rawPnlSol = rawPositionValueSol - initialSol;          // mark-to-market PnL before fees/costs (not pure IL)
   const totalCostSol = gasCostSol + slippageSol;           // simulated costs
   const netPnlSol = positionValueSol + unclaimedFeesSol - initialSol;  // net PnL in SOL
 
@@ -147,7 +147,7 @@ export function computeVirtualPnl(vp, binData, solPrice) {
   }
 
   const pnlSolPct = initialSol > 0 ? (netPnlSol / initialSol) * 100 : 0;
-  const ilUsd = ilSol * solPrice;
+  const ilUsd = rawPnlSol * solPrice;
   const totalCostUsd = totalCostSol * solPrice;
   const feesUsd = unclaimedFeesUsd;
 
@@ -160,7 +160,7 @@ export function computeVirtualPnl(vp, binData, solPrice) {
     currentValueUsd,
     initialValueUsd,
     // PnL breakdown (SOL)
-    ilSol,                  // impermanent loss in SOL (negative = lost value)
+    rawPnlSol,                  // impermanent loss in SOL (negative = lost value)
     feesSol: unclaimedFeesSol,
     gasCostSol,
     slippageSol,
@@ -455,7 +455,7 @@ export async function runVirtualManagementCycle() {
         closeVirtualPosition(vp.id, closeRule.reason, pnl.pnlPct, pnl.pnlUsd, {
           close_pnl_sol_pct: pnl.pnlSolPct,
           close_pnl_sol: pnl.netPnlSol,
-          close_il_sol: pnl.ilSol,
+          close_il_sol: pnl.rawPnlSol,
           close_fees_sol: pnl.feesSol,
           close_cost_sol: pnl.totalCostSol,
           close_il_usd: pnl.ilUsd,
@@ -471,7 +471,7 @@ export async function runVirtualManagementCycle() {
           pnl_usd: pnl.pnlUsd,
           pnl_sol_pct: pnl.pnlSolPct,
           pnl_sol: pnl.netPnlSol,
-          il_sol: pnl.ilSol,
+          il_sol: pnl.rawPnlSol,
           unclaimed_fees_sol: pnl.feesSol,
           cost_sol: pnl.totalCostSol,
           il_usd: pnl.ilUsd,
@@ -489,7 +489,7 @@ export async function runVirtualManagementCycle() {
         closeVirtualPosition(vp.id, trailingCloseReason, pnl.pnlPct, pnl.pnlUsd, {
           close_pnl_sol_pct: pnl.pnlSolPct,
           close_pnl_sol: pnl.netPnlSol,
-          close_il_sol: pnl.ilSol,
+          close_il_sol: pnl.rawPnlSol,
           close_fees_sol: pnl.feesSol,
           close_cost_sol: pnl.totalCostSol,
           close_il_usd: pnl.ilUsd,
@@ -505,7 +505,7 @@ export async function runVirtualManagementCycle() {
           pnl_usd: pnl.pnlUsd,
           pnl_sol_pct: pnl.pnlSolPct,
           pnl_sol: pnl.netPnlSol,
-          il_sol: pnl.ilSol,
+          il_sol: pnl.rawPnlSol,
           unclaimed_fees_sol: pnl.feesSol,
           cost_sol: pnl.totalCostSol,
           il_usd: pnl.ilUsd,
@@ -524,13 +524,14 @@ export async function runVirtualManagementCycle() {
         pair: vp.pair,
         action: "STAY",
         pnl_pct: pnl.pnlPct,
+        pnl_usd: pnl.pnlUsd,
         pnl_sol: pnl.netPnlSol,
         pnl_sol_pct: pnl.pnlSolPct,
         value_sol: pnl.positionValueSol,
         value_usd: pnl.currentValueUsd,
         unclaimed_fees_usd: pnl.feesUsd,
         unclaimed_fees_sol: pnl.feesSol,
-        il_sol: pnl.ilSol,
+        il_sol: pnl.rawPnlSol,
         cost_sol: pnl.totalCostSol,
         il_usd: pnl.ilUsd,
         cost_usd: pnl.totalCostUsd,
