@@ -440,6 +440,9 @@ export async function runVirtualManagementCycle() {
       updates.snapshots = snapshots;
 
       // ── Exit rules (pass freshly computed OOR minutes) ─────────────
+      const vpAgeMinutes = vp.deployed_at
+        ? Math.floor((Date.now() - new Date(vp.deployed_at).getTime()) / 60000)
+        : 0;
       // Guard against suspect PnL (matches live getDeterministicCloseRule logic)
       const pnlSuspect = pnl.pnlPct < -90 && pnl.currentValueUsd > 0.01;
       if (pnlSuspect) {
@@ -468,6 +471,7 @@ export async function runVirtualManagementCycle() {
         recordVpDeployToPoolMemory(vp, pnl, closeRule.reason);
         results.push({
           id: vp.id, pair: vp.pair, action: "CLOSED", reason: closeRule.reason,
+          age_minutes: vpAgeMinutes,
           pnl_pct: pnl.pnlPct, pnl_usd: pnl.pnlUsd,
           pnl_sol_pct: pnl.pnlSolPct, pnl_sol: pnl.netPnlSol,
           il_sol: pnl.rawPnlSol, unclaimed_fees_sol: pnl.feesSol,
@@ -498,6 +502,7 @@ export async function runVirtualManagementCycle() {
         recordVpDeployToPoolMemory(vp, pnl, trailingCloseReason);
         results.push({
           id: vp.id, pair: vp.pair, action: "CLOSED", reason: trailingCloseReason,
+          age_minutes: vpAgeMinutes,
           pnl_pct: pnl.pnlPct, pnl_usd: pnl.pnlUsd,
           pnl_sol_pct: pnl.pnlSolPct, pnl_sol: pnl.netPnlSol,
           il_sol: pnl.rawPnlSol, unclaimed_fees_sol: pnl.feesSol,

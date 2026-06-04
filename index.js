@@ -243,19 +243,18 @@ export async function runManagementCycle({ silent = false } = {}) {
       if (vpEarlyResults.length > 0) {
         const vpLines = vpEarlyResults.map(r => {
           const isSol = !!config.management.solMode;
-          const cur = isSol ? "◎" : "$";
           const pnlVal = isSol ? (r.pnl_sol_pct ?? 0) : (r.pnl_pct ?? 0);
-          const ilVal = isSol ? (r.il_sol ?? 0) : (r.il_usd ?? 0);
-          const feeVal = isSol ? (r.unclaimed_fees_sol ?? 0) : (r.unclaimed_fees_usd ?? 0);
-          const costVal = isSol ? (r.cost_sol ?? 0) : (r.cost_usd ?? 0);
-          const breakdown = `(IL: ${cur}${ilVal >= 0 ? "+" : ""}${ilVal.toFixed(4)}, Fees: ${cur}+${feeVal.toFixed(4)}, Cost: ${cur}-${costVal.toFixed(4)})`;
+          const isOor = typeof r.oor === "string" && r.oor !== "IN";
+          const rangeIcon = isOor ? "🔴" : "🟢";
+          const ageStr = r.age_minutes != null ? `Age: ${r.age_minutes}m | ` : "";
 
           if (r.action === "CLOSED") {
-            return `🎭 **${r.pair}** (VP) CLOSED: ${r.reason} | PnL: ${pnlVal.toFixed(2)}% | ${breakdown}`;
+            return `**${r.pair}** | CLOSED: ${r.reason} | PnL: ${pnlVal.toFixed(2)}%`;
           }
-          const val = isSol ? `◎${(r.value_sol ?? 0).toFixed(4)}` : `$${(r.value_usd ?? 0).toFixed(4)}`;
-          const fees = isSol ? `◎${(r.unclaimed_fees_sol ?? 0).toFixed(4)}` : `$${(r.unclaimed_fees_usd ?? 0).toFixed(4)}`;
-          return `🎭 **${r.pair}** (VP) | Val: ${val} | Fees: ${fees} | PnL: ${pnlVal.toFixed(2)}% | ${breakdown} | ${r.oor}`;
+
+          const val = isSol ? `◎ ${(r.value_sol ?? 0).toFixed(4)}` : `$ ${(r.value_usd ?? 0).toFixed(2)}`;
+          const fees = isSol ? `◎ ${(r.unclaimed_fees_sol ?? 0).toFixed(4)}` : `$ ${(r.unclaimed_fees_usd ?? 0).toFixed(2)}`;
+          return `**${r.pair}** | ${ageStr}Val: ${val} | Unclaimed: ${fees} | PnL: ${pnlVal.toFixed(2)}% | ${rangeIcon} ${r.oor} | STAY`;
         }).join("\n");
         report += `\n\n---\n**Virtual Positions**\n${vpLines}`;
       }
@@ -413,19 +412,18 @@ After executing, write a brief one-line result per position.
     if (vpResults.length > 0) {
       const vpLines = vpResults.map(r => {
         const isSol = !!config.management.solMode;
-        const cur = isSol ? "◎" : "$";
         const pnlVal = isSol ? (r.pnl_sol_pct ?? 0) : (r.pnl_pct ?? 0);
-        const ilVal = isSol ? (r.il_sol ?? 0) : (r.il_usd ?? 0);
-        const feeVal = isSol ? (r.unclaimed_fees_sol ?? 0) : (r.unclaimed_fees_usd ?? 0);
-        const costVal = isSol ? (r.cost_sol ?? 0) : (r.cost_usd ?? 0);
-        const breakdown = `(IL: ${cur}${ilVal >= 0 ? "+" : ""}${ilVal.toFixed(4)}, Fees: ${cur}+${feeVal.toFixed(4)}, Cost: ${cur}-${costVal.toFixed(4)})`;
+        const isOor = typeof r.oor === "string" && r.oor !== "IN";
+        const rangeIcon = isOor ? "🔴" : "🟢";
+        const ageStr = r.age_minutes != null ? `Age: ${r.age_minutes}m | ` : "";
 
         if (r.action === "CLOSED") {
-          return `🎭 **${r.pair}** (VP) CLOSED: ${r.reason} | PnL: ${pnlVal.toFixed(2)}% | ${breakdown}`;
+          return `**${r.pair}** | CLOSED: ${r.reason} | PnL: ${pnlVal.toFixed(2)}%`;
         }
-        const val = isSol ? `◎${(r.value_sol ?? 0).toFixed(4)}` : `$${(r.value_usd ?? 0).toFixed(4)}`;
-        const fees = isSol ? `◎${(r.unclaimed_fees_sol ?? 0).toFixed(4)}` : `$${(r.unclaimed_fees_usd ?? 0).toFixed(4)}`;
-        return `🎭 **${r.pair}** (VP) | Val: ${val} | Fees: ${fees} | PnL: ${pnlVal.toFixed(2)}% | ${breakdown} | ${r.oor}`;
+
+        const val = isSol ? `◎ ${(r.value_sol ?? 0).toFixed(4)}` : `$ ${(r.value_usd ?? 0).toFixed(2)}`;
+        const fees = isSol ? `◎ ${(r.unclaimed_fees_sol ?? 0).toFixed(4)}` : `$ ${(r.unclaimed_fees_usd ?? 0).toFixed(2)}`;
+        return `**${r.pair}** | ${ageStr}Val: ${val} | Unclaimed: ${fees} | PnL: ${pnlVal.toFixed(2)}% | ${rangeIcon} ${r.oor} | STAY`;
       }).join("\n");
       mgmtReport += `\n\n---\n**Virtual Positions**\n${vpLines}`;
     }
