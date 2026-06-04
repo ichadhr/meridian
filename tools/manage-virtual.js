@@ -127,7 +127,7 @@ export function computeVirtualPnl(vp, binData, solPrice) {
 
   // ── PnL breakdown (SOL-denominated for consistency) ─────────────
   const initialSol = vp.amount_sol || 0;
-  const ilSol = rawPositionValueSol - initialSol;          // IL only (before fees/costs)
+  const ilSol = rawPositionValueSol - initialSol;          // mark-to-market PnL before fees/costs (not pure IL)
   const totalCostSol = gasCostSol + slippageSol;           // simulated costs
   const netPnlSol = positionValueSol + unclaimedFeesSol - initialSol;  // net PnL in SOL
 
@@ -251,14 +251,15 @@ export function getVirtualCloseRule(vp, pnlPct, currentValueUsd, activeBin, mgmt
     
     // Get the last trendCycles + 1 snapshots to check trendCycles drops
     const recent = vp.snapshots.slice(-(trendCycles + 1));
-    const currentPnl = recent[recent.length - 1][pnlField] ?? 0;
+    const currentPnl = recent[recent.length - 1][pnlField] ?? recent[recent.length - 1].pnl_pct ?? 0;
     
     // Rule only applies when currently in a loss
     if (currentPnl < 0) {
       let isTrendingDown = true;
       for (let i = 1; i < recent.length; i++) {
-        const prev = recent[i - 1][pnlField] ?? 0;
-        const curr = recent[i][pnlField] ?? 0;
+        // Fall back to pnl_pct when pnl_sol_pct is missing (pre-a06079a snapshots)
+        const prev = recent[i - 1][pnlField] ?? recent[i - 1].pnl_pct ?? 0;
+        const curr = recent[i][pnlField] ?? recent[i].pnl_pct ?? 0;
         if (curr >= prev) {
           isTrendingDown = false;
           break;
@@ -527,12 +528,11 @@ export async function runVirtualManagementCycle() {
         pnl_sol_pct: pnl.pnlSolPct,
         value_sol: pnl.positionValueSol,
         value_usd: pnl.currentValueUsd,
-        unclaimed_fees_usd: pnl.unclaimedFeesUsd,
+        unclaimed_fees_usd: pnl.feesUsd,
         unclaimed_fees_sol: pnl.feesSol,
         il_sol: pnl.ilSol,
         cost_sol: pnl.totalCostSol,
         il_usd: pnl.ilUsd,
-        unclaimed_fees_usd: pnl.feesUsd,
         cost_usd: pnl.totalCostUsd,
         oor: oorLabel,
       });
