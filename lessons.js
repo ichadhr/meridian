@@ -309,6 +309,10 @@ function derivLesson(perf) {
  * @returns {{ changes: Object, rationale: Object } | null}
  */
 export function evolveThresholds(perfData, config) {
+  // NOTE: minFeeActiveTvlRatioDeploy is intentionally NOT evolved here.
+  // It is a deploy-time safety gate on the volatility timeframe (30m+),
+  // not a screening filter. Evolving it would require tracking deploy
+  // rejections and their counterfactual outcomes.
   if (!perfData || perfData.length < MIN_EVOLVE_POSITIONS) return null;
 
   const winners = perfData.filter((p) => p.pnl_pct > 0);

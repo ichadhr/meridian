@@ -68,6 +68,15 @@ function poolDetailVolatility(pool) {
   return numberOrNull(pool?.volatility);
 }
 
+function poolDetailFeeActiveTvlRatio(pool, timeframe) {
+  // When pool list has per-timeframe fields, use those; otherwise fall back to base field
+  if (timeframe) {
+    const field = `fee_tvl_ratio_${timeframe}`;
+    if (pool?.[field] != null) return numberOrNull(pool[field]);
+  }
+  return numberOrNull(pool?.fee_active_tvl_ratio);
+}
+
 async function fetchFreshPoolDetail(poolAddress, timeframe = config.screening.timeframe || "5m") {
   const encodedTimeframe = encodeURIComponent(timeframe);
   const filter = encodeURIComponent(`pool_address=${poolAddress}`);
@@ -130,6 +139,26 @@ async function validateDeployPoolThresholds(args) {
     return {
       pass: false,
       reason: `Pool ${volatilityTimeframe} volatility ${volatility ?? "unknown"} is unusable. Refusing deploy.`,
+    };
+  }
+
+  // ── Deploy-time fee/active-TVL gate ────────────────────────────
+  // Uses the volatility timeframe (30m+) data, which is stable enough that
+  // the rolling window won't shift between screening and deploy.
+  const feeRatio = poolDetailFeeActiveTvlRatio(volatilityDetail, volatilityTimeframe);
+  // Hard reject: zero fee activity in 30m+ = dead pool
+  if (feeRatio != null && feeRatio <= 0) {
+    return {
+      pass: false,
+      reason: `Pool ${volatilityTimeframe} fee/active-TVL is zero — no trading activity.`,
+    };
+  }
+  // Configurable threshold (null = disabled, no magic numbers)
+  const minDeployFee = numberOrNull(config.screening.minFeeActiveTvlRatioDeploy);
+  if (minDeployFee != null && minDeployFee > 0 && (feeRatio == null || feeRatio < minDeployFee)) {
+    return {
+      pass: false,
+      reason: `Pool ${volatilityTimeframe} fee/active-TVL ${feeRatio ?? "unknown"} is below deploy threshold ${minDeployFee}.`,
     };
   }
 
@@ -321,7 +350,8 @@ const toolMap = {
     // Flat key → config section mapping (covers everything in config.js)
     const CONFIG_MAP = {
       // screening
-      minFeeActiveTvlRatio: ["screening", "minFeeActiveTvlRatio"],
+      minFeeActiveTvlRatio:      ["screening", "minFeeActiveTvlRatio"],
+      minFeeActiveTvlRatioDeploy: ["screening", "minFeeActiveTvlRatioDeploy"],
       excludeHighSupplyConcentration: ["screening", "excludeHighSupplyConcentration"],
       minTvl: ["screening", "minTvl"],
       maxTvl: ["screening", "maxTvl"],
