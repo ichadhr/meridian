@@ -131,12 +131,13 @@ function recordVpDeployToPoolMemory(vp, pnl, closeReason, effectiveOorMinutes) {
  * @param {number} effectiveOorMinutes  fresh OOR minutes for this cycle;
  *                     threaded through to recordVpDeployToPoolMemory.
  */
-async function closeVpAndRecord(vp, reason, bins, solPrice, activeBin, cycleCloseGasSol, effectiveOorMinutes) {
+async function closeVpAndRecord(vp, reason, bins, solPrice, activeBin, cycleCloseGasSol, effectiveOorMinutes, poolParams) {
   // Fresh re-estimate of close gas (bypass cycle cache)
   const finalCloseGasSol = await getFreshCloseGasSol(cycleCloseGasSol, vp.id);
   const finalPnl = computePositionPnl(vp, bins, solPrice, {
     closeGasSolOverride: finalCloseGasSol,
     activeBinId: activeBin,
+    poolParams,
   });
 
   const closed = closeVirtualPosition(vp.id, reason, finalPnl.pnlPct, finalPnl.pnlUsd, {
@@ -183,7 +184,7 @@ export async function closeVpManual(vpId, reason) {
   // Fetch fresh bins + compute PnL. Mirrors the cycle's per-VP flow.
   let finalPnl;
   try {
-    const { activeBin, bins } = await getBinsInRange({
+    const { activeBin, binStep, sParameter, vParameter, bins } = await getBinsInRange({
       pool_address: vp.pool,
       lower_bin: vp.lower_bin,
       upper_bin: vp.upper_bin,
@@ -195,9 +196,11 @@ export async function closeVpManual(vpId, reason) {
     // Manual close: no cycleCloseGasSol — use a fresh sample.
     const freshPf = await samplePriorityFee(getConnection(), { fresh: true });
     const freshCloseGasSol = await estimateCloseGasSol(getConnection(), freshPf);
+    const poolParams = { binStep, sParameter, vParameter };
     finalPnl = computePositionPnl(vp, bins, solPrice, {
       closeGasSolOverride: freshCloseGasSol,
       activeBinId: activeBin,
+      poolParams,
     });
   } catch (e) {
     log("vp_close", `Fresh PnL failed for manual close ${vpId}: ${e.message}`);
@@ -305,9 +308,13 @@ export async function runVirtualManagementCycle() {
       // (re-estimated once per cycle for all VPs). Pass activeBin so the
       // real-depth slippage algorithm knows where the price is.
       const activeBin = binResult.activeBin;
+      const poolParams = binResult.binStep != null
+        ? { binStep: binResult.binStep, sParameter: binResult.sParameter, vParameter: binResult.vParameter }
+        : null;
       const pnl = computePositionPnl(vp, binResult.bins, solPrice, {
         closeGasSolOverride: cycleCloseGasSol,
         activeBinId: activeBin,
+        poolParams,
       });
       const now = Date.now();
       const isOOR = activeBin > vp.upper_bin;
@@ -411,7 +418,7 @@ export async function runVirtualManagementCycle() {
         // Persist final state BEFORE closing (preserves snapshot, peak, OOR)
         updateVirtualPosition(vp.id, updates);
         const finalPnl = await closeVpAndRecord(
-          vp, closeReason, binResult.bins, solPrice, activeBin, cycleCloseGasSol, effectiveOorMinutes
+          vp, closeReason, binResult.bins, solPrice, activeBin, cycleCloseGasSol, effectiveOorMinutes, poolParams
         );
         if (!finalPnl) continue;
         results.push({

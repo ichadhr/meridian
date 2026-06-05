@@ -523,6 +523,11 @@ export async function getBinsInRange({ pool_address, lower_bin, upper_bin, skipC
   const result = await pool.getBinsBetweenLowerAndUpperBound(minBin, maxBin);
   const data = {
     activeBin: result.activeBin,
+    // Pool parameters for swap fee calculation (needed by estimateSlippageLamports
+    // which uses SDK's swapExactInQuoteAtBin for exact parity with live close).
+    binStep: pool.lbPair.binStep,
+    sParameter: pool.lbPair.parameters ?? null,
+    vParameter: pool.lbPair.vParameters ?? null,
     bins: result.bins.map((b) => {
       // SDK sometimes returns b.price as a BN object (Q64.64 integer) and
       // sometimes as a human-readable decimal string. Normalize to a consistent
@@ -1701,12 +1706,13 @@ export async function getMyPositions({ force = false, silent = false, wallet_add
           // Parallelize bin fetches across VPs to reduce getMyPositions latency.
           // Different pools don't share the 30s cache, so this matters for cold cache.
           const results = await Promise.allSettled(vps.map(async (vp) => {
-            const { activeBin, bins } = await getBinsInRange({
+            const { activeBin, binStep, sParameter, vParameter, bins } = await getBinsInRange({
               pool_address: vp.pool,
               lower_bin: vp.lower_bin,
               upper_bin: vp.upper_bin,
             });
-            return { vp, activeBin, pnl: computePositionPnl(vp, bins, realSolPrice, { activeBinId: activeBin }) };
+            const poolParams = { binStep, sParameter, vParameter };
+            return { vp, activeBin, pnl: computePositionPnl(vp, bins, realSolPrice, { activeBinId: activeBin, poolParams }) };
           }));
           for (const r of results) {
             if (r.status === "fulfilled") {

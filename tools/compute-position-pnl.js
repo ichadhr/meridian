@@ -14,11 +14,14 @@
 import BN from "bn.js";
 import { config } from "../config.js";
 
-// Q64.64 scale factor from SDK. Pre-loaded at module init (dlmm.js always
-// imports the SDK before any computePositionPnl code runs).
+// Q64.64 scale factor and swap function from SDK.
+// Pre-loaded at module init (dlmm.js always imports the SDK before any
+// computePositionPnl code runs, so these resolve instantly).
 let _PRICE_SCALE = null;
+let _swapExactInQuoteAtBin = null;
 import("@meteora-ag/dlmm").then(mod => {
   _PRICE_SCALE = BigInt(mod.SCALE.toString());
+  _swapExactInQuoteAtBin = mod.swapExactInQuoteAtBin;
 });
 import { log } from "../logger.js";
 
@@ -180,7 +183,10 @@ export function computePositionPnl(position, binData, solPrice, opts = {}) {
   // The caller applies a 1-tier unreliable-data fallback premium.
   const unreliablePct = config.management.vpSlippagePctUnreliable ?? 2.0;
   let slippagePct;
-  const slippageLamports = estimateSlippageLamports(perBin, binData, activeBinId, { lowerBin: position.lower_bin });
+  const slippageLamports = estimateSlippageLamports(perBin, binData, activeBinId, {
+    lowerBin: position.lower_bin,
+    poolParams: opts.poolParams,
+  });
   if (slippageLamports === null) {
     // Data insufficient — apply the unreliable-data safety premium.
     // vp_warn gives pool memory a signal to flag thin pools.
@@ -284,41 +290,31 @@ export function computePositionPnl(position, binData, solPrice, opts = {}) {
  */
 export function estimateSlippageLamports(perBin, binData, activeBinId, opts = {}) {
   const PRICE_SCALE = _PRICE_SCALE;
+  const swapFn = _swapExactInQuoteAtBin;
+  const { poolParams } = opts;
 
-  // ── Guard: missing active bin → null (fallback premium in caller) ───
-  // Without this, `pb.binId > null` is always false → remainingX stays 0n
-  // → function returns 0n → caller treats as legitimate zero slippage,
-  // silently disabling the unreliable-data fallback.
+  // ── Guard: missing active bin → null ──────────────────────────
   if (activeBinId == null) return null;
 
-  // 1. Sum X to swap (only from bins > active; Y from bins ≤ active needs no swap)
+  // 1. Sum X to swap (only from bins > active)
   let remainingX = 0n;
   for (const pb of perBin) {
     if (pb.binId > activeBinId) {
-      // ourX is a stringified BN — guard against missing/null values
       remainingX += BigInt(pb.ourX ?? "0");
     }
   }
-  if (remainingX === 0n) return 0n;  // no X to swap = no slippage (legitimate 0)
+  if (remainingX === 0n) return 0n;
 
   // 2. Find the active bin's price (theoretical "no slippage" price)
   const activeBin = binData.find(b => b.binId === activeBinId);
-  if (!activeBin) {
-    // Active bin is outside our binData (price moved below our range).
-    return null;  // caller logs warning
-  }
-  // priceQ64 may be null/0 if SDK returns a partial/corrupted response
+  if (!activeBin) return null;
   const activePriceBN = BigInt(activeBin.priceQ64 ?? "0");
-  if (activePriceBN === 0n) {
-    // Pathological: price is zero but X > 0. Impossible swap.
-    return null;  // caller logs warning
-  }
+  if (activePriceBN === 0n) return null;
 
-  // 3. Theoretical Y output at no-slippage: X × activePrice
+  // 3. Theoretical Y at no-slippage: X × activePrice / SCALE
   const theoreticalY = (remainingX * activePriceBN) / PRICE_SCALE;
 
-  // 4. Walk bins ≤ active in price-DESCENDING order (best price first).
-  //    BigInt comparator (NOT Number conversion — Q64.64 values can exceed 2^53)
+  // 4. Walk bins ≤ active in price-DESCENDING order.
   const binsBelowActive = binData
     .filter(b => b.binId <= activeBinId)
     .sort((a, b) => {
@@ -326,6 +322,43 @@ export function estimateSlippageLamports(perBin, binData, activeBinId, opts = {}
       return bP > aP ? 1 : bP < aP ? -1 : 0;
     });
 
+  if (swapFn && poolParams) {
+    // ── SDK path: use swapExactInQuoteAtBin for exact on-chain parity ──
+    // Each swap step properly accounts for the pool's base + variable fee
+    // via the SDK's sParameter / vParameter. Fees are deducted from inAmount;
+    // amountOut is what the swapper receives.
+    const { binStep, sParameter, vParameter } = poolParams;
+    let totalYReceived = 0n;
+
+    for (const bin of binsBelowActive) {
+      if (remainingX <= 0n) break;
+      if (!bin.yAmount || !bin.priceQ64) continue;
+
+      // Convert bin data to SDK Bin shape (requires BN for amounts)
+      const sdkBin = {
+        binId: bin.binId,
+        xAmount: new BN(bin.xAmount ?? "0"),
+        yAmount: new BN(bin.yAmount ?? "0"),
+        supply: new BN(bin.supply ?? "0"),
+        price: bin.price,
+        priceQ64: bin.priceQ64,
+      };
+
+      // inAmount includes fee — SDK splits it into fee + actual swap
+      const inAmount = new BN(remainingX.toString());
+      const { amountIn, amountOut } = swapFn(
+        sdkBin, binStep, sParameter, vParameter, inAmount, false, // swapForY=false (X→Y)
+      );
+
+      totalYReceived += BigInt(amountOut.toString());
+      remainingX -= BigInt(amountIn.toString());
+    }
+
+    if (remainingX > 0n) return null; // couldn't complete
+    return theoreticalY > totalYReceived ? theoreticalY - totalYReceived : 0n;
+  }
+
+  // ── Manual path: simple price-based walk (fallback when poolParams absent) ──
   let totalYReceived = 0n;
   for (const bin of binsBelowActive) {
     if (remainingX <= 0n) break;
@@ -333,22 +366,13 @@ export function estimateSlippageLamports(perBin, binData, activeBinId, opts = {}
     const priceBN = BigInt(bin.priceQ64 ?? "0");
     if (yAvailable === 0n || priceBN === 0n) continue;
 
-    // max X this bin can absorb: yAvailable × SCALE / price
     const maxXCanSwap = (yAvailable * PRICE_SCALE) / priceBN;
     const xToSwap = remainingX < maxXCanSwap ? remainingX : maxXCanSwap;
-
-    // Y received = X × price / SCALE
     const yReceived = (xToSwap * priceBN) / PRICE_SCALE;
     totalYReceived += yReceived;
     remainingX -= xToSwap;
   }
 
-  // ── Post-check: did we finish the swap within our data? ──────────
-  if (remainingX > 0n) {
-    // Pool exhausted within fetched range — couldn't complete swap
-    return null;  // caller logs warning
-  }
-
-  // 5. Shortfall = theoretical - actual (always >= 0)
+  if (remainingX > 0n) return null;
   return theoreticalY > totalYReceived ? theoreticalY - totalYReceived : 0n;
 }
