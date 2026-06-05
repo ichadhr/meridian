@@ -12,41 +12,55 @@
  *   - Base fee: 5,000 lamports per signature (Solana fixed).
  *   - Rent: tracked separately, fully recovered on close (net cost = 0).
  *
- * Reference SDK constants (from @meteora-ag/dlmm/dist/index.js):
- *   DEFAULT_INIT_POSITION_CU  = 30_000
- *   DEFAULT_INIT_BIN_ARRAY_CU = 350_000
- *   DEFAULT_ADD_LIQUIDITY_CU  = 1_000_000
+ * Reference SDK constants (imported from @meteora-ag/dlmm):
+ *   POSITION_FEE, BIN_ARRAY_FEE, TOKEN_ACCOUNT_FEE, BIN_ARRAY_BITMAP_FEE
  *
- * Reference rent constants (from @meteora-ag/dlmm/dist/index.js, line ~11184):
- *   POSITION_FEE            = 0.05740608 SOL
- *   BIN_ARRAY_FEE           = 0.07143744 SOL
- *   TOKEN_ACCOUNT_FEE       = 0.00203928 SOL
- *   BIN_ARRAY_BITMAP_FEE    = 0.01180416 SOL
- *   (Total deploy rent = 0.14472624 SOL, refunded on close)
+ * Reference CU budgets (DEFAULT_*_CU — internal to SDK, NOT exported,
+ * verified against @meteora-ag/dlmm/dist/index.js v1.9.0):
+ *   DEFAULT_INIT_POSITION_CU     = 30_000
+ *   DEFAULT_INIT_BIN_ARRAY_CU    = 350_000
+ *   DEFAULT_ADD_LIQUIDITY_CU     = 1_000_000
+ *   CLOSE_POSITION_CU            = 300_000 (removeLiquidity2 + closePosition2 typical)
  *
  * If you bump the @meteora-ag/dlmm version, re-verify these constants by
  * running scripts/measure-gas.js.
  */
 
-// SDK constant CU budgets (sum: deploy tx, close tx)
-const INIT_POSITION_CU    = 30_000;    // DEFAULT_INIT_POSITION_CU
-const INIT_BIN_ARRAY_CU   = 350_000;   // DEFAULT_INIT_BIN_ARRAY_CU
-const ADD_LIQUIDITY_CU    = 1_000_000; // DEFAULT_ADD_LIQUIDITY_CU
-const CLOSE_POSITION_CU   = 300_000;   // closePosition2 + removeLiquidity2 typical
+// SDK constants — dynamically loaded alongside other SDK imports
+let _POSITION_FEE = null;
+let _BIN_ARRAY_FEE = null;
+let _TOKEN_ACCOUNT_FEE = null;
+let _BIN_ARRAY_BITMAP_FEE = null;
+let _sdkLoaded = false;
+
+async function ensureSdkLoaded() {
+  if (_sdkLoaded) return;
+  const mod = await import("@meteora-ag/dlmm");
+  _POSITION_FEE = mod.POSITION_FEE;
+  _BIN_ARRAY_FEE = mod.BIN_ARRAY_FEE;
+  _TOKEN_ACCOUNT_FEE = mod.TOKEN_ACCOUNT_FEE;
+  _BIN_ARRAY_BITMAP_FEE = mod.BIN_ARRAY_BITMAP_FEE;
+  _sdkLoaded = true;
+}
+
+// CU budgets (internal to SDK — verified against source, see header comment)
+const INIT_POSITION_CU    = 30_000;
+const INIT_BIN_ARRAY_CU   = 350_000;
+const ADD_LIQUIDITY_CU    = 1_000_000;
+const CLOSE_POSITION_CU   = 300_000;
 
 const BASE_FEE_LAMPORTS_PER_SIG = 5_000;
 const MICRO_LAMPORTS_PER_LAMPORT = 1_000_000;
 const LAMPORTS_PER_SOL = 1_000_000_000;
 
-// Rent constants (SOL) — locked at deploy, fully refunded on close
-const RENT = Object.freeze({
-  position:      0.05740608,
-  binArray:      0.07143744,
-  tokenAccount:  0.00203928,  // × 2 (token X + token Y ATAs)
-  bitmap:        0.01180416,
-  get total() {
-    return this.position + this.binArray + 2 * this.tokenAccount + this.bitmap;
-  },
+// Rent constants (SOL) — loaded from SDK at runtime via ensureSdkLoaded().
+// Locked at deploy, fully refunded on close.
+const RENT = Object.defineProperties({}, {
+  position:      { get() { return _POSITION_FEE; } },
+  binArray:      { get() { return _BIN_ARRAY_FEE; } },
+  tokenAccount:  { get() { return _TOKEN_ACCOUNT_FEE; } },
+  bitmap:        { get() { return _BIN_ARRAY_BITMAP_FEE; } },
+  total:         { get() { return _POSITION_FEE + _BIN_ARRAY_FEE + 2 * _TOKEN_ACCOUNT_FEE + _BIN_ARRAY_BITMAP_FEE; } },
 });
 
 // Cached priority fee (µl/CU) with 60s TTL + in-flight promise dedup
