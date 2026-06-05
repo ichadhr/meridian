@@ -284,16 +284,6 @@ export function estimateSlippageLamports(perBin, binData, activeBinId, opts = {}
   // silently disabling the unreliable-data fallback.
   if (activeBinId == null) return null;
 
-  // ── Pre-check: do we have enough data below the position? ──────────
-  const lowerBin = opts.lowerBin;
-  if (lowerBin != null && binData.length > 0) {
-    const minBinInData = Math.min(...binData.map(b => b.binId));
-    if (minBinInData > lowerBin - 10) {
-      // binData doesn't extend 10 bins below position — pre-check fails
-      return null;  // caller logs warning with vp.id
-    }
-  }
-
   // 1. Sum X to swap (only from bins > active; Y from bins ≤ active needs no swap)
   let remainingX = 0n;
   for (const pb of perBin) {
