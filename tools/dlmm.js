@@ -514,9 +514,15 @@ export async function getBinsInRange({ pool_address, lower_bin, upper_bin, skipC
     const cached = _binsInRangeCache.get(cacheKey);
     if (cached && Date.now() < cached.expiresAt) {
       log("bins_cache_hit", `key=${cacheKey}`);
-      // structuredClone: protect cache from caller mutations (e.g., in-place
-      // sort/filter of bins). Cost is negligible (~35-69 bins per entry).
-      return structuredClone(cached.data);
+      // structuredClone protects bins from caller mutation.
+      // Pool parameters (sParameter/vParameter) contain SDK BN instances
+      // that lose their prototype on structuredClone — fetch them fresh
+      // from the pool object (already fetched above, no extra RPC).
+      const clone = structuredClone(cached.data);
+      clone.binStep = pool.lbPair.binStep;
+      clone.sParameter = pool.lbPair.parameters ?? null;
+      clone.vParameter = pool.lbPair.vParameters ?? null;
+      return clone;
     }
   }
 

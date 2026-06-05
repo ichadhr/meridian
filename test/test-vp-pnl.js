@@ -222,58 +222,20 @@ test("LOW_YIELD: edge case — exactly at threshold → does NOT trigger", () =>
 //  SECTION 5: Strategy Distribution
 // ════════════════════════════════════════════════════════════
 
-// Mirrors computeVpYDistribution from dlmm.js
-function gaussianPdf(mean, variance) {
-  const stdDev = Math.sqrt(variance);
-  const coeff = 1 / (stdDev * Math.sqrt(2 * Math.PI));
-  return (x) => coeff * Math.exp(-0.5 * ((x - mean) / stdDev) ** 2);
-}
+// Mirrors computeVpYDistribution from dlmm.js — delegates to SDK
+// distribution functions (same as production since meridian-wie Step 7).
+import { calculateSpotDistribution, calculateBidAskDistribution, calculateNormalDistribution } from "@meteora-ag/dlmm";
 
 function computeVpYDistribution(strategy, activeBinId, binIds) {
   const result = new Map();
   if (binIds.length === 0) return result;
-  const yBins = binIds.filter(id => id <= activeBinId);
-  if (yBins.length === 0) {
-    for (const id of binIds) result.set(id, 0);
-    return result;
-  }
-  if (strategy === "spot" || !strategy) {
-    const belowCount = yBins.filter(id => id < activeBinId).length;
-    const hasActive = yBins.includes(activeBinId);
-    const totalCapacity = belowCount + (hasActive ? 0.5 : 0);
-    if (totalCapacity <= 0) {
-      result.set(activeBinId, 10000);
-    } else {
-      const perBinBps = Math.floor(10000 / totalCapacity);
-      for (const id of yBins) {
-        if (id === activeBinId) {
-          result.set(id, 10000 - perBinBps * belowCount);
-        } else {
-          result.set(id, perBinBps);
-        }
-      }
-    }
-  } else if (strategy === "bid_ask" || strategy === "curve") {
-    const invert = strategy === "bid_ask";
-    const smallestBin = Math.min(...yBins);
-    const largestBin = Math.max(...yBins);
-    let mean = yBins.includes(activeBinId) ? activeBinId : (activeBinId < smallestBin ? smallestBin : largestBin);
-    const stdDev = (largestBin - smallestBin) / 4;
-    const variance = Math.max(stdDev ** 2, 1);
-    const pdf = gaussianPdf(mean, variance);
-    const allocations = yBins.map(id => invert ? 1 / pdf(id) : pdf(id));
-    const totalAlloc = allocations.reduce((s, a) => s + a, 0);
-    let totalBps = 0;
-    const bpsValues = allocations.map(a => {
-      const bps = Math.floor((a / totalAlloc) * 10000);
-      totalBps += bps;
-      return bps;
-    });
-    bpsValues[0] += 10000 - totalBps;
-    for (let i = 0; i < yBins.length; i++) result.set(yBins[i], bpsValues[i]);
-  } else {
-    // Unknown strategy — fall back to spot
-    return computeVpYDistribution("spot", activeBinId, binIds);
+  let dist;
+  if (strategy === "spot" || !strategy) dist = calculateSpotDistribution(activeBinId, binIds);
+  else if (strategy === "bid_ask") dist = calculateBidAskDistribution(activeBinId, binIds);
+  else if (strategy === "curve") dist = calculateNormalDistribution(activeBinId, binIds);
+  else dist = calculateSpotDistribution(activeBinId, binIds);
+  for (const d of dist) {
+    result.set(d.binId, Number(d.yAmountBpsOfTotal.toString()));
   }
   for (const id of binIds) {
     if (!result.has(id)) result.set(id, 0);
@@ -487,13 +449,6 @@ function estimateSlippageLamports(perBin, binData, activeBinId, opts = {}) {
   // Guard: missing active bin → null (caller applies fallback premium)
   if (activeBinId == null) return null;
 
-  // Pre-check: binData must extend ≥10 bins below the position's lowerBin
-  const lowerBin = opts.lowerBin;
-  if (lowerBin != null && binData.length > 0) {
-    const minBinInData = binData.reduce((m, b) => (b.binId < m ? b.binId : m), binData[0].binId);
-    if (minBinInData > lowerBin - 10) return null;
-  }
-
   // Sum X from bins > active (bins ≤ active hold Y, no swap needed)
   let remainingX = 0n;
   for (const pb of perBin) {
@@ -561,7 +516,8 @@ function buildBins(lowerBinId, upperBinId, yAmounts, prices = []) {
 
 test("Slippage 1: Y-only position, active bin has Y, no X → 0n (no slippage)", () => {
   // Position has Y in active bin only — no X to swap, no slippage
-  // binData must extend ≥10 bins below position.lowerBin (95) → start at 85
+  // Pre-check removed in Step 7 (meridian-wie) — swap algorithm walks
+  // available bins and completes naturally.
   const activeBinId = 100;
   const binData = buildBins(85, 105, [
     "0", "0", "0", "0", "0", "0", "0", "0", "0", "0",  // bins 85-94: empty (buffer)
@@ -695,9 +651,10 @@ test("Slippage 6: missing active bin (price moved below our range) → null", ()
   if (result !== null) throw new Error(`Expected null, got ${result}`);
 });
 
-test("Slippage 7: pre-check fails (binData has no buffer below position) → null", () => {
-  // lowerBin = 95, binData starts at 95 (no buffer)
-  // pre-check: minBinInData (95) > lowerBin - 10 (85) → TRUE → fail
+test("Slippage 7: no buffer below position → swap completes (pre-check removed)", () => {
+  // lowerBin = 95, binData starts at 95 (no buffer below).
+  // Step 7 (meridian-wie): pre-check removed — swap algorithm walks
+  // available bins and either completes or returns null naturally.
   const activeBinId = 100;
   const binData = buildBins(95, 105, [
     "1000000000000", "1000000000000", "1000000000000", "1000000000000", "1000000000000",
@@ -706,8 +663,9 @@ test("Slippage 7: pre-check fails (binData has no buffer below position) → nul
   ]);
   const perBin = [{ binId: 101, ourX: ONE_SOL.toString(), ourY: "0" }];
   const result = estimateSlippageLamports(perBin, binData, activeBinId, { lowerBin: 95 });
-  console.log(`  result: ${result} (expected null — pre-check)`);
-  if (result !== null) throw new Error(`Expected null, got ${result}`);
+  // With 1 SOL X to swap and 6×1000 SOL bin Y, swap should complete
+  console.log(`  result: ${result} (expected non-null slippage)`);
+  if (result === null) throw new Error(`Expected non-null slippage, got null`);
 });
 
 test("Slippage 8: activeBinId is null → null (fallback, NOT 0n)", () => {
