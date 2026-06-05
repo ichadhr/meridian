@@ -344,8 +344,8 @@ export async function runManagementCycle({ silent = false } = {}) {
       // Step 7 (meridian-wie): null in_range = "no fresh PnL" (RPC outage).
       // True → 🟢 IN. False → 🔴 OOR <time>m. Null → ?? (unknown — no red bullet).
       const inRange = p.in_range === true ? "🟢 IN" : p.in_range === false ? `🔴 OOR ${p.minutes_out_of_range ?? 0}m` : "??";
-      const val = config.management.solMode ? `◎${p.total_value_usd ?? "?"}` : `$${p.total_value_usd ?? "?"}`;
-      const unclaimed = config.management.solMode ? `◎${p.unclaimed_fees_usd ?? "?"}` : `$${p.unclaimed_fees_usd ?? "?"}`;
+      const val = config.management.solMode ? `◎ ${p.total_value_usd ?? "?"}` : `$ ${p.total_value_usd ?? "?"}`;
+      const unclaimed = config.management.solMode ? `◎ ${p.unclaimed_fees_usd ?? "?"}` : `$ ${p.unclaimed_fees_usd ?? "?"}`;
       const statusLabel = act.action === "INSTRUCTION" ? "HOLD (instruction)" : act.action;
       let line = `**${p.pair}** | Age: ${p.age_minutes ?? "?"}m | Val: ${val} | Unclaimed: ${unclaimed} | PnL: ${p.pnl_pct ?? "?"}% | Yield: ${p.fee_per_tvl_24h ?? "?"}% | ${inRange} | ${statusLabel}`;
       if (p.instruction) line += `\nNote: "${p.instruction}"`;
@@ -362,7 +362,7 @@ export async function runManagementCycle({ silent = false } = {}) {
 
     const cur = config.management.solMode ? "◎" : "$";
     mgmtReport = reportLines.join("\n\n") +
-      `\n\nSummary: 💼 ${livePositionData.length} positions | ${cur}${totalValue.toFixed(4)} | fees: ${cur}${totalUnclaimed.toFixed(4)} | ${actionSummary}`;
+      `\n\nSummary: 💼 ${livePositionData.length} positions | ${cur} ${totalValue.toFixed(4)} | fees: ${cur} ${totalUnclaimed.toFixed(4)} | ${actionSummary}`;
 
     // ── Call LLM only if action needed (live positions only) ─────────
     const actionPositions = livePositionData.filter(p => {
@@ -379,7 +379,7 @@ export async function runManagementCycle({ silent = false } = {}) {
           `POSITION: ${p.pair} (${p.position})`,
           `  pool: ${p.pool}`,
           `  action: ${act.action}${act.rule && act.rule !== "exit" ? ` — Rule ${act.rule}: ${act.reason}` : ""}${act.rule === "exit" ? ` — ⚡ Trailing TP: ${act.reason}` : ""}`,
-          `  pnl_pct: ${p.pnl_pct}% | unclaimed_fees: ${cur}${p.unclaimed_fees_usd} | value: ${cur}${p.total_value_usd} | fee_per_tvl_24h: ${p.fee_per_tvl_24h ?? "?"}%`,
+          `  pnl_pct: ${p.pnl_pct}% | unclaimed_fees: ${cur} ${p.unclaimed_fees_usd} | value: ${cur} ${p.total_value_usd} | fee_per_tvl_24h: ${p.fee_per_tvl_24h ?? "?"}%`,
           `  bins: lower=${p.lower_bin} upper=${p.upper_bin} active=${p.active_bin} | oor_minutes: ${p.minutes_out_of_range ?? 0}`,
           p.instruction ? `  instruction: "${p.instruction}"` : null,
         ].filter(Boolean).join("\n");
@@ -701,12 +701,12 @@ export async function runScreeningCycle({ silent = false } = {}) {
         pool.dev_sold_all       ? "dev_sold_all(bullish)" : null,
       ].filter(Boolean).join(", ");
       const pvpLine = pool.is_pvp
-        ? `  pvp: HIGH — rival ${pool.pvp_rival_name || pool.pvp_symbol} (${pool.pvp_rival_mint?.slice(0, 8)}...) has pool ${pool.pvp_rival_pool?.slice(0, 8)}..., tvl=$${pool.pvp_rival_tvl}, holders=${pool.pvp_rival_holders}, fees=${pool.pvp_rival_fees}SOL`
+        ? `  pvp: HIGH — rival ${pool.pvp_rival_name || pool.pvp_symbol} (${pool.pvp_rival_mint?.slice(0, 8)}...) has pool ${pool.pvp_rival_pool?.slice(0, 8)}..., tvl=$ ${pool.pvp_rival_tvl}, holders=${pool.pvp_rival_holders}, fees=${pool.pvp_rival_fees}SOL`
         : null;
-
-      const block = [
-        `POOL: ${pool.name} (${pool.pool})`,
-        `  metrics: bin_step=${pool.bin_step}, fee_pct=${pool.fee_pct}%, fee_tvl=${pool.fee_active_tvl_ratio}, vol=$${pool.volume_window}, tvl=$${pool.tvl ?? pool.active_tvl}, volatility_${pool.volatility_timeframe || "30m"}=${pool.volatility}, mcap=$${pool.mcap}, organic=${pool.organic_score}${pool.token_age_hours != null ? `, age=${pool.token_age_hours}h` : ""}`,
+      const extended = [
+        pool.token_name !== pool.pool_name ? `  token: ${pool.token_name} (name), ${pool.symbol} (symbol)` : null,
+        pvp,
+        `  metrics: bin_step=${pool.bin_step}, fee_pct=${pool.fee_pct}%, fee_tvl=${pool.fee_active_tvl_ratio}, vol=$ ${pool.volume_window}, tvl=$ ${pool.tvl ?? pool.active_tvl}, volatility_${pool.volatility_timeframe || "30m"}=${pool.volatility}, mcap=$ ${pool.mcap}, organic=${pool.organic_score}${pool.token_age_hours != null ? `, age=${pool.token_age_hours}h` : ""}`,
         `  audit: top10=${top10Pct}%, bots=${botPct}%, fees=${feesSol}SOL${launchpad ? `, launchpad=${launchpad}` : ""}`,
         pvpLine,
         okxParts ? `  okx: ${okxParts}` : okxUnavailable ? `  okx: unavailable` : null,
@@ -1110,8 +1110,8 @@ function formatWalletStatus(wallet, positions) {
   const deployAmount = computeDeployAmount(wallet.sol);
   const hive = isHiveMindEnabled() ? "on" : "off";
   return [
-    `Wallet: ${wallet.sol} SOL ($${wallet.sol_usd})`,
-    `SOL price: $${wallet.sol_price}`,
+    `Wallet: ${wallet.sol} SOL ($ ${wallet.sol_usd})`,
+    `SOL price: $ ${wallet.sol_price}`,
     `Open positions: ${positions.total_positions}/${config.risk.maxPositions}`,
     `Next deploy amount: ${deployAmount} SOL`,
     `Dry run: ${process.env.DRY_RUN === "true" ? "yes" : "no"}`,
@@ -1577,12 +1577,12 @@ async function telegramHandler(msg) {
       if (total_positions === 0) { await sendMessage("No open positions."); return; }
       const cur = config.management.solMode ? "◎" : "$";
       const lines = positions.map((p, i) => {
-        const pnl = p.pnl_usd >= 0 ? `+${cur}${p.pnl_usd}` : `-${cur}${Math.abs(p.pnl_usd)}`;
+        const pnl = p.pnl_usd >= 0 ? `+${cur} ${p.pnl_usd}` : `-${cur} ${Math.abs(p.pnl_usd)}`;
         const age = p.age_minutes != null ? `${p.age_minutes}m` : "?";
         // Step 7 (meridian-wie): null in_range = "no fresh PnL".
         // True → 🟢 IN. False → 🔴 OOR. Null → ?? (no red bullet).
-        const oor = p.in_range === false ? " 🔴OOR" : p.in_range === true ? " 🟢IN" : " ??";
-        return `${i + 1}. ${p.pair} | ${cur}${p.total_value_usd} | PnL: ${pnl} | fees: ${cur}${p.unclaimed_fees_usd} | ${age}${oor}`;
+        const oor = p.in_range === false ? " 🔴 OOR" : p.in_range === true ? " 🟢 IN" : " ??";
+        return `${i + 1}. ${p.pair} | ${cur} ${p.total_value_usd} | PnL: ${pnl} | fees: ${cur} ${p.unclaimed_fees_usd} | ${age}${oor}`;
       });
       await sendMessage(`📊 Open Positions (${total_positions}):\n\n${lines.join("\n")}\n\n/close <n> to close | /set <n> <note> to set instruction`);
     } catch (e) { await sendMessage(`Error: ${e.message}`).catch(() => {}); }
@@ -1612,7 +1612,7 @@ async function telegramHandler(msg) {
         const lines = vps.map((pos) => {
           const vpId = pos.position.slice(3); // strip "vp:" prefix
           const pnl = pos.pnl_pct != null ? `${pos.pnl_pct.toFixed(2)}%` : "?";
-          const fees = pos.unclaimed_fees_usd != null ? `${cur}${pos.unclaimed_fees_usd.toFixed(2)}` : "?";
+          const fees = pos.unclaimed_fees_usd != null ? `${cur} ${pos.unclaimed_fees_usd.toFixed(2)}` : "?";
           // Step 7 (meridian-wie): null in_range = "no fresh PnL" (RPC outage).
           // True → 🟢 IN. False → 🔴 OOR. Null → ?? (no red bullet).
           const oor = pos.in_range === true ? "🟢 IN" : pos.in_range === false ? "🔴 OOR" : "??";
@@ -1636,8 +1636,8 @@ async function telegramHandler(msg) {
           `Pool: ${pos.pool}`,
           `Position: ${pos.position}`,
           `Range: ${pos.lower_bin} → ${pos.upper_bin} | active ${pos.active_bin}`,
-          `PnL: ${pos.pnl_pct ?? "?"}% | fees: ${config.management.solMode ? "◎" : "$"}${pos.unclaimed_fees_usd ?? "?"}`,
-          `Value: ${config.management.solMode ? "◎" : "$"}${pos.total_value_usd ?? "?"}`,
+          `PnL: ${pos.pnl_pct ?? "?"}% | fees: ${config.management.solMode ? "◎" : "$"} ${pos.unclaimed_fees_usd ?? "?"}`,
+          `Value: ${config.management.solMode ? "◎" : "$"} ${pos.total_value_usd ?? "?"}`,
           // Step 7 (meridian-wie): null in_range = "no fresh PnL" (RPC outage).
           // True → 🟢 IN RANGE. False → 🔴 OOR <time>m. Null → ?? (no red bullet).
           `Age: ${pos.age_minutes ?? "?"}m | ${pos.in_range === true ? "🟢 IN RANGE" : pos.in_range === false ? `🔴 OOR ${pos.minutes_out_of_range ?? 0}m` : "?? (no fresh PnL)"}`,
@@ -1679,7 +1679,7 @@ async function telegramHandler(msg) {
         } else {
           const closeTxs = result.close_txs?.length ? result.close_txs : result.txs;
           const claimNote = result.claim_txs?.length ? `\nClaim txs: ${result.claim_txs.join(", ")}` : "";
-          await sendMessage(`✅ Closed ${pos.pair}\nPnL: ${config.management.solMode ? "◎" : "$"}${result.pnl_usd ?? "?"} | close txs: ${closeTxs?.join(", ") || "n/a"}${claimNote}`);
+          await sendMessage(`✅ Closed ${pos.pair}\nPnL: ${config.management.solMode ? "◎" : "$"} ${result.pnl_usd ?? "?"} | close txs: ${closeTxs?.join(", ") || "n/a"}${claimNote}`);
         }
         // Screening trigger — slot freed, don't let SOL sit idle
         tryStartScreening("telegram-close", true);
@@ -1966,15 +1966,12 @@ if (isMain && isTTY) {
 
     setLatestCandidates(candidates);
 
-    console.log(`Wallet:    ${wallet.sol} SOL  ($${wallet.sol_usd})  |  SOL price: $${wallet.sol_price}`);
-    console.log(`Positions: ${positions.total_positions} open\n`);
-
+    console.log(`Wallet:    ${wallet.sol} SOL  ($ ${wallet.sol_usd})  |  SOL price: $ ${wallet.sol_price}`);
     if (positions.total_positions > 0) {
       console.log("Open positions:");
       for (const p of positions.positions) {
-        // Step 7 (meridian-wie): null in_range = "no fresh PnL".
         const status = p.in_range === true ? "in-range ✓" : p.in_range === false ? "OUT OF RANGE ⚠" : "?? (no fresh PnL)";
-        console.log(`  ${p.pair.padEnd(16)} ${status}  fees: $${p.unclaimed_fees_usd}`);
+        console.log(`  ${p.pair.padEnd(16)} ${status}  fees: $ ${p.unclaimed_fees_usd}`);
       }
       console.log();
     }
@@ -2062,7 +2059,7 @@ Commands:
     if (input === "/status") {
       await runBusy(async () => {
         const [wallet, positions] = await Promise.all([getWalletBalances(), getMyPositions({ force: true })]);
-        console.log(`\nWallet: ${wallet.sol} SOL  ($${wallet.sol_usd})`);
+        console.log(`\nWallet: ${wallet.sol} SOL  ($ ${wallet.sol_usd})`);
         console.log(`Positions: ${positions.total_positions}`);
         for (const p of positions.positions) {
           // Step 7 (meridian-wie): null in_range = "no fresh PnL".
@@ -2212,11 +2209,10 @@ Focus on: hold duration, entry/exit timing, what win rates look like, whether sc
             return;
           }
           const solFmt = config.management.solMode ? "◎" : "$";
-          console.log(`\nVirtual positions (${vps.length}):\n`);
           for (const pos of vps) {
             const vpId = pos.position.slice(3); // strip "vp:" prefix
             const pnl = pos.pnl_pct != null ? `${pos.pnl_pct.toFixed(2)}%` : "?";
-            const fees = pos.unclaimed_fees_usd != null ? `${solFmt}${pos.unclaimed_fees_usd.toFixed(2)}` : "?";
+            const fees = pos.unclaimed_fees_usd != null ? `${solFmt} ${pos.unclaimed_fees_usd.toFixed(2)}` : "?";
             // Step 7 (meridian-wie): null in_range = "no fresh PnL".
             const oor = pos.in_range === true ? "🟢 IN" : pos.in_range === false ? "🔴 OOR" : "??";
             console.log(`  ${vpId} | ${pos.pair.padEnd(16)} | PnL: ${pnl.padStart(8)} | fees: ${fees} | ${oor}`);
