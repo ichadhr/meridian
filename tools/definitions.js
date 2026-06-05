@@ -229,11 +229,12 @@ Returns positions grouped by pool, each with:
 - pool address and token pair
 - bin range (min/max bin IDs)
 - whether currently in range
-- unclaimed fees (in USD)
-- total deposited value vs current value
+- unclaimed fees — in SOL when solMode, USD otherwise
+- total deposited value vs current value — same polymorphic unit
 - time since last rebalance
 
-Use this at the start of every management cycle.`,
+Use this at the start of every management cycle. If solMode is enabled,
+treat _usd-suffixed fields as SOL values, not USD.`,
       parameters: {
         type: "object",
         properties: {}
