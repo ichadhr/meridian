@@ -1711,12 +1711,44 @@ export async function getMyPositions({ force = false, silent = false, wallet_add
     if (process.env.DRY_RUN === "true" && useLocalWallet) {
       try {
         const { listVirtualPositions } = await import("./dry-run-state.js");
+        const { computePositionPnl } = await import("./compute-position-pnl.js");
         const vps = listVirtualPositions("open");
-        const solPrice = config.management.solMode ? await fetchSolPrice() : 0;
-        if (config.management.solMode && !solPrice) {
+        // ALWAYS fetch a real SOL price for computePositionPnl (it needs solPrice
+        // to compute USD fields correctly, even when display is in SOL mode).
+        // Only the display convention in mergeVirtualPositions switches on solMode.
+        const realSolPrice = await fetchSolPrice();
+        if (!realSolPrice) {
+          log("positions_warn", "fetchSolPrice failed; VP values will use cached fields");
+        }
+        const displaySolPrice = config.management.solMode ? (realSolPrice || 0) : 0;
+        if (config.management.solMode && !realSolPrice) {
           log("positions_warn", "solMode active but fetchSolPrice failed; VP values will display in USD");
         }
-        resultPositions = mergeVirtualPositions(positions, vps, solPrice).positions;
+        // Build fresh PnL map: for each VP, fetch fresh bins + activeBinId,
+        // compute PnL via computePositionPnl. On RPC failure, leave the
+        // entry absent so mergeVirtualPositions falls back to cached fields.
+        const freshPnlMap = new Map();
+        if (realSolPrice) {
+          // Parallelize bin fetches across VPs to reduce getMyPositions latency.
+          // Different pools don't share the 30s cache, so this matters for cold cache.
+          const results = await Promise.allSettled(vps.map(async (vp) => {
+            const { activeBin, bins } = await getBinsInRange({
+              pool_address: vp.pool,
+              lower_bin: vp.lower_bin,
+              upper_bin: vp.upper_bin,
+            });
+            return { vp, activeBin, pnl: computePositionPnl(vp, bins, realSolPrice, { activeBinId: activeBin }) };
+          }));
+          for (const r of results) {
+            if (r.status === "fulfilled") {
+              freshPnlMap.set(r.value.vp.id, { pnl: r.value.pnl, activeBinId: r.value.activeBin });
+            } else {
+              // Find the VP for logging — r.reason is the error
+              log("positions_warn", `Fresh PnL failed for one VP: ${r.reason?.message || r.reason} — using cached fields`);
+            }
+          }
+        }
+        resultPositions = mergeVirtualPositions(positions, vps, displaySolPrice, Date.now(), freshPnlMap).positions;
       } catch (e) {
         log("positions_warn", `VP merge failed: ${e.message}`);
       }

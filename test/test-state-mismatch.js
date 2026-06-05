@@ -217,6 +217,274 @@ test("A10: lazy migration — old VP without SOL fields falls back to amount_sol
 });
 
 // ════════════════════════════════════════════════════════════
+//  SECTION A-fresh: Fresh PnL path (meridian-wie Step 3)
+// ════════════════════════════════════════════════════════════
+//
+// mergeVirtualPositions now accepts an optional 5th arg `freshPnlMap`
+// (Map<vpId, {pnl, activeBinId}>). When provided, fresh PnL from
+// computePositionPnl is used INSTEAD of cached fields, eliminating the
+// top/bottom display discrepancy. When absent (e.g., RPC failure),
+// cached fields are used (dual-name fallback).
+
+test("A-fresh-1: fresh PnL overrides cached fields when provided", () => {
+  const vps = [{
+    id: "vp_fresh_1",
+    pool: "P1",
+    pair: "FRESH-SOL",
+    base_mint: "M1",
+    deployed_at: new Date(Date.now() - 60000).toISOString(),
+    lower_bin: 95,
+    upper_bin: 105,
+    // Cached fields (stale)
+    initial_value_usd: 75,
+    current_value_usd: 80,            // stale: real PnL is +15 not +5
+    pnl_sol_pct: 1.33,                 // stale
+    value_sol: 0.51,                   // stale
+    pnl_sol: 0.01,                     // stale
+  }];
+  // Fresh PnL from computePositionPnl
+  const freshPnl = {
+    currentValueUsd: 90,                // real PnL is +15
+    pnlUsd: 15,
+    pnlPct: 20,
+    positionValueSol: 0.53,             // fresh SOL value
+    netPnlSol: 0.03,
+    pnlSolPct: 6.0,                     // fresh SOL PnL %
+    unclaimedFeesSol: 0.005,
+    unclaimedFeesUsd: 0.85,
+  };
+  const freshPnlMap = new Map([
+    ["vp_fresh_1", { pnl: freshPnl, activeBinId: 100 }],
+  ]);
+  const result = mergeVirtualPositions([], vps, 150, Date.now(), freshPnlMap);
+  const merged = result.positions[0];
+  // Fresh values override cached
+  if (merged.total_value_usd !== 0.53) throw new Error(`Fresh total_value_usd=0.53, got ${merged.total_value_usd}`);
+  if (Math.abs(merged.pnl_pct - 6.0) > 0.001) throw new Error(`Fresh pnl_pct=6.0, got ${merged.pnl_pct}`);
+  if (Math.abs(merged.pnl_usd - 0.03) > 0.001) throw new Error(`Fresh pnl_usd=0.03, got ${merged.pnl_usd}`);
+  if (Math.abs(merged.unclaimed_fees_usd - 0.005) > 0.001) throw new Error(`Fresh unclaimed_fees_usd=0.005, got ${merged.unclaimed_fees_usd}`);
+  // active_bin from fresh, not from cached vp.active_bin_at_deploy
+  if (merged.active_bin !== 100) throw new Error(`Fresh active_bin=100, got ${merged.active_bin}`);
+});
+
+test("A-fresh-2: in_range uses fresh activeBinId, not stale !_oor_since", () => {
+  // Stale _oor_since would say "in range = false" but fresh activeBinId
+  // shows the price moved back into range.
+  const vps = [{
+    id: "vp_fresh_2",
+    pool: "P1",
+    pair: "OOR-SOL",
+    base_mint: "M1",
+    deployed_at: new Date().toISOString(),
+    lower_bin: 95,
+    upper_bin: 105,
+    _oor_since: new Date(Date.now() - 600000).toISOString(), // stale OOR
+  }];
+  // Fresh: activeBin=100 (in range!)
+  const freshPnlMap = new Map([
+    ["vp_fresh_2", { pnl: { currentValueUsd: 0, pnlUsd: 0, pnlPct: 0 }, activeBinId: 100 }],
+  ]);
+  const result = mergeVirtualPositions([], vps, 0, Date.now(), freshPnlMap);
+  const merged = result.positions[0];
+  if (merged.in_range !== true) throw new Error(`Fresh in_range should be true (activeBin=100 in [95,105]), got ${merged.in_range}`);
+});
+
+test("A-fresh-3: in_range reflects OOR via fresh activeBinId", () => {
+  // No stale _oor_since, but fresh activeBinId shows OOR.
+  const vps = [{
+    id: "vp_fresh_3",
+    pool: "P1",
+    pair: "MOVED-SOL",
+    base_mint: "M1",
+    deployed_at: new Date().toISOString(),
+    lower_bin: 95,
+    upper_bin: 105,
+    // No _oor_since set
+  }];
+  // Fresh: activeBin=110 (above upper_bin=105 → OOR)
+  const freshPnlMap = new Map([
+    ["vp_fresh_3", { pnl: { currentValueUsd: 0, pnlUsd: 0, pnlPct: 0 }, activeBinId: 110 }],
+  ]);
+  const result = mergeVirtualPositions([], vps, 0, Date.now(), freshPnlMap);
+  const merged = result.positions[0];
+  if (merged.in_range !== false) throw new Error(`Fresh in_range should be false (activeBin=110 > upper_bin=105), got ${merged.in_range}`);
+});
+
+test("A-fresh-4: RPC failure (vp not in freshPnlMap) falls back to cached fields", () => {
+  // Simulates the getBinsInRange failure path: VP exists but no fresh pnl computed.
+  const vps = [{
+    id: "vp_fresh_4",
+    pool: "P1",
+    pair: "RPCFAIL-SOL",
+    base_mint: "M1",
+    deployed_at: new Date().toISOString(),
+    lower_bin: 95,
+    upper_bin: 105,
+    initial_value_usd: 75,
+    current_value_usd: 78,
+    value_sol: 0.52,
+    pnl_sol: 0.02,
+    pnl_sol_pct: 4.0,
+    _oor_since: null,
+  }];
+  // Empty freshPnlMap (or vp not in it) → falls back to cached
+  const freshPnlMap = new Map(); // vp not in map
+  const result = mergeVirtualPositions([], vps, 150, Date.now(), freshPnlMap);
+  const merged = result.positions[0];
+  // Cached values used (backward compat)
+  if (merged.total_value_usd !== 0.52) throw new Error(`Fallback total_value_usd=0.52, got ${merged.total_value_usd}`);
+  if (Math.abs(merged.pnl_pct - 4.0) > 0.001) throw new Error(`Fallback pnl_pct=4.0, got ${merged.pnl_pct}`);
+  // in_range from !_oor_since = true
+  if (merged.in_range !== true) throw new Error(`Fallback in_range=true, got ${merged.in_range}`);
+});
+
+test("A-fresh-5: fresh null pnl falls back to cached (defensive)", () => {
+  // If caller passes fresh entry with null pnl (e.g., computePositionPnl
+  // returned null unexpectedly), we should fall back rather than crash.
+  const vps = [{
+    id: "vp_fresh_5",
+    pool: "P1",
+    base_mint: "M1",
+    deployed_at: new Date().toISOString(),
+    lower_bin: 95,
+    upper_bin: 105,
+    initial_value_usd: 75,
+    current_value_usd: 78,
+  }];
+  const freshPnlMap = new Map([
+    ["vp_fresh_5", { pnl: null, activeBinId: 100 }], // null pnl
+  ]);
+  const result = mergeVirtualPositions([], vps, 0, Date.now(), freshPnlMap);
+  const merged = result.positions[0];
+  // Falls back to cached
+  if (merged.total_value_usd !== 78) throw new Error(`Fallback total_value_usd=78, got ${merged.total_value_usd}`);
+  if (Math.abs(merged.pnl_usd - 3) > 0.001) throw new Error(`Fallback pnl_usd=3, got ${merged.pnl_usd}`);
+});
+
+test("A-fresh-6: mixed VPs — some fresh, some cached, work together", () => {
+  // Realistic case: 2 VPs, one RPC succeeds, one fails.
+  const vps = [
+    {
+      id: "vp_good",
+      pool: "P1", base_mint: "M1", pair: "GOOD",
+      deployed_at: new Date().toISOString(),
+      lower_bin: 95, upper_bin: 105,
+      initial_value_usd: 75, current_value_usd: 80,
+    },
+    {
+      id: "vp_bad",
+      pool: "P2", base_mint: "M2", pair: "BAD",
+      deployed_at: new Date().toISOString(),
+      lower_bin: 90, upper_bin: 100,
+      initial_value_usd: 50, current_value_usd: 55,
+      value_sol: 0.35, pnl_sol: 0.05, pnl_sol_pct: 16.67,
+    },
+  ];
+  const freshPnlMap = new Map([
+    // vp_good: fresh
+    ["vp_good", { pnl: { currentValueUsd: 85, pnlUsd: 10, pnlPct: 13.3 }, activeBinId: 100 }],
+    // vp_bad: NOT in map (RPC failed)
+  ]);
+  const result = mergeVirtualPositions([], vps, 0, Date.now(), freshPnlMap);
+  const good = result.positions.find(p => p.position === "vp:vp_good");
+  const bad = result.positions.find(p => p.position === "vp:vp_bad");
+  // vp_good: fresh values
+  if (good.total_value_usd !== 85) throw new Error(`good total=85, got ${good.total_value_usd}`);
+  if (good.in_range !== true) throw new Error(`good in_range=true, got ${good.in_range}`);
+  // vp_bad: cached values (solMode=false so uses current_value_usd)
+  if (bad.total_value_usd !== 55) throw new Error(`bad total=55, got ${bad.total_value_usd}`);
+});
+
+test("A-fresh-7: in_range boundary — activeBinId === lower_bin is in range", () => {
+  // Boundary test: at exact lower edge, position IS in range (>= operator).
+  const vps = [{
+    id: "vp_lower_edge",
+    pool: "P1", base_mint: "M1",
+    deployed_at: new Date().toISOString(),
+    lower_bin: 95, upper_bin: 105,
+  }];
+  const freshPnlMap = new Map([
+    ["vp_lower_edge", { pnl: { currentValueUsd: 0, pnlUsd: 0, pnlPct: 0 }, activeBinId: 95 }], // exact lower
+  ]);
+  const result = mergeVirtualPositions([], vps, 0, Date.now(), freshPnlMap);
+  if (result.positions[0].in_range !== true) throw new Error("activeBinId === lower_bin should be in_range=true");
+});
+
+test("A-fresh-8: in_range boundary — activeBinId === upper_bin is in range", () => {
+  // Boundary test: at exact upper edge, position IS in range (<= operator).
+  const vps = [{
+    id: "vp_upper_edge",
+    pool: "P1", base_mint: "M1",
+    deployed_at: new Date().toISOString(),
+    lower_bin: 95, upper_bin: 105,
+  }];
+  const freshPnlMap = new Map([
+    ["vp_upper_edge", { pnl: { currentValueUsd: 0, pnlUsd: 0, pnlPct: 0 }, activeBinId: 105 }], // exact upper
+  ]);
+  const result = mergeVirtualPositions([], vps, 0, Date.now(), freshPnlMap);
+  if (result.positions[0].in_range !== true) throw new Error("activeBinId === upper_bin should be in_range=true");
+});
+
+test("A-fresh-9: in_range is false when fresh activeBinId is null", () => {
+  // Defensive: if activeBinId is null (data unavailable), position is treated as OOR.
+  const vps = [{
+    id: "vp_null_active",
+    pool: "P1", base_mint: "M1",
+    deployed_at: new Date().toISOString(),
+    lower_bin: 95, upper_bin: 105,
+  }];
+  const freshPnlMap = new Map([
+    ["vp_null_active", { pnl: { currentValueUsd: 0, pnlUsd: 0, pnlPct: 0 }, activeBinId: null }],
+  ]);
+  const result = mergeVirtualPositions([], vps, 0, Date.now(), freshPnlMap);
+  if (result.positions[0].in_range !== false) throw new Error("activeBinId=null should be in_range=false");
+});
+
+test("A-fresh-10: undefined freshPnlMap falls back to cached for all VPs", () => {
+  // Defensive: passing undefined as 5th arg should not crash.
+  const vps = [{
+    id: "vp_undef_map",
+    pool: "P1", base_mint: "M1",
+    deployed_at: new Date().toISOString(),
+    lower_bin: 95, upper_bin: 105,
+    initial_value_usd: 100, current_value_usd: 110,
+  }];
+  const result = mergeVirtualPositions([], vps, 0, Date.now(), undefined);
+  // Should fall back to cached fields
+  if (result.positions[0].total_value_usd !== 110) throw new Error("undefined map should fall back to cached");
+});
+
+test("A-fresh-11: null freshPnlMap falls back to cached for all VPs", () => {
+  // Defensive: passing null as 5th arg should not crash.
+  const vps = [{
+    id: "vp_null_map",
+    pool: "P1", base_mint: "M1",
+    deployed_at: new Date().toISOString(),
+    lower_bin: 95, upper_bin: 105,
+    initial_value_usd: 100, current_value_usd: 110,
+  }];
+  const result = mergeVirtualPositions([], vps, 0, Date.now(), null);
+  if (result.positions[0].total_value_usd !== 110) throw new Error("null map should fall back to cached");
+});
+
+test("A-fresh-12: active_bin displays fresh activeBinId, not deploy-time", () => {
+  // vp.active_bin_at_deploy is from deploy time. Fresh activeBinId reflects
+  // current price. Display should show current.
+  const vps = [{
+    id: "vp_active_bin",
+    pool: "P1", base_mint: "M1",
+    deployed_at: new Date().toISOString(),
+    lower_bin: 95, upper_bin: 105,
+    active_bin_at_deploy: 98, // old value
+  }];
+  const freshPnlMap = new Map([
+    ["vp_active_bin", { pnl: { currentValueUsd: 0, pnlUsd: 0, pnlPct: 0 }, activeBinId: 103 }], // price moved
+  ]);
+  const result = mergeVirtualPositions([], vps, 0, Date.now(), freshPnlMap);
+  if (result.positions[0].active_bin !== 103) throw new Error(`active_bin should be fresh 103, got ${result.positions[0].active_bin}`);
+});
+
+// ════════════════════════════════════════════════════════════
 //  SECTION A-extended: VP close rule unit awareness (meridian-6vw)
 // ════════════════════════════════════════════════════════════
 //
