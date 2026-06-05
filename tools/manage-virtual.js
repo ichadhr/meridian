@@ -10,6 +10,7 @@ import { recordPoolDeploy } from "../pool-memory.js";
 import { config } from "../config.js";
 import { log } from "../logger.js";
 import { estimateCloseGasSol, samplePriorityFee } from "./gas-estimator.js";
+import { getVirtualCloseRule } from "./virtual-close-rule.js";
 
 const ZERO = new BN(0);
 const LAMPORTS_PER_SOL = 1_000_000_000;
@@ -345,103 +346,6 @@ export function estimateSlippageLamports(perBin, binData, activeBinId, opts = {}
 }
 
 /**
- * Deterministic close rules for virtual positions.
- * Static close rules only — trailing TP handled by the caller.
- *
- * Rules mirror live getDeterministicCloseRule (index.js):
- *   1. Stop loss
- *   2. Take profit
- *   3. Pumped far above range
- *   4. OOR too long
- *   5. Low yield (synthetic — uses VP's accumulated fee data instead of Meteora API)
- *
- * @param {object} vp                Virtual position (with total_fees_earned_usd, deployed_at)
- * @param {number} pnlPct            Current PnL percentage
- * @param {number} currentValueUsd   Current position value in USD
- * @param {number} activeBin         Current pool active bin
- * @param {object} mgmtConfig        config.management
- * @param {number} effectiveOorMinutes  Computed OOR minutes for THIS cycle (not stale stored value)
- */
-export function getVirtualCloseRule(vp, pnlPct, currentValueUsd, activeBin, mgmtConfig, effectiveOorMinutes = 0) {
-  const stopLossPct = mgmtConfig.stopLossPct ?? -50;
-  const takeProfitPct = mgmtConfig.takeProfitPct;
-  const oorWaitMinutes = mgmtConfig.outOfRangeWaitMinutes ?? 30;
-  // Guard against corrupted position state
-  if (vp.upper_bin == null || activeBin == null) return null;
-
-  const oorBinsToClose = mgmtConfig.outOfRangeBinsToClose ?? 5;
-
-  // Stop loss
-  if (pnlPct != null && pnlPct <= stopLossPct) {
-    return { action: "CLOSE", rule: 1, reason: "stop loss" };
-  }
-
-  // Take profit
-  if (pnlPct != null && pnlPct >= takeProfitPct) {
-    return { action: "CLOSE", rule: 2, reason: "take profit" };
-  }
-
-  // Pumped far above range
-  if (activeBin > vp.upper_bin + oorBinsToClose) {
-    return { action: "CLOSE", rule: 3, reason: "pumped far above range" };
-  }
-
-  // OOR too long (uses THIS cycle's accumulated OOR minutes, not stale stored value)
-  if (activeBin > vp.upper_bin && effectiveOorMinutes >= oorWaitMinutes) {
-    return { action: "CLOSE", rule: 4, reason: "OOR" };
-  }
-
-  // Low yield — synthetic approximation of live Rule 5.
-  // Live uses Meteora API's fee_per_tvl_24h; VP computes a backward-looking
-  // equivalent from its own accumulated fee data:
-  //   syntheticYield = (totalFeesUsd / currentValueUsd) * (1440 / ageMinutes) * 100
-  // This extrapolates the actual fee-to-TVL ratio to a 24h window.
-  const minFeePerTvl24h = mgmtConfig.minFeePerTvl24h ?? 7;
-  const minAgeForYieldCheck = mgmtConfig.minAgeBeforeYieldCheck ?? 60;
-  const ageMinutes = vp.deployed_at
-    ? Math.floor((Date.now() - new Date(vp.deployed_at).getTime()) / 60000)
-    : 0;
-
-  if (ageMinutes >= minAgeForYieldCheck && currentValueUsd > 0) {
-    const totalFeesUsd = vp.total_fees_earned_usd || 0;
-    const syntheticFeeYield = (totalFeesUsd / currentValueUsd) * (1440 / ageMinutes) * 100;
-    if (syntheticFeeYield < minFeePerTvl24h) {
-      return { action: "CLOSE", rule: 5, reason: "low yield" };
-    }
-  }
-
-  // Rule 6: Consecutive down trend exit (early warning)
-  const trendCycles = mgmtConfig.vpTrendExitCycles ?? 3;
-  if (trendCycles != null && trendCycles > 0 && vp.snapshots && vp.snapshots.length >= trendCycles + 1) {
-    const isSol = !!mgmtConfig.solMode;
-    const pnlField = isSol ? "pnl_sol_pct" : "pnl_pct";
-    
-    // Get the last trendCycles + 1 snapshots to check trendCycles drops
-    const recent = vp.snapshots.slice(-(trendCycles + 1));
-    const currentPnl = recent[recent.length - 1][pnlField] ?? recent[recent.length - 1].pnl_pct ?? 0;
-    
-    // Rule only applies when currently in a loss
-    if (currentPnl < 0) {
-      let isTrendingDown = true;
-      for (let i = 1; i < recent.length; i++) {
-        // Fall back to pnl_pct when pnl_sol_pct is missing (pre-a06079a snapshots)
-        const prev = recent[i - 1][pnlField] ?? recent[i - 1].pnl_pct ?? 0;
-        const curr = recent[i][pnlField] ?? recent[i].pnl_pct ?? 0;
-        if (curr >= prev) {
-          isTrendingDown = false;
-          break;
-        }
-      }
-      if (isTrendingDown) {
-        return { action: "CLOSE", rule: 6, reason: `consecutive down-trend (${trendCycles} cycles)` };
-      }
-    }
-  }
-
-  return null;
-}
-
-/**
  * Re-estimate close gas with a FRESH priority fee sample (bypass cache) so
  * the close PnL reflects the real network state at close time. Falls back
  * to the cycle value on RPC failure (logs a warning).
@@ -600,6 +504,7 @@ export async function runVirtualManagementCycle() {
         pnl_sol: pnl.netPnlSol,
         pnl_sol_pct: pnl.pnlSolPct,
         _peak_pnl_pct: Math.max(vp._peak_pnl_pct || 0, pnl.pnlPct),
+        _peak_pnl_sol_pct: Math.max(vp._peak_pnl_sol_pct || 0, pnl.pnlSolPct),
         _oor_since: oorSince,
         _oor_minutes: effectiveOorMinutes,
         _trailing_active: vp._trailing_active || false,
@@ -613,17 +518,24 @@ export async function runVirtualManagementCycle() {
       let trailingPending = updates._trailing_pending;
       let trailingCloseReason = null;
 
-      if (mgmtConfig.trailingTakeProfit && !trailingActive && (updates._peak_pnl_pct || 0) >= (mgmtConfig.trailingTriggerPct ?? 6)) {
+      // Trailing TP decisions must use the same unit as the close rule
+      // (matches the display unit). Track both USD and SOL peaks; read the
+      // one matching solMode for activation + dropFromPeak comparison.
+      const trailingIsSol = !!mgmtConfig.solMode;
+      const trailingPeakField = trailingIsSol ? "_peak_pnl_sol_pct" : "_peak_pnl_pct";
+      const trailingPeak = updates[trailingPeakField] || 0;
+      const trailingCurrentPnl = trailingIsSol ? pnl.pnlSolPct : pnl.pnlPct;
+
+      if (mgmtConfig.trailingTakeProfit && !trailingActive && trailingPeak >= (mgmtConfig.trailingTriggerPct ?? 6)) {
         trailingActive = true;
       }
 
       if (mgmtConfig.trailingTakeProfit && trailingActive) {
-        const peak = updates._peak_pnl_pct || 0;
-        const dropFromPeak = peak - pnl.pnlPct;
+        const dropFromPeak = trailingPeak - trailingCurrentPnl;
         const effectiveDropPct = mgmtConfig.trailingDropPct ?? 2.5;
-        if (dropFromPeak >= effectiveDropPct && pnl.pnlPct >= 0) {
+        if (dropFromPeak >= effectiveDropPct && trailingCurrentPnl >= 0) {
           if (trailingPending) {
-            trailingCloseReason = `trailing TP: peak ${peak.toFixed(2)}% → current ${pnl.pnlPct.toFixed(2)}% (dropped ${dropFromPeak.toFixed(2)}% ≥ ${effectiveDropPct}%)`;
+            trailingCloseReason = `trailing TP: peak ${trailingPeak.toFixed(2)}% → current ${trailingCurrentPnl.toFixed(2)}% (dropped ${dropFromPeak.toFixed(2)}% ≥ ${effectiveDropPct}%)`;
           } else {
             trailingPending = true;
             updates._trailing_pending_since = new Date().toISOString();
@@ -653,18 +565,35 @@ export async function runVirtualManagementCycle() {
       if (snapshots.length > 100) snapshots.splice(0, snapshots.length - 100);
       updates.snapshots = snapshots;
 
-      // ── Exit rules (pass freshly computed OOR minutes) ─────────────
+      // ── Exit rules (build polymorphic position, call new signature) ─
+      // The caller selects the unit once (SOL when solMode, USD otherwise)
+      // and the function reads pre-computed polymorphic values. This mirrors
+      // the live getDeterministicCloseRule(position, mgmtConfig) shape in
+      // index.js, which sees position.pnl_pct from getMyPositions — already
+      // polymorphic via mergeVirtualPositions. Without this branching the
+      // rule would always check USD PnL while Telegram shows SOL PnL, so
+      // TP/SL/trailing-TP decisions would diverge from the display.
+      const exitIsSol = !!mgmtConfig.solMode;
+      const posForRule = {
+        ...vp,
+        ...updates,
+        pnl_pct: exitIsSol ? pnl.pnlSolPct : pnl.pnlPct,
+        total_value_usd: exitIsSol ? pnl.positionValueSol : pnl.currentValueUsd,
+        unclaimed_fees_usd: exitIsSol ? pnl.unclaimedFeesSol : pnl.unclaimedFeesUsd,
+        // Use the FRESH post-update totals so Rule 5 (low yield) sees this
+        // cycle's accrued fees, not the stale pre-update values. For old VPs
+        // (no `total_fees_earned_sol` field), `updates.total_fees_earned_sol`
+        // still starts at 0 and grows from `newlyAccruedFeesSol` each cycle,
+        // bounded by the transition period.
+        total_fees_earned_usd: exitIsSol
+          ? (updates.total_fees_earned_sol || 0)
+          : (updates.total_fees_earned_usd || 0),
+        active_bin: activeBin,
+      };
       const vpAgeMinutes = vp.deployed_at
         ? Math.floor((Date.now() - new Date(vp.deployed_at).getTime()) / 60000)
         : 0;
-      // Guard against suspect PnL (matches live getDeterministicCloseRule logic)
-      const pnlSuspect = pnl.pnlPct < -90 && pnl.currentValueUsd > 0.01;
-      if (pnlSuspect) {
-        log("vp", `Suspect PnL for ${vp.pair}: ${pnl.pnlPct.toFixed(2)}% but position still has value $${pnl.currentValueUsd.toFixed(2)} — skipping PnL rules`);
-      }
-      const closeRule = getVirtualCloseRule(
-        { ...vp, ...updates }, pnlSuspect ? null : pnl.pnlPct, pnl.currentValueUsd, activeBin, mgmtConfig, effectiveOorMinutes,
-      );
+      const closeRule = getVirtualCloseRule(posForRule, mgmtConfig, effectiveOorMinutes);
       if (closeRule) {
         // Persist final state BEFORE closing (preserves snapshot, peak, OOR)
         updateVirtualPosition(vp.id, updates);

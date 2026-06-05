@@ -120,6 +120,7 @@ export function trackVirtualPosition({
     _oor_since: null,
     _oor_minutes: 0,
     _peak_pnl_pct: 0,
+    _peak_pnl_sol_pct: 0,
     _trailing_active: false,
     _trailing_pending: false,
     _trailing_pending_since: null,

@@ -19,6 +19,7 @@ import { fileURLToPath } from "url";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 import { mergeVirtualPositions } from "../tools/merge-virtual-positions.js";
+import { getVirtualCloseRule } from "../tools/virtual-close-rule.js";
 
 let passed = 0;
 let failed = 0;
@@ -213,6 +214,215 @@ test("A10: lazy migration — old VP without SOL fields falls back to amount_sol
   if (merged.unclaimed_fees_usd !== 0) throw new Error(`Expected unclaimed_fees_usd=0 (no fallback), got ${merged.unclaimed_fees_usd}`);
   // pnl_pct comes from pnl_sol_pct which is null/missing → 0
   if (merged.pnl_pct !== 0) throw new Error(`Expected pnl_pct=0 (no SOL fallback), got ${merged.pnl_pct}`);
+});
+
+// ════════════════════════════════════════════════════════════
+//  SECTION A-extended: VP close rule unit awareness (meridian-6vw)
+// ════════════════════════════════════════════════════════════
+//
+// getVirtualCloseRule reads polymorphic values from `position` (SOL when
+// solMode=true, USD when false). The caller in runVirtualManagementCycle
+// is responsible for selecting the unit. These tests verify the function
+// responds correctly to the unit the caller passed in.
+
+test("A11: solMode=true — TP fires at SOL PnL=5% (user's reported case)", () => {
+  // Mirrors the real cycle: caller passes SOL PnL in pnl_pct when solMode=true.
+  const mgmtConfig = { solMode: true, takeProfitPct: 5, stopLossPct: -50 };
+  const position = {
+    upper_bin: 100, active_bin: 100,                  // not OOR
+    pnl_pct: 5.0,                                      // SOL PnL %
+    total_value_usd: 0.5,                              // SOL value
+    total_fees_earned_usd: 0.001,                      // SOL fees
+    deployed_at: new Date(Date.now() - 60000).toISOString(), // 1 min old (no Rule 5 trigger)
+    snapshots: [],
+  };
+  const rule = getVirtualCloseRule(position, mgmtConfig);
+  if (!rule || rule.rule !== 2 || rule.reason !== "take profit") {
+    throw new Error(`Expected take profit (rule 2), got ${JSON.stringify(rule)}`);
+  }
+});
+
+test("A12: solMode=true — SL fires at SOL PnL=-50%", () => {
+  const mgmtConfig = { solMode: true, takeProfitPct: 5, stopLossPct: -50 };
+  const position = {
+    upper_bin: 100, active_bin: 100,
+    pnl_pct: -50,
+    total_value_usd: 0.3,
+    total_fees_earned_usd: 0,
+    deployed_at: new Date(Date.now() - 60000).toISOString(),
+    snapshots: [],
+  };
+  const rule = getVirtualCloseRule(position, mgmtConfig);
+  if (!rule || rule.rule !== 1 || rule.reason !== "stop loss") {
+    throw new Error(`Expected stop loss (rule 1), got ${JSON.stringify(rule)}`);
+  }
+});
+
+test("A13: solMode=true — TP does NOT fire below threshold (regression guard)", () => {
+  // Verifies the function does not magically fire; the caller's unit
+  // selection is what matters. If the caller passes SOL PnL=4 below TP=5,
+  // no close. (This is the inverse of the bug — the bug was that USD
+  // PnL=3 was being checked against TP=5 even though the display said 5.46%.)
+  const mgmtConfig = { solMode: true, takeProfitPct: 5, stopLossPct: -50 };
+  const position = {
+    upper_bin: 100, active_bin: 100,
+    pnl_pct: 4,                                         // SOL PnL, below threshold
+    total_value_usd: 0.5,
+    total_fees_earned_usd: 0,
+    deployed_at: new Date(Date.now() - 60000).toISOString(),
+    snapshots: [],
+  };
+  const rule = getVirtualCloseRule(position, mgmtConfig);
+  if (rule) throw new Error(`Expected no close, got ${JSON.stringify(rule)}`);
+});
+
+test("A14: solMode=false — TP fires at USD PnL=5% (backward compat)", () => {
+  // solMode=false users must still get correct USD-based TP.
+  const mgmtConfig = { solMode: false, takeProfitPct: 5, stopLossPct: -50 };
+  const position = {
+    upper_bin: 100, active_bin: 100,
+    pnl_pct: 5,
+    total_value_usd: 50,
+    total_fees_earned_usd: 0.1,
+    deployed_at: new Date(Date.now() - 60000).toISOString(),
+    snapshots: [],
+  };
+  const rule = getVirtualCloseRule(position, mgmtConfig);
+  if (!rule || rule.rule !== 2) throw new Error(`Expected TP, got ${JSON.stringify(rule)}`);
+});
+
+test("A15: solMode=true — low yield uses SOL numerator/SOL denominator (unit-agnostic)", () => {
+  // Build a position with rich SOL fees to keep yield above threshold,
+  // then verify no close. The point is that both numerator and denominator
+  // are in the same unit (SOL) and the ratio is unit-agnostic.
+  const mgmtConfig = {
+    solMode: true,
+    takeProfitPct: 5,
+    stopLossPct: -50,
+    minFeePerTvl24h: 7,
+    minAgeBeforeYieldCheck: 60,
+  };
+  const position = {
+    upper_bin: 100, active_bin: 100,
+    pnl_pct: 0,                                         // no PnL rules
+    total_value_usd: 0.5,                               // 0.5 SOL
+    total_fees_earned_usd: 0.005,                       // 0.005 SOL fees
+    deployed_at: new Date(Date.now() - 120 * 60000).toISOString(), // 2h old
+    snapshots: [],
+  };
+  // yield = (0.005 / 0.5) * (1440 / 120) * 100 = 12% > 7% → no close
+  const rule = getVirtualCloseRule(position, mgmtConfig);
+  if (rule) throw new Error(`Expected no close (yield above threshold), got ${JSON.stringify(rule)}`);
+});
+
+test("A16: solMode=true — low yield fires when fees/value ratio is too low", () => {
+  const mgmtConfig = {
+    solMode: true,
+    takeProfitPct: 5,
+    stopLossPct: -50,
+    minFeePerTvl24h: 7,
+    minAgeBeforeYieldCheck: 60,
+  };
+  const position = {
+    upper_bin: 100, active_bin: 100,
+    pnl_pct: 0,
+    total_value_usd: 0.5,                               // 0.5 SOL
+    total_fees_earned_usd: 0.0005,                      // 0.0005 SOL fees (low)
+    deployed_at: new Date(Date.now() - 120 * 60000).toISOString(),
+    snapshots: [],
+  };
+  // yield = (0.0005 / 0.5) * (1440 / 120) * 100 = 1.2% < 7% → low yield
+  const rule = getVirtualCloseRule(position, mgmtConfig);
+  if (!rule || rule.rule !== 5 || rule.reason !== "low yield") {
+    throw new Error(`Expected low yield (rule 5), got ${JSON.stringify(rule)}`);
+  }
+});
+
+test("A17: solMode=true — suspect PnL guard skips PnL rules", () => {
+  // SOL PnL is -95% (huge loss) but position still has value 0.02 SOL
+  // → likely bin state corruption, skip PnL-based rules.
+  const mgmtConfig = { solMode: true, takeProfitPct: 5, stopLossPct: -50 };
+  const position = {
+    upper_bin: 100, active_bin: 100,
+    pnl_pct: -95,
+    total_value_usd: 0.02,
+    total_fees_earned_usd: 0,
+    deployed_at: new Date(Date.now() - 60000).toISOString(),
+    snapshots: [],
+  };
+  const rule = getVirtualCloseRule(position, mgmtConfig);
+  if (rule) throw new Error(`Suspect PnL should skip rules, got ${JSON.stringify(rule)}`);
+});
+
+test("A18: solMode=true — Rule 6 trend exit uses pnl_sol_pct from snapshots", () => {
+  // 4 consecutive down snapshots in SOL PnL → trend exit fires.
+  const mgmtConfig = {
+    solMode: true,
+    takeProfitPct: 5,
+    stopLossPct: -50,
+    vpTrendExitCycles: 3,
+  };
+  const position = {
+    upper_bin: 100, active_bin: 100,
+    pnl_pct: -10,                                       // current SOL PnL (in loss)
+    total_value_usd: 0.5,
+    total_fees_earned_usd: 0,
+    deployed_at: new Date(Date.now() - 60000).toISOString(),
+    snapshots: [
+      { pnl_pct: -2, pnl_sol_pct: -2 },
+      { pnl_pct: -4, pnl_sol_pct: -4 },
+      { pnl_pct: -7, pnl_sol_pct: -7 },
+      { pnl_pct: -10, pnl_sol_pct: -10 },
+    ],
+  };
+  const rule = getVirtualCloseRule(position, mgmtConfig);
+  if (!rule || rule.rule !== 6) throw new Error(`Expected trend exit (rule 6), got ${JSON.stringify(rule)}`);
+});
+
+test("A19: solMode=true — Rule 6 with mixed old/new snapshots (silent fallback)", () => {
+  // Old snapshots lack pnl_sol_pct; function falls back to pnl_pct (USD).
+  // Within a single snapshot pair units are consistent, so the comparison
+  // is direction-correct. This test locks in current behavior.
+  const mgmtConfig = {
+    solMode: true,
+    takeProfitPct: 5,
+    stopLossPct: -50,
+    vpTrendExitCycles: 3,
+  };
+  const position = {
+    upper_bin: 100, active_bin: 100,
+    pnl_pct: -10,
+    total_value_usd: 0.5,
+    total_fees_earned_usd: 0,
+    deployed_at: new Date(Date.now() - 60000).toISOString(),
+    snapshots: [
+      { pnl_pct: -2 },                                  // old: no pnl_sol_pct
+      { pnl_pct: -4 },                                  // old: no pnl_sol_pct
+      { pnl_pct: -7 },                                  // old: no pnl_sol_pct
+      { pnl_pct: -10 },                                 // old: no pnl_sol_pct
+    ],
+  };
+  // Falls back to pnl_pct (USD) consistently across all 4 snapshots,
+  // so the trend is still detected.
+  const rule = getVirtualCloseRule(position, mgmtConfig);
+  if (!rule || rule.rule !== 6) throw new Error(`Expected trend exit with fallback, got ${JSON.stringify(rule)}`);
+});
+
+test("A20: OOR too long — uses THIS cycle's effective OOR minutes", () => {
+  // active_bin above upper_bin AND effectiveOorMinutes ≥ 30 → OOR close
+  const mgmtConfig = { solMode: true, takeProfitPct: 5, stopLossPct: -50, outOfRangeWaitMinutes: 30 };
+  const position = {
+    upper_bin: 100, active_bin: 105,                    // 5 bins above
+    pnl_pct: 0,
+    total_value_usd: 0.5,
+    total_fees_earned_usd: 0,
+    deployed_at: new Date(Date.now() - 60000).toISOString(),
+    snapshots: [],
+  };
+  const rule = getVirtualCloseRule(position, mgmtConfig, 45); // 45 min OOR
+  if (!rule || rule.rule !== 4 || rule.reason !== "OOR") {
+    throw new Error(`Expected OOR (rule 4), got ${JSON.stringify(rule)}`);
+  }
 });
 
 // ════════════════════════════════════════════════════════════
