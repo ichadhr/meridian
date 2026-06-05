@@ -1241,7 +1241,9 @@ const LPAGENT_API = "https://api.lpagent.io/open-api/v1";
 import { mergeVirtualPositions } from "./merge-virtual-positions.js";
 
 async function fetchLpAgentOpenPositions(walletAddress) {
-  if (!process.env.LPAGENT_API_KEY) return {};
+  // Gated by BOTH env var AND config flag. Users without paid LPAgent
+  // Premium plan set lpAgentRelayEnabled=false in config to skip.
+  if (!process.env.LPAGENT_API_KEY || !config.api.lpAgentRelayEnabled) return {};
 
   const url = `${LPAGENT_API}/lp-positions/opening?owner=${walletAddress}`;
   try {
