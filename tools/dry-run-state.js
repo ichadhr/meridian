@@ -76,13 +76,17 @@ export function trackVirtualPosition({
   close_gas_sol,
   gas_priority_fee, // priority fee (µl/CU) at deploy time, for reference
   gas_cost_sol,     // legacy: kept for back-compat with VPs deployed under prev. version
-  // Native SOL fields — seeded at deploy time with sensible defaults so the
-  // management cycle (and the polymorphic _usd display) can read them from
-  // cycle 1. The management cycle overwrites these on every PnL sync.
-  value_sol = amount_sol ?? 0,
-  total_fees_earned_sol = 0,
-  pnl_sol = 0,
-  pnl_sol_pct = 0,
+  // Note: Step 7 (meridian-wie) removed seeding of value_sol, pnl_sol,
+  // pnl_sol_pct, total_fees_earned_sol, total_fees_earned_usd, and
+  // current_value_usd. These are now computed fresh on every PnL cycle
+  // via computePositionPnl. The fields are no longer cached in VP state.
+  //
+  // TODO(meridian-wie post-Step-7): the 5 pre-Step-7 VPs on the server
+  // (vp_006, vp_007, vp_009, vp_011, vp_014) still carry these legacy
+  // fields in dry-run-state.json. They are no longer read or written —
+  // they are "dead data" that will drain naturally as VPs close. When
+  // all 5 close, sweep and remove this TODO. See also the matching
+  // TODO in tools/merge-virtual-positions.js.
 }) {
   const state = load();
   const vp = {
@@ -102,11 +106,6 @@ export function trackVirtualPosition({
     amount_sol,
     initial_value_usd,
     sol_price_at_deploy: sol_price_at_deploy ?? null,
-    // Seed native SOL fields at deploy time (overwritten by management cycle).
-    value_sol,
-    total_fees_earned_sol,
-    pnl_sol,
-    pnl_sol_pct,
     deploy_rationale: deploy_rationale || null,
     bin_shares: Array.isArray(bin_shares) && bin_shares.length ? bin_shares : null,
     base_mint: base_mint || null,
@@ -122,9 +121,11 @@ export function trackVirtualPosition({
     // single-field version). computePositionPnl falls back to this when
     // deploy_gas_sol + close_gas_sol are absent.
     gas_cost_sol: gas_cost_sol != null ? Number(gas_cost_sol) : null,
-    total_fees_earned_usd: 0,
-    current_value_usd: initial_value_usd,
     last_sync_at: null,
+    // Step 7 (meridian-wie): _oor_since and _oor_minutes are still seeded.
+    // The cycle reads _oor_since to determine OOR duration on subsequent
+    // cycles (line 320 of manage-virtual.js). _oor_minutes is read by
+    // recordVpDeployToPoolMemory in the close path. Both are KEPT.
     _oor_since: null,
     _oor_minutes: 0,
     _peak_pnl_pct: 0,
@@ -160,6 +161,14 @@ const UPDATE_PROTECTED = new Set([
   "id", "status", "closed_at", "close_reason", "close_pnl_pct", "close_pnl_usd",
   "close_pnl_sol_pct", "close_pnl_sol", "close_il_sol", "close_fees_sol",
   "close_cost_sol", "close_il_usd", "close_fees_usd", "close_cost_usd",
+  // Step 7 (meridian-wie): these fields are no longer cached. PnL is
+  // computed fresh on every read via computePositionPnl. Add them to
+  // UPDATE_PROTECTED as defense-in-depth against accidental future
+  // writes that would re-introduce the "stale cache" anti-pattern.
+  "value_sol", "pnl_sol", "pnl_sol_pct",
+  "total_fees_earned_sol", "total_fees_earned_usd",
+  "current_value_usd",
+  "_last_unclaimed_fees_usd", "_last_unclaimed_fees_sol",
 ]);
 
 export function updateVirtualPosition(id, updates) {
@@ -178,24 +187,6 @@ const CLOSE_EXTRA_ALLOWED = new Set([
   "close_pnl_sol_pct", "close_pnl_sol", "close_il_sol", "close_fees_sol",
   "close_cost_sol", "close_il_usd", "close_fees_usd", "close_cost_usd",
 ]);
-
-/**
- * Compute simple position PnL for a virtual position from its stored fields.
- * Used by manual close paths (e.g. Telegram /close) where a fresh bin fetch
- * would be overkill. Falls back to nulls when data is missing.
- * Pure function — exported for testability.
- */
-export function computeSimpleVirtualPnl(vp) {
-  const initialValue = vp?.initial_value_usd;
-  const currentValue = vp?.current_value_usd ?? initialValue;
-  const pnlUsd = (currentValue != null && initialValue != null)
-    ? currentValue - initialValue
-    : null;
-  const pnlPct = (currentValue != null && initialValue != null && initialValue > 0)
-    ? ((currentValue / initialValue - 1) * 100)
-    : null;
-  return { pnlUsd, pnlPct };
-}
 
 /**
  * Detect a virtual position address (prefixed with "vp:") and extract

@@ -13,9 +13,23 @@
  * optional `freshPnlMap` (Map<vpId, {pnl, activeBinId}>). When provided,
  * uses FRESH PnL computed by computePositionPnl — eliminating the
  * top/bottom display discrepancy where top section read stale cached
- * fields and bottom section read freshly-computed values. Falls back to
- * cached fields (with dual-name) when fresh pnl is absent (e.g., RPC
- * failure).
+ * fields and bottom section read freshly-computed values.
+ *
+ * Step 7 of meridian-wie (schema reduction): when fresh PnL is absent
+ * (RPC failure, solPrice fail, etc.) the function returns NULLS for
+ * the affected fields. It does NOT fall back to stale cached fields —
+ * the previous "dual-name fallback" re-introduced the exact bug Step 3
+ * fixed (stale `!vp._oor_since` for in_range, frozen `vp.active_bin_at_deploy`
+ * for active_bin). Brief nulls during a 30s RPC outage are far less
+ * dangerous than stale "🟢 IN" when the VP is actually OOR.
+ *
+ * TODO(meridian-wie post-Step-7): the 5 pre-Step-7 VPs on the server
+ * (vp_006, vp_007, vp_009, vp_011, vp_014) still carry legacy fields
+ * (value_sol, pnl_sol_pct, total_fees_earned_usd, current_value_usd)
+ * in dry-run-state.json. They are no longer read or written by the
+ * new code path — they are "dead data". When all 5 close naturally
+ * (1-2 weeks typical), do a one-time sweep to delete these dead
+ * fields from any surviving pre-Step-7 VPs and remove this TODO.
  */
 
 export function mergeVirtualPositions(positions, vps, solPrice = 0, now = Date.now(), freshPnlMap = null) {
@@ -24,23 +38,14 @@ export function mergeVirtualPositions(positions, vps, solPrice = 0, now = Date.n
   }
   const solMode = solPrice > 0;
 
-  // Dual-name fallback for VPs deployed before SOL fields were seeded, OR
-  // for the fallback path when fresh PnL is unavailable.
-  // Existing VPs in dry-run-state.json have no value_sol/total_fees_earned_sol/pnl_sol_pct
-  // until the first management cycle runs and manage-virtual.js populates them.
-  const valueSol = (vp) => vp.value_sol ?? vp.amount_sol ?? 0;
-  const feesSol = (vp) => vp.total_fees_earned_sol ?? 0;
-  const pnlSol = (vp) => vp.pnl_sol ?? 0;
-  const pnlSolPct = (vp) => vp.pnl_sol_pct ?? 0;
-
   const merged = [...positions];
   for (const vp of vps) {
-    const initialValue = vp.initial_value_usd;
     const fresh = freshPnlMap?.get(vp.id);
 
     // ── PnL field resolution ────────────────────────────────────────
-    // Fresh path: use computePositionPnl result. Fallback: cached fields
-    // (with dual-name for legacy VPs).
+    // Fresh path: use computePositionPnl result. No-fresh path: return nulls.
+    // The old fallback to cached fields is removed — it was a "revert to
+    // the bug we just fixed" anti-pattern.
     let currentValue, pnlUsdValue, pnlPctValue, unclaimedFeesValue,
         totalValueUsd, pnlUsdDisplay, pnlPctDisplay, activeBinId, inRange;
 
@@ -59,20 +64,17 @@ export function mergeVirtualPositions(positions, vps, solPrice = 0, now = Date.n
         && activeBinId >= vp.lower_bin
         && activeBinId <= vp.upper_bin;
     } else {
-      // Fallback path: cached fields (dual-name for legacy)
-      currentValue = vp.current_value_usd;
-      pnlUsdValue = (currentValue != null && initialValue != null)
-        ? currentValue - initialValue
-        : null;
-      pnlPctValue = (currentValue != null && initialValue != null && initialValue > 0)
-        ? ((currentValue / initialValue - 1) * 100)
-        : null;
-      unclaimedFeesValue = solMode ? feesSol(vp) : (vp.total_fees_earned_usd ?? 0);
-      totalValueUsd = solMode ? valueSol(vp) : (currentValue ?? initialValue ?? null);
-      pnlUsdDisplay = solMode ? pnlSol(vp) : pnlUsdValue;
-      pnlPctDisplay = solMode ? pnlSolPct(vp) : pnlPctValue;
-      activeBinId = vp.active_bin_at_deploy ?? null;
-      inRange = !vp._oor_since;
+      // No fresh PnL available (RPC fail, solPrice fail, etc.).
+      // Return nulls — do NOT fall back to stale cached fields.
+      currentValue = null;
+      pnlUsdValue = null;
+      pnlPctValue = null;
+      unclaimedFeesValue = null;
+      totalValueUsd = null;
+      pnlUsdDisplay = null;
+      pnlPctDisplay = null;
+      activeBinId = null;
+      inRange = null;
     }
 
     merged.push({

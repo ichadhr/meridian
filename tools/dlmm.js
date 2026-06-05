@@ -1741,7 +1741,7 @@ export async function getMyPositions({ force = false, silent = false, wallet_add
         // Only the display convention in mergeVirtualPositions switches on solMode.
         const realSolPrice = await fetchSolPrice();
         if (!realSolPrice) {
-          log("positions_warn", "fetchSolPrice failed; VP values will use cached fields");
+          log("positions_warn", "fetchSolPrice failed; VP PnL fields will be null");
         }
         const displaySolPrice = config.management.solMode ? (realSolPrice || 0) : 0;
         if (config.management.solMode && !realSolPrice) {
@@ -1749,7 +1749,9 @@ export async function getMyPositions({ force = false, silent = false, wallet_add
         }
         // Build fresh PnL map: for each VP, fetch fresh bins + activeBinId,
         // compute PnL via computePositionPnl. On RPC failure, leave the
-        // entry absent so mergeVirtualPositions falls back to cached fields.
+        // entry absent so mergeVirtualPositions returns nulls for that VP.
+        // Step 7 (meridian-wie): no cached-fields fallback — brief nulls
+        // during a 30s RPC outage are far less dangerous than stale values.
         const freshPnlMap = new Map();
         if (realSolPrice) {
           // Parallelize bin fetches across VPs to reduce getMyPositions latency.
@@ -1767,7 +1769,7 @@ export async function getMyPositions({ force = false, silent = false, wallet_add
               freshPnlMap.set(r.value.vp.id, { pnl: r.value.pnl, activeBinId: r.value.activeBin });
             } else {
               // Find the VP for logging — r.reason is the error
-              log("positions_warn", `Fresh PnL failed for one VP: ${r.reason?.message || r.reason} — using cached fields`);
+              log("positions_warn", `Fresh PnL failed for one VP: ${r.reason?.message || r.reason} — using nulls`);
             }
           }
         }

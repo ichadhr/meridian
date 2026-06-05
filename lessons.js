@@ -716,7 +716,10 @@ export async function getPerformanceHistory({ hours = 24, limit = 50, source = n
           strategy: r.strategy,
           pnl_usd: r.close_pnl_usd,
           pnl_pct: r.close_pnl_pct,
-          fees_earned_usd: r.total_fees_earned_usd,
+          // Step 7 (meridian-wie): prefer close_fees_usd (pinned at close
+          // by archive logic), fall back to total_fees_earned_usd for
+          // pre-Step-7 closed VPs. New VPs no longer seed the field.
+          fees_earned_usd: r.close_fees_usd ?? r.total_fees_earned_usd,
           range_efficiency: null,
           minutes_held: r.minutes_held,
           close_reason: r.close_reason,

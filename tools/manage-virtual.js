@@ -53,14 +53,11 @@ function buildPosForRule(vp, updates, pnl, activeBin, exitIsSol) {
     pnl_pct: exitIsSol ? pnl.pnlSolPct : pnl.pnlPct,
     total_value_usd: exitIsSol ? pnl.positionValueSol : pnl.currentValueUsd,
     unclaimed_fees_usd: exitIsSol ? pnl.unclaimedFeesSol : pnl.unclaimedFeesUsd,
-    // Use the FRESH post-update totals so Rule 5 (low yield) sees this
-    // cycle's accrued fees, not the stale pre-update values. For old VPs
-    // (no `total_fees_earned_sol` field), `updates.total_fees_earned_sol`
-    // still starts at 0 and grows from `newlyAccruedFeesSol` each cycle,
-    // bounded by the transition period.
-    total_fees_earned_usd: exitIsSol
-      ? (updates.total_fees_earned_sol || 0)
-      : (updates.total_fees_earned_usd || 0),
+    // Step 7 (meridian-wie): total_fees_earned_usd is no longer in the
+    // updates object (cycle stopped writing lifetime accumulators).
+    // Rule 5 (low yield) now reads position.unclaimed_fees_usd — current
+    // cycle's unclaimed fees — which is the better signal for "is this
+    // position earning right now?" vs lifetime accumulation.
     active_bin: activeBin,
   };
 }
@@ -331,23 +328,15 @@ export async function runVirtualManagementCycle() {
         effectiveOorMinutes = 0;
       }
 
-      // ── Accumulated fees (delta since last successful sync) ────────
-      const prevUnclaimed = vp._last_unclaimed_fees_usd || 0;
-      const newlyAccruedFeesUsd = Math.max(0, pnl.unclaimedFeesUsd - prevUnclaimed);
-      const prevUnclaimedSol = vp._last_unclaimed_fees_sol || 0;
-      const newlyAccruedFeesSol = Math.max(0, pnl.unclaimedFeesSol - prevUnclaimedSol);
-
+      // ── Update schema (Step 7: only the fields that drive logic stay) ─
+      // Cached PnL/fees/values are no longer written here — the cycle
+      // re-computes them fresh on every read via computePositionPnl.
+      // Removed in Step 7 (meridian-wie): current_value_usd, total_fees_earned_usd,
+      // _last_unclaimed_fees_usd, value_sol, total_fees_earned_sol,
+      // _last_unclaimed_fees_sol, pnl_sol, pnl_sol_pct.
+      // Kept: OOR state (cycle reads _oor_since on next pass), peak state
+      // (trailing TP state machine), trailing state, last_sync_at.
       const updates = {
-        current_value_usd: pnl.currentValueUsd,
-        total_fees_earned_usd: (vp.total_fees_earned_usd || 0) + newlyAccruedFeesUsd,
-        _last_unclaimed_fees_usd: pnl.unclaimedFeesUsd,
-        // Native SOL fields — kept in sync with computePositionPnl output so
-        // the polymorphic _usd display (solMode=true) stays accurate.
-        value_sol: pnl.positionValueSol,
-        total_fees_earned_sol: (vp.total_fees_earned_sol || 0) + newlyAccruedFeesSol,
-        _last_unclaimed_fees_sol: pnl.unclaimedFeesSol,
-        pnl_sol: pnl.netPnlSol,
-        pnl_sol_pct: pnl.pnlSolPct,
         _peak_pnl_pct: Math.max(vp._peak_pnl_pct || 0, pnl.pnlPct),
         _peak_pnl_sol_pct: Math.max(vp._peak_pnl_sol_pct || 0, pnl.pnlSolPct),
         _oor_since: oorSince,

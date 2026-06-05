@@ -55,7 +55,10 @@ export async function generateVirtualDigest({ hours = 72, minCloses = 5, maxClos
   const winners   = sample.filter((vp) => safeNum(vp.close_pnl_pct) >= 0);
   const winRate   = (winners.length / sample.length) * 100;
   const avgPnl    = avg(sample.map((v) => v.close_pnl_pct));
-  const totalFees = sample.reduce((s, v) => s + safeNum(v.total_fees_earned_usd), 0);
+  // Step 7 (meridian-wie): prefer close_fees_usd (pinned at close by
+  // archive logic), fall back to total_fees_earned_usd for pre-Step-7
+  // closed VPs. New VPs no longer seed total_fees_earned_usd.
+  const totalFees = sample.reduce((s, v) => s + safeNum(v.close_fees_usd ?? v.total_fees_earned_usd), 0);
 
   const lines = [
     `Closed: ${sample.length} | Win rate: ${winRate.toFixed(0)}% | Avg PnL: ${avgPnl >= 0 ? "+" : ""}${avgPnl.toFixed(1)}% | Fees: $${totalFees.toFixed(2)}`,

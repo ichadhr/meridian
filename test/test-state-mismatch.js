@@ -96,26 +96,32 @@ test("A3: dry-run mode (2 on-chain + 1 VP) — count goes 2 → 3, original 2 un
   if (result.positions[2].source !== "virtual") throw new Error("VP should be at index 2");
 });
 
-test("A4: VP PnL math — current vs initial value", () => {
+test("A4: no fresh PnL (no freshPnlMap) → null PnL fields, no crash", () => {
+  // Step 7 (meridian-wie): removed the cached-fields fallback. When no
+  // freshPnlMap is provided, all PnL/fee/value fields return null. Brief
+  // nulls during RPC outage are far less dangerous than stale "IN" when
+  // the VP is actually OOR (the bug Step 3 fixed).
   const now = Date.now();
-  const onChain = [];
   const vps = [
     {
       id: "vp_001",
       pool: "P1",
       base_mint: "M1",
-      deployed_at: new Date(now - 1000 * 60 * 60).toISOString(),  // 60m ago
+      deployed_at: new Date(now - 1000 * 60 * 60).toISOString(),
       initial_value_usd: 100,
       current_value_usd: 110,
-      total_fees_earned_usd: 2.5,
+      // Step 7 (meridian-wie): total_fees_earned_usd is no longer seeded
+      // or read by production. Kept out of test data.
     },
   ];
-  const result = mergeVirtualPositions(onChain, vps, 0, now);
+  const result = mergeVirtualPositions([], vps, 0, now);
   const p = result.positions[0];
-  if (Math.abs(p.pnl_usd - 10) > 0.001) throw new Error(`pnl_usd: expected 10, got ${p.pnl_usd}`);
-  if (Math.abs(p.pnl_pct - 10) > 0.001) throw new Error(`pnl_pct: expected 10, got ${p.pnl_pct}`);
-  if (p.unclaimed_fees_usd !== 2.5) throw new Error(`fees: expected 2.5, got ${p.unclaimed_fees_usd}`);
-  if (p.total_value_usd !== 110) throw new Error(`total_value_usd: expected 110, got ${p.total_value_usd}`);
+  if (p.pnl_usd !== null) throw new Error(`pnl_usd: expected null, got ${p.pnl_usd}`);
+  if (p.pnl_pct !== null) throw new Error(`pnl_pct: expected null, got ${p.pnl_pct}`);
+  if (p.unclaimed_fees_usd !== null) throw new Error(`fees: expected null, got ${p.unclaimed_fees_usd}`);
+  if (p.total_value_usd !== null) throw new Error(`total_value_usd: expected null, got ${p.total_value_usd}`);
+  if (p.in_range !== null) throw new Error(`in_range: expected null, got ${p.in_range}`);
+  if (p.active_bin !== null) throw new Error(`active_bin: expected null, got ${p.active_bin}`);
 });
 
 test("A5: VP with no PnL data (null values) — no crash, null pnl fields", () => {
@@ -128,23 +134,30 @@ test("A5: VP with no PnL data (null values) — no crash, null pnl fields", () =
   if (p.pnl_pct !== null) throw new Error(`Expected null pnl_pct, got ${p.pnl_pct}`);
 });
 
-test("A6: VP in_range = false when _oor_since is set", () => {
+test("A6: no fresh PnL → in_range = null (not derived from stale _oor_since)", () => {
+  // Step 7 (meridian-wie): removed the !_oor_since → in_range mapping. When
+  // no fresh PnL, in_range is null. The merge does NOT revert to the bug
+  // Step 3 fixed (stale _oor_since → false "IN" when actually OOR).
   const vps = [
     { id: "vp_001", pool: "P1", base_mint: "M1", _oor_since: new Date().toISOString() },
   ];
   const result = mergeVirtualPositions([], vps);
-  if (result.positions[0].in_range !== false) throw new Error("OOR VP should be in_range=false");
+  if (result.positions[0].in_range !== null) throw new Error(`No-fresh in_range should be null, got ${result.positions[0].in_range}`);
 });
 
-test("A7: VP in_range = true when _oor_since is null", () => {
+test("A7: no fresh PnL (even with _oor_since=null) → in_range = null", () => {
+  // Defensive: regardless of _oor_since state, no-fresh → null. The
+  // fresh path (Steps 3) is the ONLY source of in_range truth.
   const vps = [
     { id: "vp_001", pool: "P1", base_mint: "M1", _oor_since: null },
   ];
   const result = mergeVirtualPositions([], vps);
-  if (result.positions[0].in_range !== true) throw new Error("In-range VP should be in_range=true");
+  if (result.positions[0].in_range !== null) throw new Error(`No-fresh in_range should be null, got ${result.positions[0].in_range}`);
 });
 
-test("A8: solMode=true — _usd fields populated from native SOL values", () => {
+test("A8: no fresh PnL (solMode=true) → null polymorphic fields", () => {
+  // Step 7: cached SOL fields are no longer read. When no fresh PnL,
+  // pnl_pct/pnl_usd/unclaimed_fees_usd/total_value_usd are all null.
   const vps = [{
     id: "vp_test_8",
     pool: "test_pool",
@@ -152,25 +165,20 @@ test("A8: solMode=true — _usd fields populated from native SOL values", () => 
     pair: "TEST-SOL",
     deployed_at: new Date(Date.now() - 60000).toISOString(),
     amount_sol: 0.5,
-    initial_value_usd: 75,                // 0.5 SOL * $150
-    sol_price_at_deploy: 150,
-    value_sol: 0.5,                        // seeded at deploy
-    total_fees_earned_usd: 0.30,           // $0.30 in fees (USD field, unused in solMode)
-    total_fees_earned_sol: 0.002,          // 0.002 SOL in fees
-    current_value_usd: 76,
-    pnl_usd: 1,                            // USD field, unused in solMode
-    pnl_sol: 0.0067,                       // ~0.0067 SOL PnL
-    pnl_sol_pct: 1.33,                     // native SOL PnL %
+    initial_value_usd: 75,
+    value_sol: 0.5,
+    total_fees_earned_sol: 0.002,
+    pnl_sol_pct: 1.33,
   }];
-  const result = mergeVirtualPositions([], vps, 150); // solPrice=150 → solMode=true
+  const result = mergeVirtualPositions([], vps, 150); // solMode=true
   const merged = result.positions[0];
-  if (merged.total_value_usd !== 0.5) throw new Error(`Expected total_value_usd=0.5 (SOL), got ${merged.total_value_usd}`);
-  if (merged.unclaimed_fees_usd !== 0.002) throw new Error(`Expected unclaimed_fees_usd=0.002 (SOL), got ${merged.unclaimed_fees_usd}`);
-  if (Math.abs(merged.pnl_pct - 1.33) > 0.001) throw new Error(`Expected pnl_pct≈1.33, got ${merged.pnl_pct}`);
-  if (merged.pnl_usd !== 0.0067) throw new Error(`Expected pnl_usd=0.0067 (SOL), got ${merged.pnl_usd}`);
+  if (merged.total_value_usd !== null) throw new Error(`Expected total_value_usd=null, got ${merged.total_value_usd}`);
+  if (merged.unclaimed_fees_usd !== null) throw new Error(`Expected unclaimed_fees_usd=null, got ${merged.unclaimed_fees_usd}`);
+  if (merged.pnl_pct !== null) throw new Error(`Expected pnl_pct=null, got ${merged.pnl_pct}`);
+  if (merged.pnl_usd !== null) throw new Error(`Expected pnl_usd=null, got ${merged.pnl_usd}`);
 });
 
-test("A9: solMode=false — _usd fields stay USD (passthrough, default behavior)", () => {
+test("A9: no fresh PnL (solMode=false) → null polymorphic fields", () => {
   const vps = [{
     id: "vp_test_9",
     pool: "test_pool",
@@ -180,40 +188,36 @@ test("A9: solMode=false — _usd fields stay USD (passthrough, default behavior)
     amount_sol: 0.5,
     initial_value_usd: 75,
     current_value_usd: 76,
-    total_fees_earned_usd: 0.30,
-    // No SOL fields — solMode=false means they're not used anyway
   }];
-  const result = mergeVirtualPositions([], vps, 0); // solPrice=0 → solMode=false
+  const result = mergeVirtualPositions([], vps, 0); // solMode=false
   const merged = result.positions[0];
-  if (merged.total_value_usd !== 76) throw new Error(`Expected total_value_usd=76 (USD), got ${merged.total_value_usd}`);
-  if (merged.unclaimed_fees_usd !== 0.30) throw new Error(`Expected unclaimed_fees_usd=0.30 (USD), got ${merged.unclaimed_fees_usd}`);
-  // PnL% still computed from USD
-  if (Math.abs(merged.pnl_pct - ((76 / 75 - 1) * 100)) > 0.001) throw new Error(`pnl_pct should be ~1.33%, got ${merged.pnl_pct}`);
+  if (merged.total_value_usd !== null) throw new Error(`Expected total_value_usd=null, got ${merged.total_value_usd}`);
+  if (merged.unclaimed_fees_usd !== null) throw new Error(`Expected unclaimed_fees_usd=null, got ${merged.unclaimed_fees_usd}`);
+  if (merged.pnl_pct !== null) throw new Error(`Expected pnl_pct=null, got ${merged.pnl_pct}`);
+  if (merged.pnl_usd !== null) throw new Error(`Expected pnl_usd=null, got ${merged.pnl_usd}`);
 });
 
-test("A10: lazy migration — old VP without SOL fields falls back to amount_sol", () => {
-  // Simulates an old VP from before the fix (no value_sol, no total_fees_earned_sol).
-  // The lazy fallback: value_sol = vp.value_sol ?? vp.amount_sol = 0.5
+test("A10: no fresh PnL — dual-name compat layer no longer needed (always nulls)", () => {
+  // Step 7: removed the dual-name fallback (value_sol ?? amount_sol, etc.).
+  // The compat layer was a band-aid during the transition. Now that
+  // nothing reads the cached fields, no compat is needed.
   const vps = [{
     id: "vp_old",
     pool: "old_pool",
     pool_name: "OLD-SOL",
     pair: "OLD-SOL",
-    deployed_at: new Date(Date.now() - 600000).toISOString(), // 10 min ago
+    deployed_at: new Date(Date.now() - 600000).toISOString(),
     amount_sol: 0.5,
     initial_value_usd: 75,
     current_value_usd: 76,
-    total_fees_earned_usd: 0.30,
-    // NOTE: no value_sol, no total_fees_earned_sol, no pnl_sol_pct
+    // Step 7: removed total_fees_earned_usd, value_sol, pnl_sol_pct
+    // (all dead — no longer seeded or read by production)
   }];
   const result = mergeVirtualPositions([], vps, 150); // solMode=true
   const merged = result.positions[0];
-  // Lazy fallback: valueSol = vp.value_sol ?? vp.amount_sol = 0.5
-  if (merged.total_value_usd !== 0.5) throw new Error(`Expected lazy fallback total_value_usd=0.5, got ${merged.total_value_usd}`);
-  // No SOL field → no fallback → 0 (feesSol defaults to 0 when missing)
-  if (merged.unclaimed_fees_usd !== 0) throw new Error(`Expected unclaimed_fees_usd=0 (no fallback), got ${merged.unclaimed_fees_usd}`);
-  // pnl_pct comes from pnl_sol_pct which is null/missing → 0
-  if (merged.pnl_pct !== 0) throw new Error(`Expected pnl_pct=0 (no SOL fallback), got ${merged.pnl_pct}`);
+  if (merged.total_value_usd !== null) throw new Error(`Expected total_value_usd=null, got ${merged.total_value_usd}`);
+  if (merged.unclaimed_fees_usd !== null) throw new Error(`Expected unclaimed_fees_usd=null, got ${merged.unclaimed_fees_usd}`);
+  if (merged.pnl_pct !== null) throw new Error(`Expected pnl_pct=null, got ${merged.pnl_pct}`);
 });
 
 // ════════════════════════════════════════════════════════════
@@ -310,8 +314,10 @@ test("A-fresh-3: in_range reflects OOR via fresh activeBinId", () => {
   if (merged.in_range !== false) throw new Error(`Fresh in_range should be false (activeBin=110 > upper_bin=105), got ${merged.in_range}`);
 });
 
-test("A-fresh-4: RPC failure (vp not in freshPnlMap) falls back to cached fields", () => {
-  // Simulates the getBinsInRange failure path: VP exists but no fresh pnl computed.
+test("A-fresh-4: RPC failure (vp not in freshPnlMap) → nulls (no fallback to cached)", () => {
+  // Step 7 (meridian-wie): removed the cached-fields fallback. When a VP
+  // is missing from freshPnlMap (RPC failure for that pool), all its PnL
+  // fields are null. Brief nulls are honest; stale cached values are lies.
   const vps = [{
     id: "vp_fresh_4",
     pool: "P1",
@@ -327,20 +333,20 @@ test("A-fresh-4: RPC failure (vp not in freshPnlMap) falls back to cached fields
     pnl_sol_pct: 4.0,
     _oor_since: null,
   }];
-  // Empty freshPnlMap (or vp not in it) → falls back to cached
   const freshPnlMap = new Map(); // vp not in map
   const result = mergeVirtualPositions([], vps, 150, Date.now(), freshPnlMap);
   const merged = result.positions[0];
-  // Cached values used (backward compat)
-  if (merged.total_value_usd !== 0.52) throw new Error(`Fallback total_value_usd=0.52, got ${merged.total_value_usd}`);
-  if (Math.abs(merged.pnl_pct - 4.0) > 0.001) throw new Error(`Fallback pnl_pct=4.0, got ${merged.pnl_pct}`);
-  // in_range from !_oor_since = true
-  if (merged.in_range !== true) throw new Error(`Fallback in_range=true, got ${merged.in_range}`);
+  // Step 7: no fallback to cached — all PnL fields null
+  if (merged.total_value_usd !== null) throw new Error(`Expected total_value_usd=null, got ${merged.total_value_usd}`);
+  if (merged.pnl_pct !== null) throw new Error(`Expected pnl_pct=null, got ${merged.pnl_pct}`);
+  if (merged.in_range !== null) throw new Error(`Expected in_range=null, got ${merged.in_range}`);
+  if (merged.active_bin !== null) throw new Error(`Expected active_bin=null, got ${merged.active_bin}`);
 });
 
-test("A-fresh-5: fresh null pnl falls back to cached (defensive)", () => {
-  // If caller passes fresh entry with null pnl (e.g., computePositionPnl
-  // returned null unexpectedly), we should fall back rather than crash.
+test("A-fresh-5: fresh null pnl → nulls (no fallback, no crash)", () => {
+  // Defensive: if caller passes fresh entry with null pnl (e.g., computePositionPnl
+  // returned null unexpectedly), we return nulls rather than crashing or
+  // falling back to cached.
   const vps = [{
     id: "vp_fresh_5",
     pool: "P1",
@@ -356,13 +362,13 @@ test("A-fresh-5: fresh null pnl falls back to cached (defensive)", () => {
   ]);
   const result = mergeVirtualPositions([], vps, 0, Date.now(), freshPnlMap);
   const merged = result.positions[0];
-  // Falls back to cached
-  if (merged.total_value_usd !== 78) throw new Error(`Fallback total_value_usd=78, got ${merged.total_value_usd}`);
-  if (Math.abs(merged.pnl_usd - 3) > 0.001) throw new Error(`Fallback pnl_usd=3, got ${merged.pnl_usd}`);
+  if (merged.total_value_usd !== null) throw new Error(`Expected total_value_usd=null, got ${merged.total_value_usd}`);
+  if (merged.pnl_usd !== null) throw new Error(`Expected pnl_usd=null, got ${merged.pnl_usd}`);
 });
 
-test("A-fresh-6: mixed VPs — some fresh, some cached, work together", () => {
-  // Realistic case: 2 VPs, one RPC succeeds, one fails.
+test("A-fresh-6: mixed VPs — fresh succeeds, RPC fail gets nulls", () => {
+  // Realistic case: 2 VPs, one RPC succeeds, one fails. The fresh VP gets
+  // fresh values; the failed VP gets nulls. They are NOT confused.
   const vps = [
     {
       id: "vp_good",
@@ -391,8 +397,9 @@ test("A-fresh-6: mixed VPs — some fresh, some cached, work together", () => {
   // vp_good: fresh values
   if (good.total_value_usd !== 85) throw new Error(`good total=85, got ${good.total_value_usd}`);
   if (good.in_range !== true) throw new Error(`good in_range=true, got ${good.in_range}`);
-  // vp_bad: cached values (solMode=false so uses current_value_usd)
-  if (bad.total_value_usd !== 55) throw new Error(`bad total=55, got ${bad.total_value_usd}`);
+  // vp_bad: nulls (Step 7 — no fallback to cached)
+  if (bad.total_value_usd !== null) throw new Error(`bad total should be null, got ${bad.total_value_usd}`);
+  if (bad.in_range !== null) throw new Error(`bad in_range should be null, got ${bad.in_range}`);
 });
 
 test("A-fresh-7: in_range boundary — activeBinId === lower_bin is in range", () => {
@@ -440,8 +447,9 @@ test("A-fresh-9: in_range is false when fresh activeBinId is null", () => {
   if (result.positions[0].in_range !== false) throw new Error("activeBinId=null should be in_range=false");
 });
 
-test("A-fresh-10: undefined freshPnlMap falls back to cached for all VPs", () => {
+test("A-fresh-10: undefined freshPnlMap → nulls for all VPs (no crash)", () => {
   // Defensive: passing undefined as 5th arg should not crash.
+  // Step 7: no fallback to cached — all VPs in the merge get nulls.
   const vps = [{
     id: "vp_undef_map",
     pool: "P1", base_mint: "M1",
@@ -450,12 +458,12 @@ test("A-fresh-10: undefined freshPnlMap falls back to cached for all VPs", () =>
     initial_value_usd: 100, current_value_usd: 110,
   }];
   const result = mergeVirtualPositions([], vps, 0, Date.now(), undefined);
-  // Should fall back to cached fields
-  if (result.positions[0].total_value_usd !== 110) throw new Error("undefined map should fall back to cached");
+  if (result.positions[0].total_value_usd !== null) throw new Error("undefined map should give nulls, got cached");
 });
 
-test("A-fresh-11: null freshPnlMap falls back to cached for all VPs", () => {
+test("A-fresh-11: null freshPnlMap → nulls for all VPs (no crash)", () => {
   // Defensive: passing null as 5th arg should not crash.
+  // Step 7: no fallback to cached — all VPs in the merge get nulls.
   const vps = [{
     id: "vp_null_map",
     pool: "P1", base_mint: "M1",
@@ -464,7 +472,7 @@ test("A-fresh-11: null freshPnlMap falls back to cached for all VPs", () => {
     initial_value_usd: 100, current_value_usd: 110,
   }];
   const result = mergeVirtualPositions([], vps, 0, Date.now(), null);
-  if (result.positions[0].total_value_usd !== 110) throw new Error("null map should fall back to cached");
+  if (result.positions[0].total_value_usd !== null) throw new Error("null map should give nulls, got cached");
 });
 
 test("A-fresh-12: active_bin displays fresh activeBinId, not deploy-time", () => {
@@ -500,7 +508,6 @@ test("A11: solMode=true — TP fires at SOL PnL=5% (user's reported case)", () =
     upper_bin: 100, active_bin: 100,                  // not OOR
     pnl_pct: 5.0,                                      // SOL PnL %
     total_value_usd: 0.5,                              // SOL value
-    total_fees_earned_usd: 0.001,                      // SOL fees
     deployed_at: new Date(Date.now() - 60000).toISOString(), // 1 min old (no Rule 5 trigger)
     snapshots: [],
   };
@@ -516,7 +523,6 @@ test("A12: solMode=true — SL fires at SOL PnL=-50%", () => {
     upper_bin: 100, active_bin: 100,
     pnl_pct: -50,
     total_value_usd: 0.3,
-    total_fees_earned_usd: 0,
     deployed_at: new Date(Date.now() - 60000).toISOString(),
     snapshots: [],
   };
@@ -536,7 +542,6 @@ test("A13: solMode=true — TP does NOT fire below threshold (regression guard)"
     upper_bin: 100, active_bin: 100,
     pnl_pct: 4,                                         // SOL PnL, below threshold
     total_value_usd: 0.5,
-    total_fees_earned_usd: 0,
     deployed_at: new Date(Date.now() - 60000).toISOString(),
     snapshots: [],
   };
@@ -551,7 +556,6 @@ test("A14: solMode=false — TP fires at USD PnL=5% (backward compat)", () => {
     upper_bin: 100, active_bin: 100,
     pnl_pct: 5,
     total_value_usd: 50,
-    total_fees_earned_usd: 0.1,
     deployed_at: new Date(Date.now() - 60000).toISOString(),
     snapshots: [],
   };
@@ -563,6 +567,10 @@ test("A15: solMode=true — low yield uses SOL numerator/SOL denominator (unit-a
   // Build a position with rich SOL fees to keep yield above threshold,
   // then verify no close. The point is that both numerator and denominator
   // are in the same unit (SOL) and the ratio is unit-agnostic.
+  //
+  // Step 7 (meridian-wie): Rule 5 now reads `unclaimed_fees_usd` (current
+  // cycle's unclaimed) instead of `total_fees_earned_usd` (lifetime
+  // accumulator). The test must mirror the production field.
   const mgmtConfig = {
     solMode: true,
     takeProfitPct: 5,
@@ -574,7 +582,7 @@ test("A15: solMode=true — low yield uses SOL numerator/SOL denominator (unit-a
     upper_bin: 100, active_bin: 100,
     pnl_pct: 0,                                         // no PnL rules
     total_value_usd: 0.5,                               // 0.5 SOL
-    total_fees_earned_usd: 0.005,                       // 0.005 SOL fees
+    unclaimed_fees_usd: 0.005,                          // 0.005 SOL fees (current unclaimed)
     deployed_at: new Date(Date.now() - 120 * 60000).toISOString(), // 2h old
     snapshots: [],
   };
@@ -595,7 +603,7 @@ test("A16: solMode=true — low yield fires when fees/value ratio is too low", (
     upper_bin: 100, active_bin: 100,
     pnl_pct: 0,
     total_value_usd: 0.5,                               // 0.5 SOL
-    total_fees_earned_usd: 0.0005,                      // 0.0005 SOL fees (low)
+    unclaimed_fees_usd: 0.0005,                         // 0.0005 SOL fees (low)
     deployed_at: new Date(Date.now() - 120 * 60000).toISOString(),
     snapshots: [],
   };
@@ -614,7 +622,6 @@ test("A17: solMode=true — suspect PnL guard skips PnL rules", () => {
     upper_bin: 100, active_bin: 100,
     pnl_pct: -95,
     total_value_usd: 0.02,
-    total_fees_earned_usd: 0,
     deployed_at: new Date(Date.now() - 60000).toISOString(),
     snapshots: [],
   };
@@ -634,7 +641,6 @@ test("A18: solMode=true — Rule 6 trend exit uses pnl_sol_pct from snapshots", 
     upper_bin: 100, active_bin: 100,
     pnl_pct: -10,                                       // current SOL PnL (in loss)
     total_value_usd: 0.5,
-    total_fees_earned_usd: 0,
     deployed_at: new Date(Date.now() - 60000).toISOString(),
     snapshots: [
       { pnl_pct: -2, pnl_sol_pct: -2 },
@@ -661,7 +667,6 @@ test("A19: solMode=true — Rule 6 with mixed old/new snapshots (silent fallback
     upper_bin: 100, active_bin: 100,
     pnl_pct: -10,
     total_value_usd: 0.5,
-    total_fees_earned_usd: 0,
     deployed_at: new Date(Date.now() - 60000).toISOString(),
     snapshots: [
       { pnl_pct: -2 },                                  // old: no pnl_sol_pct
@@ -683,7 +688,6 @@ test("A20: OOR too long — uses THIS cycle's effective OOR minutes", () => {
     upper_bin: 100, active_bin: 105,                    // 5 bins above
     pnl_pct: 0,
     total_value_usd: 0.5,
-    total_fees_earned_usd: 0,
     deployed_at: new Date(Date.now() - 60000).toISOString(),
     snapshots: [],
   };
@@ -761,27 +765,16 @@ test("B3: this is the EXACT bug scenario — LLM sees 3, deploy count = 3, no mi
 //  SECTION C: Telegram /close routing (P2 fix)
 // ════════════════════════════════════════════════════════════
 //
-// Mirrors helpers from tools/dry-run-state.js:
-//   parseVirtualPositionAddress(positionAddress)
-//   computeSimpleVirtualPnl(vp)
+// Mirrors parseVirtualPositionAddress from tools/dry-run-state.js.
+// Note: computeSimpleVirtualPnl was deleted in Step 7 (meridian-wie)
+// — PnL is now computed fresh on every read via computePositionPnl.
+// Tests C3–C8 (computeSimpleVirtualPnl cases) were removed with it.
 
 function parseVirtualPositionAddress(positionAddress) {
   if (typeof positionAddress !== "string" || !positionAddress.startsWith("vp:")) {
     return null;
   }
   return positionAddress.slice(3);
-}
-
-function computeSimpleVirtualPnl(vp) {
-  const initialValue = vp?.initial_value_usd;
-  const currentValue = vp?.current_value_usd ?? initialValue;
-  const pnlUsd = (currentValue != null && initialValue != null)
-    ? currentValue - initialValue
-    : null;
-  const pnlPct = (currentValue != null && initialValue != null && initialValue > 0)
-    ? ((currentValue / initialValue - 1) * 100)
-    : null;
-  return { pnlUsd, pnlPct };
 }
 
 test("C1: parseVirtualPositionAddress detects vp: prefix and extracts id", () => {
@@ -809,43 +802,6 @@ test("C2: parseVirtualPositionAddress returns null for non-VP addresses", () => 
   if (parseVirtualPositionAddress(123) !== null) {
     throw new Error("Number should not parse as VP");
   }
-});
-
-test("C3: computeSimpleVirtualPnl — profitable VP returns positive PnL", () => {
-  const vp = { initial_value_usd: 100, current_value_usd: 115 };
-  const { pnlUsd, pnlPct } = computeSimpleVirtualPnl(vp);
-  if (Math.abs(pnlUsd - 15) > 0.0001) throw new Error(`pnlUsd: expected 15, got ${pnlUsd}`);
-  if (Math.abs(pnlPct - 15) > 0.0001) throw new Error(`pnlPct: expected 15, got ${pnlPct}`);
-});
-
-test("C4: computeSimpleVirtualPnl — losing VP returns negative PnL", () => {
-  const vp = { initial_value_usd: 100, current_value_usd: 92.50 };
-  const { pnlUsd, pnlPct } = computeSimpleVirtualPnl(vp);
-  if (Math.abs(pnlUsd - (-7.5)) > 0.0001) throw new Error(`pnlUsd: expected -7.5, got ${pnlUsd}`);
-  if (Math.abs(pnlPct - (-7.5)) > 0.0001) throw new Error(`pnlPct: expected -7.5, got ${pnlPct}`);
-});
-
-test("C5: computeSimpleVirtualPnl — null vp returns null pnl", () => {
-  const { pnlUsd, pnlPct } = computeSimpleVirtualPnl(null);
-  if (pnlUsd !== null) throw new Error(`pnlUsd: expected null, got ${pnlUsd}`);
-  if (pnlPct !== null) throw new Error(`pnlPct: expected null, got ${pnlPct}`);
-});
-
-test("C6: computeSimpleVirtualPnl — vp with only initial value, no current", () => {
-  // Edge case: just deployed, no snapshot yet
-  const vp = { initial_value_usd: 50 };
-  const { pnlUsd, pnlPct } = computeSimpleVirtualPnl(vp);
-  if (pnlUsd !== 0) throw new Error(`pnlUsd: expected 0, got ${pnlUsd}`);
-  if (pnlPct !== 0) throw new Error(`pnlPct: expected 0, got ${pnlPct}`);
-});
-
-test("C8: computeSimpleVirtualPnl — division-by-zero guard (initial=0)", () => {
-  // Edge case: shouldn't happen, but if initial_value_usd is 0 the
-  // pnlPct calculation would divide by zero. Guard must return null, not NaN/Infinity.
-  const vp = { initial_value_usd: 0, current_value_usd: 100 };
-  const { pnlUsd, pnlPct } = computeSimpleVirtualPnl(vp);
-  if (pnlUsd !== 100) throw new Error(`pnlUsd: expected 100, got ${pnlUsd}`);
-  if (pnlPct !== null) throw new Error(`pnlPct: expected null (div-by-zero guard), got ${pnlPct}`);
 });
 
 // ════════════════════════════════════════════════════════════

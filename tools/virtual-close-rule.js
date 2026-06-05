@@ -14,11 +14,15 @@
  *   6. Trend exit    — vpTrendExitCycles consecutive down snapshots
  *
  * Polymorphic unit contract for Rules 1-5: position.pnl_pct,
- * position.total_value_usd, position.unclaimed_fees_usd, and
- * position.total_fees_earned_usd are polymorphic — SOL values when
- * solMode=true, USD when solMode=false. The caller
- * (runVirtualManagementCycle) is responsible for selecting the unit
- * based on config.management.solMode.
+ * position.total_value_usd, and position.unclaimed_fees_usd are
+ * polymorphic — SOL values when solMode=true, USD when solMode=false.
+ * The caller (runVirtualManagementCycle) is responsible for selecting
+ * the unit based on config.management.solMode.
+ *
+ * Note (Step 7, meridian-wie): Rule 5 no longer reads
+ * position.total_fees_earned_usd (the lifetime accumulator was a lie
+ * for a "is it earning right now?" check). It now reads
+ * position.unclaimed_fees_usd (current cycle's pending fees).
  *
  * Rule 6 exception: the function DOES read managementConfig.solMode to
  * decide whether to compare pnl_sol_pct or pnl_pct from the snapshot
@@ -79,8 +83,13 @@ export function getVirtualCloseRule(position, managementConfig, effectiveOorMinu
     : 0;
 
   if (ageMinutes >= minAgeForYieldCheck && (position.total_value_usd ?? 0) > 0) {
-    const totalFees = position.total_fees_earned_usd || 0;
-    const syntheticFeeYield = (totalFees / position.total_value_usd) * (1440 / ageMinutes) * 100;
+    // Step 7 (meridian-wie): use unclaimed_fees_usd (current cycle's pending
+    // fees) instead of total_fees_earned_usd (lifetime accumulated). The
+    // current cycle's unclaimed is the better "is this position earning
+    // right now?" signal. Lifetime accumulation is misleading — a position
+    // could have high lifetime fees but be stagnant right now.
+    const currentFees = position.unclaimed_fees_usd || 0;
+    const syntheticFeeYield = (currentFees / position.total_value_usd) * (1440 / ageMinutes) * 100;
     if (syntheticFeeYield < minFeePerTvl24h) {
       return { action: "CLOSE", rule: 5, reason: "low yield" };
     }

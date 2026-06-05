@@ -327,7 +327,9 @@ export async function runManagementCycle({ silent = false } = {}) {
 
     const reportLines = positionData.map((p) => {
       const act = actionMap.get(p.position);
-      const inRange = p.in_range ? "🟢 IN" : `🔴 OOR ${p.minutes_out_of_range ?? 0}m`;
+      // Step 7 (meridian-wie): null in_range = "no fresh PnL" (RPC outage).
+      // True → 🟢 IN. False → 🔴 OOR <time>m. Null → ?? (unknown — no red bullet).
+      const inRange = p.in_range === true ? "🟢 IN" : p.in_range === false ? `🔴 OOR ${p.minutes_out_of_range ?? 0}m` : "??";
       const val = config.management.solMode ? `◎${p.total_value_usd ?? "?"}` : `$${p.total_value_usd ?? "?"}`;
       const unclaimed = config.management.solMode ? `◎${p.unclaimed_fees_usd ?? "?"}` : `$${p.unclaimed_fees_usd ?? "?"}`;
       const statusLabel = act.action === "INSTRUCTION" ? "HOLD (instruction)" : act.action;
@@ -446,7 +448,11 @@ After executing, write a brief one-line result per position.
         else sendLongMessage(`🔄 Management Cycle\n\n${stripThink(mgmtReport)}`).catch(() => { });
       }
       for (const p of positions) {
-        if (!p.in_range && p.minutes_out_of_range >= config.management.outOfRangeWaitMinutes) {
+        // Step 7 (meridian-wie): explicit === false guard. `!null` is true,
+        // and if a future refactor adds minutes_out_of_range to VPs (e.g.
+        // from _oor_minutes), null in_range would trigger false OOR
+        // notifications during RPC outages. Be explicit.
+        if (p.in_range === false && p.minutes_out_of_range >= config.management.outOfRangeWaitMinutes) {
           notifyOutOfRange({ pair: p.pair, minutesOOR: p.minutes_out_of_range }).catch(() => { });
         }
       }
@@ -1545,7 +1551,9 @@ async function telegramHandler(msg) {
       const lines = positions.map((p, i) => {
         const pnl = p.pnl_usd >= 0 ? `+${cur}${p.pnl_usd}` : `-${cur}${Math.abs(p.pnl_usd)}`;
         const age = p.age_minutes != null ? `${p.age_minutes}m` : "?";
-        const oor = !p.in_range ? " ⚠️OOR" : "";
+        // Step 7 (meridian-wie): null in_range = "no fresh PnL".
+        // True → 🟢 IN. False → 🔴 OOR. Null → ?? (no red bullet).
+        const oor = p.in_range === false ? " 🔴OOR" : p.in_range === true ? " 🟢IN" : " ??";
         return `${i + 1}. ${p.pair} | ${cur}${p.total_value_usd} | PnL: ${pnl} | fees: ${cur}${p.unclaimed_fees_usd} | ${age}${oor}`;
       });
       await sendMessage(`📊 Open Positions (${total_positions}):\n\n${lines.join("\n")}\n\n/close <n> to close | /set <n> <note> to set instruction`);
@@ -1577,7 +1585,9 @@ async function telegramHandler(msg) {
           const vpId = pos.position.slice(3); // strip "vp:" prefix
           const pnl = pos.pnl_pct != null ? `${pos.pnl_pct.toFixed(2)}%` : "?";
           const fees = pos.unclaimed_fees_usd != null ? `${cur}${pos.unclaimed_fees_usd.toFixed(2)}` : "?";
-          const oor = pos.in_range ? "🟢 IN" : "🔴 OOR";
+          // Step 7 (meridian-wie): null in_range = "no fresh PnL" (RPC outage).
+          // True → 🟢 IN. False → 🔴 OOR. Null → ?? (no red bullet).
+          const oor = pos.in_range === true ? "🟢 IN" : pos.in_range === false ? "🔴 OOR" : "??";
           return `${vpId} | ${pos.pair} | PnL: ${pnl} | fees: ${fees} | ${oor}`;
         });
         await sendMessage(`📊 Virtual Positions (${vps.length}):\n\n${lines.join("\n")}`);
@@ -1593,15 +1603,17 @@ async function telegramHandler(msg) {
       const { positions } = await getMyPositions({ force: true });
       if (idx < 0 || idx >= positions.length) { await sendMessage("Invalid number. Use /positions first."); return; }
       const pos = positions[idx];
-      await sendMessage([
-        `${idx + 1}. ${pos.pair}`,
-        `Pool: ${pos.pool}`,
-        `Position: ${pos.position}`,
-        `Range: ${pos.lower_bin} → ${pos.upper_bin} | active ${pos.active_bin}`,
-        `PnL: ${pos.pnl_pct ?? "?"}% | fees: ${config.management.solMode ? "◎" : "$"}${pos.unclaimed_fees_usd ?? "?"}`,
-        `Value: ${config.management.solMode ? "◎" : "$"}${pos.total_value_usd ?? "?"}`,
-        `Age: ${pos.age_minutes ?? "?"}m | ${pos.in_range ? "IN RANGE" : `OOR ${pos.minutes_out_of_range ?? 0}m`}`,
-        pos.instruction ? `Note: ${pos.instruction}` : null,
+        await sendMessage([
+          `${idx + 1}. ${pos.pair}`,
+          `Pool: ${pos.pool}`,
+          `Position: ${pos.position}`,
+          `Range: ${pos.lower_bin} → ${pos.upper_bin} | active ${pos.active_bin}`,
+          `PnL: ${pos.pnl_pct ?? "?"}% | fees: ${config.management.solMode ? "◎" : "$"}${pos.unclaimed_fees_usd ?? "?"}`,
+          `Value: ${config.management.solMode ? "◎" : "$"}${pos.total_value_usd ?? "?"}`,
+          // Step 7 (meridian-wie): null in_range = "no fresh PnL" (RPC outage).
+          // True → 🟢 IN RANGE. False → 🔴 OOR <time>m. Null → ?? (no red bullet).
+          `Age: ${pos.age_minutes ?? "?"}m | ${pos.in_range === true ? "🟢 IN RANGE" : pos.in_range === false ? `🔴 OOR ${pos.minutes_out_of_range ?? 0}m` : "?? (no fresh PnL)"}`,
+          pos.instruction ? `Note: ${pos.instruction}` : null,
       ].filter(Boolean).join("\n"));
     } catch (e) {
       await sendMessage(`Error: ${e.message}`).catch(() => {});
@@ -1932,7 +1944,8 @@ if (isMain && isTTY) {
     if (positions.total_positions > 0) {
       console.log("Open positions:");
       for (const p of positions.positions) {
-        const status = p.in_range ? "in-range ✓" : "OUT OF RANGE ⚠";
+        // Step 7 (meridian-wie): null in_range = "no fresh PnL".
+        const status = p.in_range === true ? "in-range ✓" : p.in_range === false ? "OUT OF RANGE ⚠" : "?? (no fresh PnL)";
         console.log(`  ${p.pair.padEnd(16)} ${status}  fees: $${p.unclaimed_fees_usd}`);
       }
       console.log();
@@ -2024,7 +2037,8 @@ Commands:
         console.log(`\nWallet: ${wallet.sol} SOL  ($${wallet.sol_usd})`);
         console.log(`Positions: ${positions.total_positions}`);
         for (const p of positions.positions) {
-          const status = p.in_range ? "in-range ✓" : "OUT OF RANGE ⚠";
+          // Step 7 (meridian-wie): null in_range = "no fresh PnL".
+          const status = p.in_range === true ? "in-range ✓" : p.in_range === false ? "OUT OF RANGE ⚠" : "?? (no fresh PnL)";
           console.log(`  ${p.pair.padEnd(16)} ${status}  fees: ${config.management.solMode ? "◎" : "$"}${p.unclaimed_fees_usd}`);
         }
         console.log();
@@ -2175,7 +2189,8 @@ Focus on: hold duration, entry/exit timing, what win rates look like, whether sc
             const vpId = pos.position.slice(3); // strip "vp:" prefix
             const pnl = pos.pnl_pct != null ? `${pos.pnl_pct.toFixed(2)}%` : "?";
             const fees = pos.unclaimed_fees_usd != null ? `${solFmt}${pos.unclaimed_fees_usd.toFixed(2)}` : "?";
-            const oor = pos.in_range ? "🟢 IN" : "🔴 OOR";
+            // Step 7 (meridian-wie): null in_range = "no fresh PnL".
+            const oor = pos.in_range === true ? "🟢 IN" : pos.in_range === false ? "🔴 OOR" : "??";
             console.log(`  ${vpId} | ${pos.pair.padEnd(16)} | PnL: ${pnl.padStart(8)} | fees: ${fees} | ${oor}`);
           }
           console.log();

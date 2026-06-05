@@ -150,7 +150,11 @@ test("Small position: gas dominates → value floors at 0", () => {
 //  SECTION 3: LOW_YIELD Close Rule
 // ════════════════════════════════════════════════════════════
 
-// Mirrors getVirtualCloseRule's Rule 5 logic
+// Mirrors getVirtualCloseRule's Rule 5 logic.
+// Step 7 (meridian-wie): Rule 5 now reads `unclaimed_fees_usd` (current
+// cycle's unclaimed) instead of `total_fees_earned_usd` (lifetime
+// accumulator). The current cycle's unclaimed is the better "is this
+// position earning right now?" signal.
 function checkLowYield(vp, currentValueUsd, mgmtConfig = {}) {
   const minFeePerTvl24h = mgmtConfig.minFeePerTvl24h ?? 7;
   const minAgeForYieldCheck = mgmtConfig.minAgeBeforeYieldCheck ?? 60;
@@ -159,8 +163,8 @@ function checkLowYield(vp, currentValueUsd, mgmtConfig = {}) {
     : 0;
 
   if (ageMinutes >= minAgeForYieldCheck && currentValueUsd > 0) {
-    const totalFeesUsd = vp.total_fees_earned_usd || 0;
-    const syntheticFeeYield = (totalFeesUsd / currentValueUsd) * (1440 / ageMinutes) * 100;
+    const currentFees = vp.unclaimed_fees_usd || 0;
+    const syntheticFeeYield = (currentFees / currentValueUsd) * (1440 / ageMinutes) * 100;
     if (syntheticFeeYield < minFeePerTvl24h) {
       return { rule: 5, reason: "low yield", syntheticFeeYield };
     }
@@ -171,7 +175,7 @@ function checkLowYield(vp, currentValueUsd, mgmtConfig = {}) {
 test("LOW_YIELD: VP with 0 fees after 120 min → triggers rule 5", () => {
   const vp = {
     deployed_at: new Date(Date.now() - 120 * 60000).toISOString(),
-    total_fees_earned_usd: 0,
+    unclaimed_fees_usd: 0,
   };
   const result = checkLowYield(vp, 85.0);
   console.log(`  syntheticYield: ${result?.syntheticFeeYield?.toFixed(4)}%`);
@@ -183,7 +187,7 @@ test("LOW_YIELD: VP with good fees → does NOT trigger", () => {
   // $85 position earning $1/hr = 24h yield ≈ (24/85)*100 = 28.2%
   const vp = {
     deployed_at: new Date(Date.now() - 120 * 60000).toISOString(),
-    total_fees_earned_usd: 2.0, // $1/hr for 2 hours
+    unclaimed_fees_usd: 2.0, // $1/hr for 2 hours
   };
   const result = checkLowYield(vp, 85.0);
   console.log(`  syntheticYield: ${result?.syntheticFeeYield?.toFixed(4) ?? "above threshold (no trigger)"}%`);
@@ -193,7 +197,7 @@ test("LOW_YIELD: VP with good fees → does NOT trigger", () => {
 test("LOW_YIELD: VP under 60 min → skipped (too young)", () => {
   const vp = {
     deployed_at: new Date(Date.now() - 30 * 60000).toISOString(),
-    total_fees_earned_usd: 0,
+    unclaimed_fees_usd: 0,
   };
   const result = checkLowYield(vp, 85.0);
   console.log(`  result: ${result ? "triggered (BAD)" : "skipped (correct — too young)"}`);
@@ -206,7 +210,7 @@ test("LOW_YIELD: edge case — exactly at threshold → does NOT trigger", () =>
   // fees = 7 * 100 / (1440/120) / 100 = 7 / 12 = 0.5833...
   const vp = {
     deployed_at: new Date(Date.now() - 120 * 60000).toISOString(),
-    total_fees_earned_usd: 0.5834,
+    unclaimed_fees_usd: 0.5834,
   };
   const result = checkLowYield(vp, 100.0);
   const yield24h = (0.5834 / 100) * (1440 / 120) * 100;
