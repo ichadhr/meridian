@@ -659,5 +659,32 @@ test("C7: routing — VP position routes to VP close, live routes to live close"
 });
 
 // ════════════════════════════════════════════════════════════
+//  SECTION E: dlmm.js import-pattern regression guard (meridian-fvo)
+// ════════════════════════════════════════════════════════════
+//
+// Bug: tools/dlmm.js used `export { mergeVirtualPositions } from "..."`
+// (re-export form) which does NOT create a local binding. The call site
+// at line 1680 then threw ReferenceError, causing getMyPositions to
+// return 0 positions in dry-run mode and the screening cycle to ignore
+// maxPositions. Fix: use `import { ... } from "..."` instead.
+
+const dlmmSrc = fs.readFileSync(
+  path.join(__dirname, "..", "tools", "dlmm.js"),
+  "utf8"
+);
+
+test("E1: dlmm.js imports mergeVirtualPositions (not re-exports)", () => {
+  // Verify the fix from meridian-fvo is in place. The re-export form
+  // would be: `export { mergeVirtualPositions } from "./merge-virtual-positions.js"`
+  // The correct form is: `import { mergeVirtualPositions } from "./merge-virtual-positions.js"`
+  if (/^export\s*\{\s*mergeVirtualPositions\s*\}\s*from\s*["']\.\/merge-virtual-positions\.js["']/m.test(dlmmSrc)) {
+    throw new Error("dlmm.js uses broken re-export form for mergeVirtualPositions (use `import` instead). See meridian-fvo.");
+  }
+  if (!/^import\s*\{[^}]*mergeVirtualPositions[^}]*\}\s*from\s*["']\.\/merge-virtual-positions\.js["']/m.test(dlmmSrc)) {
+    throw new Error("dlmm.js should `import { mergeVirtualPositions } from './merge-virtual-positions.js'`");
+  }
+});
+
+// ════════════════════════════════════════════════════════════
 console.log(`\n${passed + failed} tests: ${passed} passed, ${failed} failed`);
 if (failed > 0) process.exitCode = 1;

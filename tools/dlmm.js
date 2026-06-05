@@ -1226,8 +1226,12 @@ const LPAGENT_API = "https://api.lpagent.io/open-api/v1";
  * source of truth (and the deploy pre-check the same count).
  * Implementation lives in tools/merge-virtual-positions.js so tests
  * can import it without pulling in envcrypt/RPC/wallet modules.
+ *
+ * NOTE: must be `import` (not `export { X } from "..."`) so the function
+ * is in this module's local scope. Re-export-only does NOT create a local
+ * binding — the call site at line 1680 would throw ReferenceError.
  */
-export { mergeVirtualPositions } from "./merge-virtual-positions.js";
+import { mergeVirtualPositions } from "./merge-virtual-positions.js";
 
 async function fetchLpAgentOpenPositions(walletAddress) {
   if (!process.env.LPAGENT_API_KEY) return {};
