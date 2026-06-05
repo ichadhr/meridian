@@ -119,7 +119,7 @@ export function trackVirtualPosition({
     close_gas_sol: close_gas_sol != null ? Number(close_gas_sol) : null,
     gas_priority_fee: gas_priority_fee != null ? Number(gas_priority_fee) : null,
     // Legacy: total gas estimate (used by VPs deployed under the previous
-    // single-field version). computeVirtualPnl falls back to this when
+    // single-field version). computePositionPnl falls back to this when
     // deploy_gas_sol + close_gas_sol are absent.
     gas_cost_sol: gas_cost_sol != null ? Number(gas_cost_sol) : null,
     total_fees_earned_usd: 0,

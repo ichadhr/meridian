@@ -125,7 +125,7 @@ export const config = {
     // 0.0002 covers quiet-to-normal network; ~0.001 covers busy/high-priority.
     vpGasCostSol:          u.vpGasCostSol          ?? 0.0002,  // deploy + close tx fees
     // Slippage model: real on-chain X→Y swap simulation is used in
-    // tools/manage-virtual.js.estimateSlippageLamports (added 2026-06).
+    // tools/compute-position-pnl.js.estimateSlippageLamports (added 2026-06).
     // vpSlippagePct is now LEGACY and unused — kept for one release to give
     // users a deprecation warning. See meridian-z06.
     vpSlippagePct:         u.vpSlippagePct         ?? 0.3,
@@ -223,7 +223,7 @@ export const config = {
 };
 
 // Deprecation warning for legacy vpSlippagePct config key.
-// The new real-depth slippage model in tools/manage-virtual.js no longer
+// The new real-depth slippage model in tools/compute-position-pnl.js no longer
 // references it. The key is kept for one release so user-config.json
 // values don't silently get dropped — users see this and can remove it.
 if (u.vpSlippagePct !== undefined) {

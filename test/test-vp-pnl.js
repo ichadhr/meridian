@@ -2,7 +2,7 @@
  * Test: VP PnL calculation + close rules (standalone — no npm install needed)
  *
  * Uses BigInt instead of BN to validate the math without dependencies.
- * Mirrors the computeVirtualPnl logic from manage-virtual.js.
+ * Mirrors the computePositionPnl logic from compute-position-pnl.js.
  */
 
 const SCALE = 1n << 64n;
@@ -373,7 +373,7 @@ test("Fee precision: small shares (< 2^64) now produce non-zero fees", () => {
 //  SECTION 7: SOL-mode PnL and Breakdown
 // ════════════════════════════════════════════════════════════
 
-test("SOL-mode PnL and breakdown matches computeVirtualPnl logic", () => {
+test("SOL-mode PnL and breakdown matches computePositionPnl logic", () => {
   const initialSol = 1.0;
   const rawPositionValueSol = 1.2;
   const unclaimedFeesSol = 0.05;
@@ -474,7 +474,7 @@ test("Trend exit (Rule 6): does NOT trigger when trend is broken", () => {
 //  SECTION 7: Slippage Algorithm (estimateSlippageLamports)
 // ════════════════════════════════════════════════════════════
 
-// Mirror of tools/manage-virtual.js:242 estimateSlippageLamports.
+// Mirror of tools/compute-position-pnl.js:262 estimateSlippageLamports.
 // Inlined to keep the test self-contained (matches the rest of this file's
 // standalone BigInt style — no Jest/Mocha, no module imports).
 function estimateSlippageLamports(perBin, binData, activeBinId, opts = {}) {
