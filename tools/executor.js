@@ -270,7 +270,11 @@ const toolMap = {
     if (vpId) {
       const vp = getVirtualPosition(vpId);
       if (!vp) return { success: false, error: `VP not found: ${vpId}` };
+      // USD values still go to the archive (accounting is always USD-native).
+      // Returned pnl_usd/pnl_pct are polymorphic (SOL when solMode, USD when not)
+      // to match getMyPositions convention and the Telegram close notification.
       const { pnlUsd, pnlPct } = computeSimpleVirtualPnl(vp);
+      const isSol = !!config.management.solMode;
       const closed = closeVirtualPosition(vpId, "LLM close_position tool", pnlPct, pnlUsd);
       return closed
         ? {
@@ -282,8 +286,8 @@ const toolMap = {
             pool: vp.pool,
             pool_name: vp.pool_name || vp.pair,
             base_mint: vp.base_mint || null,
-            pnl_usd: pnlUsd,
-            pnl_pct: pnlPct,
+            pnl_usd: isSol ? (vp.pnl_sol ?? 0) : pnlUsd,
+            pnl_pct: isSol ? (vp.pnl_sol_pct ?? 0) : pnlPct,
           }
         : { success: false, error: "VP close failed (archive write error?)" };
     }

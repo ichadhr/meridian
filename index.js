@@ -1614,10 +1614,14 @@ async function telegramHandler(msg) {
     if (vpId) {
       const vp = getVirtualPosition(vpId);
       if (!vp) return { success: false, error: `VP not found: ${vpId}` };
+      // USD values still go to the archive (accounting is always USD-native).
+      // The returned pnl_usd/pnl_pct come from the polymorphic `pos` (already
+      // routed through mergeVirtualPositions), so the Telegram notification
+      // shows the right unit for the current solMode.
       const { pnlUsd, pnlPct } = computeSimpleVirtualPnl(vp);
       const closed = closeVirtualPosition(vpId, "manual close via telegram /close", pnlPct, pnlUsd);
       return closed
-        ? { success: true, dry_run: true, is_virtual: true, pnl_usd: pnlUsd, pnl_pct: pnlPct }
+        ? { success: true, dry_run: true, is_virtual: true, pnl_usd: pos.pnl_usd, pnl_pct: pos.pnl_pct }
         : { success: false, error: "VP close failed (archive write error?)" };
     }
     return await closePosition({ position_address: pos.position });

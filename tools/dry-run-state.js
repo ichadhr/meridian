@@ -68,6 +68,13 @@ export function trackVirtualPosition({
   close_gas_sol,
   gas_priority_fee, // priority fee (µl/CU) at deploy time, for reference
   gas_cost_sol,     // legacy: kept for back-compat with VPs deployed under prev. version
+  // Native SOL fields — seeded at deploy time with sensible defaults so the
+  // management cycle (and the polymorphic _usd display) can read them from
+  // cycle 1. The management cycle overwrites these on every PnL sync.
+  value_sol = amount_sol ?? 0,
+  total_fees_earned_sol = 0,
+  pnl_sol = 0,
+  pnl_sol_pct = 0,
 }) {
   const state = load();
   const vp = {
@@ -87,6 +94,11 @@ export function trackVirtualPosition({
     amount_sol,
     initial_value_usd,
     sol_price_at_deploy: sol_price_at_deploy ?? null,
+    // Seed native SOL fields at deploy time (overwritten by management cycle).
+    value_sol,
+    total_fees_earned_sol,
+    pnl_sol,
+    pnl_sol_pct,
     deploy_rationale: deploy_rationale || null,
     bin_shares: Array.isArray(bin_shares) && bin_shares.length ? bin_shares : null,
     base_mint: base_mint || null,

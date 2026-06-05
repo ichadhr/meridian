@@ -18,6 +18,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+import { mergeVirtualPositions } from "../tools/merge-virtual-positions.js";
 
 let passed = 0;
 let failed = 0;
@@ -34,50 +35,17 @@ function test(name, fn) {
 }
 
 // ════════════════════════════════════════════════════════════
-//  Pure function: mergeVirtualPositions
+//  Pure function: mergeVirtualPositions (imported from production)
 // ════════════════════════════════════════════════════════════
 //
-// Mirrors the logic added at the end of getMyPositions() in tools/dlmm.js.
+// Imported from tools/merge-virtual-positions.js so tests exercise the
+// real implementation. Signature: (positions, vps, solPrice = 0, now = Date.now()).
+// - solPrice = 0 → USD passthrough (default, solMode off)
+// - solPrice > 0 → _usd fields populated from native SOL values
+//
 // When DRY_RUN, the function should append VP entries to the positions array
 // and bump total_positions. The shape of each merged VP matches the on-chain
 // position shape so the LLM can't tell them apart structurally.
-
-function mergeVirtualPositions(positions, vps, now = Date.now()) {
-  if (!Array.isArray(vps) || vps.length === 0) {
-    return { positions, total_positions: positions.length };
-  }
-  const merged = [...positions];
-  for (const vp of vps) {
-    const initialValue = vp.initial_value_usd;
-    const currentValue = vp.current_value_usd;
-    const pnlUsd = (currentValue != null && initialValue != null)
-      ? currentValue - initialValue
-      : null;
-    const pnlPct = (currentValue != null && initialValue != null && initialValue > 0)
-      ? ((currentValue / initialValue - 1) * 100)
-      : null;
-    merged.push({
-      position: `vp:${vp.id}`,          // prefix to avoid pubkey collision
-      pool: vp.pool,
-      pair: vp.pair || vp.pool_name || String(vp.pool).slice(0, 8),
-      base_mint: vp.base_mint || null,
-      lower_bin: vp.lower_bin ?? null,
-      upper_bin: vp.upper_bin ?? null,
-      active_bin: vp.active_bin_at_deploy ?? null,
-      in_range: !vp._oor_since,
-      unclaimed_fees_usd: vp.total_fees_earned_usd ?? 0,
-      total_value_usd: currentValue ?? initialValue ?? null,
-      pnl_usd: pnlUsd,
-      pnl_pct: pnlPct,
-      age_minutes: vp.deployed_at
-        ? Math.floor((now - new Date(vp.deployed_at).getTime()) / 60000)
-        : null,
-      instruction: null,
-      source: "virtual",                  // lets the LLM distinguish from on-chain
-    });
-  }
-  return { positions: merged, total_positions: merged.length };
-}
 
 // ════════════════════════════════════════════════════════════
 //  SECTION A: VP merge logic
@@ -141,7 +109,7 @@ test("A4: VP PnL math — current vs initial value", () => {
       total_fees_earned_usd: 2.5,
     },
   ];
-  const result = mergeVirtualPositions(onChain, vps, now);
+  const result = mergeVirtualPositions(onChain, vps, 0, now);
   const p = result.positions[0];
   if (Math.abs(p.pnl_usd - 10) > 0.001) throw new Error(`pnl_usd: expected 10, got ${p.pnl_usd}`);
   if (Math.abs(p.pnl_pct - 10) > 0.001) throw new Error(`pnl_pct: expected 10, got ${p.pnl_pct}`);
@@ -173,6 +141,78 @@ test("A7: VP in_range = true when _oor_since is null", () => {
   ];
   const result = mergeVirtualPositions([], vps);
   if (result.positions[0].in_range !== true) throw new Error("In-range VP should be in_range=true");
+});
+
+test("A8: solMode=true — _usd fields populated from native SOL values", () => {
+  const vps = [{
+    id: "vp_test_8",
+    pool: "test_pool",
+    pool_name: "TEST-SOL",
+    pair: "TEST-SOL",
+    deployed_at: new Date(Date.now() - 60000).toISOString(),
+    amount_sol: 0.5,
+    initial_value_usd: 75,                // 0.5 SOL * $150
+    sol_price_at_deploy: 150,
+    value_sol: 0.5,                        // seeded at deploy
+    total_fees_earned_usd: 0.30,           // $0.30 in fees (USD field, unused in solMode)
+    total_fees_earned_sol: 0.002,          // 0.002 SOL in fees
+    current_value_usd: 76,
+    pnl_usd: 1,                            // USD field, unused in solMode
+    pnl_sol: 0.0067,                       // ~0.0067 SOL PnL
+    pnl_sol_pct: 1.33,                     // native SOL PnL %
+  }];
+  const result = mergeVirtualPositions([], vps, 150); // solPrice=150 → solMode=true
+  const merged = result.positions[0];
+  if (merged.total_value_usd !== 0.5) throw new Error(`Expected total_value_usd=0.5 (SOL), got ${merged.total_value_usd}`);
+  if (merged.unclaimed_fees_usd !== 0.002) throw new Error(`Expected unclaimed_fees_usd=0.002 (SOL), got ${merged.unclaimed_fees_usd}`);
+  if (Math.abs(merged.pnl_pct - 1.33) > 0.001) throw new Error(`Expected pnl_pct≈1.33, got ${merged.pnl_pct}`);
+  if (merged.pnl_usd !== 0.0067) throw new Error(`Expected pnl_usd=0.0067 (SOL), got ${merged.pnl_usd}`);
+});
+
+test("A9: solMode=false — _usd fields stay USD (passthrough, default behavior)", () => {
+  const vps = [{
+    id: "vp_test_9",
+    pool: "test_pool",
+    pool_name: "TEST-SOL",
+    pair: "TEST-SOL",
+    deployed_at: new Date(Date.now() - 60000).toISOString(),
+    amount_sol: 0.5,
+    initial_value_usd: 75,
+    current_value_usd: 76,
+    total_fees_earned_usd: 0.30,
+    // No SOL fields — solMode=false means they're not used anyway
+  }];
+  const result = mergeVirtualPositions([], vps, 0); // solPrice=0 → solMode=false
+  const merged = result.positions[0];
+  if (merged.total_value_usd !== 76) throw new Error(`Expected total_value_usd=76 (USD), got ${merged.total_value_usd}`);
+  if (merged.unclaimed_fees_usd !== 0.30) throw new Error(`Expected unclaimed_fees_usd=0.30 (USD), got ${merged.unclaimed_fees_usd}`);
+  // PnL% still computed from USD
+  if (Math.abs(merged.pnl_pct - ((76 / 75 - 1) * 100)) > 0.001) throw new Error(`pnl_pct should be ~1.33%, got ${merged.pnl_pct}`);
+});
+
+test("A10: lazy migration — old VP without SOL fields falls back to amount_sol", () => {
+  // Simulates an old VP from before the fix (no value_sol, no total_fees_earned_sol).
+  // The lazy fallback: value_sol = vp.value_sol ?? vp.amount_sol = 0.5
+  const vps = [{
+    id: "vp_old",
+    pool: "old_pool",
+    pool_name: "OLD-SOL",
+    pair: "OLD-SOL",
+    deployed_at: new Date(Date.now() - 600000).toISOString(), // 10 min ago
+    amount_sol: 0.5,
+    initial_value_usd: 75,
+    current_value_usd: 76,
+    total_fees_earned_usd: 0.30,
+    // NOTE: no value_sol, no total_fees_earned_sol, no pnl_sol_pct
+  }];
+  const result = mergeVirtualPositions([], vps, 150); // solMode=true
+  const merged = result.positions[0];
+  // Lazy fallback: valueSol = vp.value_sol ?? vp.amount_sol = 0.5
+  if (merged.total_value_usd !== 0.5) throw new Error(`Expected lazy fallback total_value_usd=0.5, got ${merged.total_value_usd}`);
+  // No SOL field → no fallback → 0 (feesSol defaults to 0 when missing)
+  if (merged.unclaimed_fees_usd !== 0) throw new Error(`Expected unclaimed_fees_usd=0 (no fallback), got ${merged.unclaimed_fees_usd}`);
+  // pnl_pct comes from pnl_sol_pct which is null/missing → 0
+  if (merged.pnl_pct !== 0) throw new Error(`Expected pnl_pct=0 (no SOL fallback), got ${merged.pnl_pct}`);
 });
 
 // ════════════════════════════════════════════════════════════

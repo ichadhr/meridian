@@ -1224,44 +1224,10 @@ const LPAGENT_API = "https://api.lpagent.io/open-api/v1";
  * Merge virtual positions into the on-chain positions array.
  * Used by getMyPositions in DRY_RUN mode to give the LLM a single
  * source of truth (and the deploy pre-check the same count).
- * Pure function — exported for testability.
+ * Implementation lives in tools/merge-virtual-positions.js so tests
+ * can import it without pulling in envcrypt/RPC/wallet modules.
  */
-export function mergeVirtualPositions(positions, vps, now = Date.now()) {
-  if (!Array.isArray(vps) || vps.length === 0) {
-    return { positions, total_positions: positions.length };
-  }
-  const merged = [...positions];
-  for (const vp of vps) {
-    const initialValue = vp.initial_value_usd;
-    const currentValue = vp.current_value_usd;
-    const pnlUsd = (currentValue != null && initialValue != null)
-      ? currentValue - initialValue
-      : null;
-    const pnlPct = (currentValue != null && initialValue != null && initialValue > 0)
-      ? ((currentValue / initialValue - 1) * 100)
-      : null;
-    merged.push({
-      position: `vp:${vp.id}`,
-      pool: vp.pool,
-      pair: vp.pair || vp.pool_name || String(vp.pool).slice(0, 8),
-      base_mint: vp.base_mint || null,
-      lower_bin: vp.lower_bin ?? null,
-      upper_bin: vp.upper_bin ?? null,
-      active_bin: vp.active_bin_at_deploy ?? null,
-      in_range: !vp._oor_since,
-      unclaimed_fees_usd: vp.total_fees_earned_usd ?? 0,
-      total_value_usd: currentValue ?? initialValue ?? null,
-      pnl_usd: pnlUsd,
-      pnl_pct: pnlPct,
-      age_minutes: vp.deployed_at
-        ? Math.floor((now - new Date(vp.deployed_at).getTime()) / 60000)
-        : null,
-      instruction: null,
-      source: "virtual",
-    });
-  }
-  return { positions: merged, total_positions: merged.length };
-}
+export { mergeVirtualPositions } from "./merge-virtual-positions.js";
 
 async function fetchLpAgentOpenPositions(walletAddress) {
   if (!process.env.LPAGENT_API_KEY) return {};
@@ -1707,7 +1673,11 @@ export async function getMyPositions({ force = false, silent = false, wallet_add
       try {
         const { listVirtualPositions } = await import("./dry-run-state.js");
         const vps = listVirtualPositions("open");
-        resultPositions = mergeVirtualPositions(positions, vps).positions;
+        const solPrice = config.management.solMode ? await fetchSolPrice() : 0;
+        if (config.management.solMode && !solPrice) {
+          log("positions_warn", "solMode active but fetchSolPrice failed; VP values will display in USD");
+        }
+        resultPositions = mergeVirtualPositions(positions, vps, solPrice).positions;
       } catch (e) {
         log("positions_warn", `VP merge failed: ${e.message}`);
       }

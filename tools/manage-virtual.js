@@ -585,11 +585,20 @@ export async function runVirtualManagementCycle() {
       // ── Accumulated fees (delta since last successful sync) ────────
       const prevUnclaimed = vp._last_unclaimed_fees_usd || 0;
       const newlyAccruedFeesUsd = Math.max(0, pnl.unclaimedFeesUsd - prevUnclaimed);
+      const prevUnclaimedSol = vp._last_unclaimed_fees_sol || 0;
+      const newlyAccruedFeesSol = Math.max(0, pnl.unclaimedFeesSol - prevUnclaimedSol);
 
       const updates = {
         current_value_usd: pnl.currentValueUsd,
         total_fees_earned_usd: (vp.total_fees_earned_usd || 0) + newlyAccruedFeesUsd,
         _last_unclaimed_fees_usd: pnl.unclaimedFeesUsd,
+        // Native SOL fields — kept in sync with computeVirtualPnl output so
+        // the polymorphic _usd display (solMode=true) stays accurate.
+        value_sol: pnl.positionValueSol,
+        total_fees_earned_sol: (vp.total_fees_earned_sol || 0) + newlyAccruedFeesSol,
+        _last_unclaimed_fees_sol: pnl.unclaimedFeesSol,
+        pnl_sol: pnl.netPnlSol,
+        pnl_sol_pct: pnl.pnlSolPct,
         _peak_pnl_pct: Math.max(vp._peak_pnl_pct || 0, pnl.pnlPct),
         _oor_since: oorSince,
         _oor_minutes: effectiveOorMinutes,
