@@ -1,8 +1,8 @@
 /**
- * Test: VP PnL calculation + close rules (standalone — no npm install needed)
+ * Test: VP PnL calculation + close rules + SDK distribution functions
  *
- * Uses BigInt instead of BN to validate the math without dependencies.
- * Mirrors the computePositionPnl logic from compute-position-pnl.js.
+ * Uses BigInt instead of BN for PnL math (no dependencies).
+ * Distribution tests import SDK's calculate{Spot,BidAsk,Normal}Distribution.
  */
 
 const SCALE = 1n << 64n;

@@ -353,8 +353,11 @@ export function estimateSlippageLamports(perBin, binData, activeBinId, opts = {}
       }
       sdkOk = true;
     } catch {
-      // SDK path failed — restore remainingX, fall through to manual
+      // SDK path failed (malformed pool params, BN corruption, or
+      // pool without vParameters) — restore remainingX and fall
+      // through to manual price-based walk.
       remainingX = savedRemainingX;
+      log("vp_slippage", "SDK swapExactInQuoteAtBin failed — using manual price-based slippage");
     }
 
     if (sdkOk) {
