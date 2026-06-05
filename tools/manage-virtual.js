@@ -1,5 +1,5 @@
 import BN from "bn.js";
-import { getBinsInRange, getConnection } from "./dlmm.js";
+import { getBinsInRange, getConnection, invalidatePositionsCache } from "./dlmm.js";
 import {
   listVirtualPositions,
   updateVirtualPosition,
@@ -289,6 +289,7 @@ export async function runVirtualManagementCycle() {
           log("vp", `VP ${vp.id} (${vp.pair}) close ABORTED — archive write failed, retrying next cycle`);
           continue;
         }
+        invalidatePositionsCache(); // drop stale positions cache (next /positions re-fetches)
         recordVpDeployToPoolMemory(vp, finalPnl, closeRule.reason);
         results.push({
           id: vp.id, pair: vp.pair, action: "CLOSED", reason: closeRule.reason,
@@ -328,6 +329,7 @@ export async function runVirtualManagementCycle() {
           log("vp", `VP ${vp.id} (${vp.pair}) close ABORTED — archive write failed, retrying next cycle`);
           continue;
         }
+        invalidatePositionsCache(); // drop stale positions cache (next /positions re-fetches)
         recordVpDeployToPoolMemory(vp, trailingFinalPnl, trailingCloseReason);
         results.push({
           id: vp.id, pair: vp.pair, action: "CLOSED", reason: trailingCloseReason,

@@ -1248,7 +1248,30 @@ export async function deployPosition({
   }
 }
 
-const POSITIONS_CACHE_TTL = 5 * 60_000; // 5 minutes
+const POSITIONS_CACHE_TTL = 5 * 60_000; // 5 minutes (live)
+const DRY_RUN_CACHE_TTL = 10_000; // 10s (DRY_RUN paper trading)
+
+/**
+ * Mode-aware positions cache TTL.
+ * - Live: 5 min — tolerates Meteora rate limits, positions rarely change second-to-second.
+ * - DRY_RUN: 10s — paper trading needs fresh PnL on every management cycle and
+ *   user-driven /positions, but 10s still throttles rapid-fire calls (e.g. /positions
+ *   + management cycle firing same second) to avoid hammering Meteora.
+ */
+function _positionsCacheTtl() {
+  return process.env.DRY_RUN === "true" ? DRY_RUN_CACHE_TTL : POSITIONS_CACHE_TTL;
+}
+// Test export — see test/test-dry-run-cache.js
+export const _positionsCacheTtlForTesting = _positionsCacheTtl;
+
+/**
+ * Invalidate the positions cache. Call this after state changes that
+ * the cache wouldn't otherwise observe (e.g. VP close in DRY_RUN, where
+ * closeVirtualPosition doesn't go through getMyPositions).
+ */
+export function invalidatePositionsCache() {
+  _positionsCacheAt = 0;
+}
 
 let _positionsCache = null;
 let _positionsCacheAt = 0;
@@ -1530,7 +1553,7 @@ export async function getMyPositions({ force = false, silent = false, wallet_add
   }
 
   const useLocalWallet = !walletOverride;
-  if (useLocalWallet && !force && _positionsCache && Date.now() - _positionsCacheAt < POSITIONS_CACHE_TTL) {
+  if (useLocalWallet && !force && _positionsCache && Date.now() - _positionsCacheAt < _positionsCacheTtl()) {
     return _positionsCache;
   }
   if (useLocalWallet && _positionsInflight) return _positionsInflight;

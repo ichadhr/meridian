@@ -8,6 +8,7 @@ import {
   claimFees,
   closePosition,
   searchPools,
+  invalidatePositionsCache,
 } from "./dlmm.js";
 import { closeVirtualPosition, getVirtualPosition, computeSimpleVirtualPnl, parseVirtualPositionAddress } from "./dry-run-state.js";
 import { getWalletBalances, swapToken } from "./wallet.js";
@@ -276,6 +277,7 @@ const toolMap = {
       const { pnlUsd, pnlPct } = computeSimpleVirtualPnl(vp);
       const isSol = !!config.management.solMode;
       const closed = closeVirtualPosition(vpId, "LLM close_position tool", pnlPct, pnlUsd);
+      if (closed) invalidatePositionsCache(); // drop stale positions cache
       return closed
         ? {
             success: true,

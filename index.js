@@ -6,7 +6,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { agentLoop } from "./agent.js";
 import { log } from "./logger.js";
-import { getMyPositions, closePosition, getActiveBin } from "./tools/dlmm.js";
+import { getMyPositions, closePosition, getActiveBin, invalidatePositionsCache } from "./tools/dlmm.js";
 import { getWalletBalances } from "./tools/wallet.js";
 import { getTopCandidates } from "./tools/screening.js";
 import { config, reloadScreeningThresholds, computeDeployAmount } from "./config.js";
@@ -1620,6 +1620,7 @@ async function telegramHandler(msg) {
       // shows the right unit for the current solMode.
       const { pnlUsd, pnlPct } = computeSimpleVirtualPnl(vp);
       const closed = closeVirtualPosition(vpId, "manual close via telegram /close", pnlPct, pnlUsd);
+      if (closed) invalidatePositionsCache(); // drop stale positions cache
       return closed
         ? { success: true, dry_run: true, is_virtual: true, pnl_usd: pos.pnl_usd, pnl_pct: pos.pnl_pct }
         : { success: false, error: "VP close failed (archive write error?)" };
