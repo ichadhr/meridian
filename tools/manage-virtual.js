@@ -741,6 +741,7 @@ export async function runVirtualManagementCycle() {
         id: vp.id,
         pair: vp.pair,
         action: "STAY",
+        age_minutes: vpAgeMinutes,
         pnl_pct: pnl.pnlPct,
         pnl_usd: pnl.pnlUsd,
         pnl_sol: pnl.netPnlSol,
