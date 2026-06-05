@@ -329,33 +329,38 @@ export function estimateSlippageLamports(perBin, binData, activeBinId, opts = {}
     // amountOut is what the swapper receives.
     const { binStep, sParameter, vParameter } = poolParams;
     let totalYReceived = 0n;
+    const savedRemainingX = remainingX;
+    let sdkOk = false;
 
-    for (const bin of binsBelowActive) {
-      if (remainingX <= 0n) break;
-      if (!bin.yAmount || !bin.priceQ64) continue;
-
-      // Convert bin data to SDK Bin shape (requires BN for amounts)
-      const sdkBin = {
-        binId: bin.binId,
-        xAmount: new BN(bin.xAmount ?? "0"),
-        yAmount: new BN(bin.yAmount ?? "0"),
-        supply: new BN(bin.supply ?? "0"),
-        price: bin.price,
-        priceQ64: bin.priceQ64,
-      };
-
-      // inAmount includes fee — SDK splits it into fee + actual swap
-      const inAmount = new BN(remainingX.toString());
-      const { amountIn, amountOut } = swapFn(
-        sdkBin, binStep, sParameter, vParameter, inAmount, false, // swapForY=false (X→Y)
-      );
-
-      totalYReceived += BigInt(amountOut.toString());
-      remainingX -= BigInt(amountIn.toString());
+    try {
+      for (const bin of binsBelowActive) {
+        if (remainingX <= 0n) break;
+        if (!bin.yAmount || !bin.priceQ64) continue;
+        const sdkBin = {
+          binId: bin.binId,
+          xAmount: new BN(bin.xAmount ?? "0"),
+          yAmount: new BN(bin.yAmount ?? "0"),
+          supply: new BN(bin.supply ?? "0"),
+          price: bin.price,
+          priceQ64: bin.priceQ64,
+        };
+        const inAmount = new BN(remainingX.toString());
+        const { amountIn, amountOut } = swapFn(
+          sdkBin, binStep, sParameter, vParameter, inAmount, false,
+        );
+        totalYReceived += BigInt(amountOut.toString());
+        remainingX -= BigInt(amountIn.toString());
+      }
+      sdkOk = true;
+    } catch {
+      // SDK path failed — restore remainingX, fall through to manual
+      remainingX = savedRemainingX;
     }
 
-    if (remainingX > 0n) return null; // couldn't complete
-    return theoreticalY > totalYReceived ? theoreticalY - totalYReceived : 0n;
+    if (sdkOk) {
+      if (remainingX > 0n) return null;
+      return theoreticalY > totalYReceived ? theoreticalY - totalYReceived : 0n;
+    }
   }
 
   // ── Manual path: simple price-based walk (fallback when poolParams absent) ──

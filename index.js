@@ -735,7 +735,7 @@ export async function runScreeningCycle({ silent = false } = {}) {
         });
       }
 
-      return block;
+      return extended;
     });
 
     const weightsSummary = config.darwin?.enabled ? getWeightsSummary() : null;
