@@ -9,6 +9,7 @@ import {
   closePosition,
   searchPools,
 } from "./dlmm.js";
+import { closeVirtualPosition, getVirtualPosition, computeSimpleVirtualPnl, parseVirtualPositionAddress } from "./dry-run-state.js";
 import { getWalletBalances, swapToken } from "./wallet.js";
 import { studyTopLPers } from "./study.js";
 import { addLesson, clearAllLessons, clearPerformance, removeLessonsByKeyword, getPerformanceHistory, pinLesson, unpinLesson, listLessons } from "../lessons.js";
@@ -261,7 +262,33 @@ const toolMap = {
   list_smart_wallets: listSmartWallets,
   check_smart_wallets_on_pool: checkSmartWalletsOnPool,
   claim_fees: claimFees,
-  close_position: closePosition,
+  close_position: async (args) => {
+    // Route VP addresses (prefixed "vp:") to closeVirtualPosition. Without
+    // this, the LLM's close_position on a VP in DRY_RUN mode returns the
+    // generic dry-run response without actually closing the VP.
+    const vpId = parseVirtualPositionAddress(args?.position_address);
+    if (vpId) {
+      const vp = getVirtualPosition(vpId);
+      if (!vp) return { success: false, error: `VP not found: ${vpId}` };
+      const { pnlUsd, pnlPct } = computeSimpleVirtualPnl(vp);
+      const closed = closeVirtualPosition(vpId, "LLM close_position tool", pnlPct, pnlUsd);
+      return closed
+        ? {
+            success: true,
+            dry_run: true,
+            is_virtual: true,
+            position: args.position_address,
+            pair: vp.pair || vp.pool_name || args.position_address,
+            pool: vp.pool,
+            pool_name: vp.pool_name || vp.pair,
+            base_mint: vp.base_mint || null,
+            pnl_usd: pnlUsd,
+            pnl_pct: pnlPct,
+          }
+        : { success: false, error: "VP close failed (archive write error?)" };
+    }
+    return closePosition(args);
+  },
   get_wallet_balance: getWalletBalances,
   swap_token: swapToken,
   get_top_lpers: studyTopLPers,

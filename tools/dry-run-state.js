@@ -158,6 +158,36 @@ const CLOSE_EXTRA_ALLOWED = new Set([
   "close_cost_sol", "close_il_usd", "close_fees_usd", "close_cost_usd",
 ]);
 
+/**
+ * Compute simple position PnL for a virtual position from its stored fields.
+ * Used by manual close paths (e.g. Telegram /close) where a fresh bin fetch
+ * would be overkill. Falls back to nulls when data is missing.
+ * Pure function — exported for testability.
+ */
+export function computeSimpleVirtualPnl(vp) {
+  const initialValue = vp?.initial_value_usd;
+  const currentValue = vp?.current_value_usd ?? initialValue;
+  const pnlUsd = (currentValue != null && initialValue != null)
+    ? currentValue - initialValue
+    : null;
+  const pnlPct = (currentValue != null && initialValue != null && initialValue > 0)
+    ? ((currentValue / initialValue - 1) * 100)
+    : null;
+  return { pnlUsd, pnlPct };
+}
+
+/**
+ * Detect a virtual position address (prefixed with "vp:") and extract
+ * the underlying VP id. Returns null if the address is not a VP.
+ * Pure function — exported for testability.
+ */
+export function parseVirtualPositionAddress(positionAddress) {
+  if (typeof positionAddress !== "string" || !positionAddress.startsWith("vp:")) {
+    return null;
+  }
+  return positionAddress.slice(3);
+}
+
 export function closeVirtualPosition(id, reason, pnlPct, pnlUsd, extraFields = {}) {
   const state = load();
   const idx = state.virtual_positions.findIndex((p) => p.id === id);

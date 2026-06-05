@@ -37,7 +37,7 @@ import { getWeightsSummary } from "./signal-weights.js";
 import { bootstrapHiveMind, ensureAgentId, getHiveMindPullMode, isHiveMindEnabled, pullHiveMindLessons, pullHiveMindPresets, registerHiveMindAgent, startHiveMindBackgroundSync } from "./hivemind.js";
 import { appendDecision } from "./decision-log.js";
 import { runVirtualManagementCycle } from "./tools/manage-virtual.js";
-import { listVirtualPositions } from "./tools/dry-run-state.js";
+import { listVirtualPositions, closeVirtualPosition, getVirtualPosition, computeSimpleVirtualPnl, parseVirtualPositionAddress } from "./tools/dry-run-state.js";
 import { generateDryRunReport } from "./tools/generate-dry-run-report.js";
 import { readArchive, compileVpStats } from "./tools/position-archive.js";
 
@@ -1605,6 +1605,24 @@ async function telegramHandler(msg) {
     return;
   }
 
+  // Helper: close a position from the result of getMyPositions.
+  // Routes to closeVirtualPosition for VPs (source: "virtual") and
+  // closePosition for live on-chain positions. Returns a unified
+  // result shape so the success/failure branches work for both.
+  async function closeTelegramPosition(pos) {
+    const vpId = parseVirtualPositionAddress(pos.position);
+    if (vpId) {
+      const vp = getVirtualPosition(vpId);
+      if (!vp) return { success: false, error: `VP not found: ${vpId}` };
+      const { pnlUsd, pnlPct } = computeSimpleVirtualPnl(vp);
+      const closed = closeVirtualPosition(vpId, "manual close via telegram /close", pnlPct, pnlUsd);
+      return closed
+        ? { success: true, dry_run: true, is_virtual: true, pnl_usd: pnlUsd, pnl_pct: pnlPct }
+        : { success: false, error: "VP close failed (archive write error?)" };
+    }
+    return await closePosition({ position_address: pos.position });
+  }
+
   const closeMatch = text.match(/^\/close\s+(\d+)$/i);
   if (closeMatch) {
     try {
@@ -1613,11 +1631,15 @@ async function telegramHandler(msg) {
       if (idx < 0 || idx >= positions.length) { await sendMessage("Invalid number. Use /positions first."); return; }
       const pos = positions[idx];
       await sendMessage(`Closing ${pos.pair}...`);
-      const result = await closePosition({ position_address: pos.position });
+      const result = await closeTelegramPosition(pos);
       if (result.success) {
-        const closeTxs = result.close_txs?.length ? result.close_txs : result.txs;
-        const claimNote = result.claim_txs?.length ? `\nClaim txs: ${result.claim_txs.join(", ")}` : "";
-        await sendMessage(`✅ Closed ${pos.pair}\nPnL: ${config.management.solMode ? "◎" : "$"}${result.pnl_usd ?? "?"} | close txs: ${closeTxs?.join(", ") || "n/a"}${claimNote}`);
+        if (result.is_virtual) {
+          await sendMessage(`✅ Closed VP ${pos.pair}\nPnL: ${result.pnl_pct?.toFixed(2) ?? "?"}% | ${config.management.solMode ? "◎" : "$"}${result.pnl_usd?.toFixed(4) ?? "?"}`);
+        } else {
+          const closeTxs = result.close_txs?.length ? result.close_txs : result.txs;
+          const claimNote = result.claim_txs?.length ? `\nClaim txs: ${result.claim_txs.join(", ")}` : "";
+          await sendMessage(`✅ Closed ${pos.pair}\nPnL: ${config.management.solMode ? "◎" : "$"}${result.pnl_usd ?? "?"} | close txs: ${closeTxs?.join(", ") || "n/a"}${claimNote}`);
+        }
         // Screening trigger — slot freed, don't let SOL sit idle
         tryStartScreening("telegram-close", true);
       } else {
@@ -1635,8 +1657,14 @@ async function telegramHandler(msg) {
       const results = [];
       for (const pos of positions) {
         try {
-          const result = await closePosition({ position_address: pos.position });
-          results.push(`${pos.pair}: ${result.success ? "closed" : `failed (${result.error || "unknown"})`}`);
+          const result = await closeTelegramPosition(pos);
+          if (result.success) {
+            const tag = result.is_virtual ? " (VP)" : "";
+            const pnl = result.pnl_pct != null ? ` PnL ${result.pnl_pct.toFixed(2)}%` : "";
+            results.push(`${pos.pair}${tag}: closed${pnl}`);
+          } else {
+            results.push(`${pos.pair}: failed (${result.error || "unknown"})`);
+          }
         } catch (error) {
           results.push(`${pos.pair}: failed (${error.message})`);
         }

@@ -234,5 +234,109 @@ test("B3: this is the EXACT bug scenario — LLM sees 3, deploy count = 3, no mi
 });
 
 // ════════════════════════════════════════════════════════════
+//  SECTION C: Telegram /close routing (P2 fix)
+// ════════════════════════════════════════════════════════════
+//
+// Mirrors helpers from tools/dry-run-state.js:
+//   parseVirtualPositionAddress(positionAddress)
+//   computeSimpleVirtualPnl(vp)
+
+function parseVirtualPositionAddress(positionAddress) {
+  if (typeof positionAddress !== "string" || !positionAddress.startsWith("vp:")) {
+    return null;
+  }
+  return positionAddress.slice(3);
+}
+
+function computeSimpleVirtualPnl(vp) {
+  const initialValue = vp?.initial_value_usd;
+  const currentValue = vp?.current_value_usd ?? initialValue;
+  const pnlUsd = (currentValue != null && initialValue != null)
+    ? currentValue - initialValue
+    : null;
+  const pnlPct = (currentValue != null && initialValue != null && initialValue > 0)
+    ? ((currentValue / initialValue - 1) * 100)
+    : null;
+  return { pnlUsd, pnlPct };
+}
+
+test("C1: parseVirtualPositionAddress detects vp: prefix and extracts id", () => {
+  if (parseVirtualPositionAddress("vp:vp_001") !== "vp_001") {
+    throw new Error("Should extract vp_001 from 'vp:vp_001'");
+  }
+  if (parseVirtualPositionAddress("vp:vp_123") !== "vp_123") {
+    throw new Error("Should extract vp_123 from 'vp:vp_123'");
+  }
+});
+
+test("C2: parseVirtualPositionAddress returns null for non-VP addresses", () => {
+  if (parseVirtualPositionAddress("PubkeyAbc123Xyz") !== null) {
+    throw new Error("Live pubkey should not parse as VP");
+  }
+  if (parseVirtualPositionAddress("") !== null) {
+    throw new Error("Empty string should not parse as VP");
+  }
+  if (parseVirtualPositionAddress(null) !== null) {
+    throw new Error("null should not parse as VP");
+  }
+  if (parseVirtualPositionAddress(undefined) !== null) {
+    throw new Error("undefined should not parse as VP");
+  }
+  if (parseVirtualPositionAddress(123) !== null) {
+    throw new Error("Number should not parse as VP");
+  }
+});
+
+test("C3: computeSimpleVirtualPnl — profitable VP returns positive PnL", () => {
+  const vp = { initial_value_usd: 100, current_value_usd: 115 };
+  const { pnlUsd, pnlPct } = computeSimpleVirtualPnl(vp);
+  if (Math.abs(pnlUsd - 15) > 0.0001) throw new Error(`pnlUsd: expected 15, got ${pnlUsd}`);
+  if (Math.abs(pnlPct - 15) > 0.0001) throw new Error(`pnlPct: expected 15, got ${pnlPct}`);
+});
+
+test("C4: computeSimpleVirtualPnl — losing VP returns negative PnL", () => {
+  const vp = { initial_value_usd: 100, current_value_usd: 92.50 };
+  const { pnlUsd, pnlPct } = computeSimpleVirtualPnl(vp);
+  if (Math.abs(pnlUsd - (-7.5)) > 0.0001) throw new Error(`pnlUsd: expected -7.5, got ${pnlUsd}`);
+  if (Math.abs(pnlPct - (-7.5)) > 0.0001) throw new Error(`pnlPct: expected -7.5, got ${pnlPct}`);
+});
+
+test("C5: computeSimpleVirtualPnl — null vp returns null pnl", () => {
+  const { pnlUsd, pnlPct } = computeSimpleVirtualPnl(null);
+  if (pnlUsd !== null) throw new Error(`pnlUsd: expected null, got ${pnlUsd}`);
+  if (pnlPct !== null) throw new Error(`pnlPct: expected null, got ${pnlPct}`);
+});
+
+test("C6: computeSimpleVirtualPnl — vp with only initial value, no current", () => {
+  // Edge case: just deployed, no snapshot yet
+  const vp = { initial_value_usd: 50 };
+  const { pnlUsd, pnlPct } = computeSimpleVirtualPnl(vp);
+  if (pnlUsd !== 0) throw new Error(`pnlUsd: expected 0, got ${pnlUsd}`);
+  if (pnlPct !== 0) throw new Error(`pnlPct: expected 0, got ${pnlPct}`);
+});
+
+test("C8: computeSimpleVirtualPnl — division-by-zero guard (initial=0)", () => {
+  // Edge case: shouldn't happen, but if initial_value_usd is 0 the
+  // pnlPct calculation would divide by zero. Guard must return null, not NaN/Infinity.
+  const vp = { initial_value_usd: 0, current_value_usd: 100 };
+  const { pnlUsd, pnlPct } = computeSimpleVirtualPnl(vp);
+  if (pnlUsd !== 100) throw new Error(`pnlUsd: expected 100, got ${pnlUsd}`);
+  if (pnlPct !== null) throw new Error(`pnlPct: expected null (div-by-zero guard), got ${pnlPct}`);
+});
+
+test("C7: routing — VP position routes to VP close, live routes to live close", () => {
+  // Simulate the routing decision in closeTelegramPosition.
+  // The helper detects "vp:" prefix and dispatches accordingly.
+  const vpPos = { position: "vp:vp_001", pair: "FOO-SOL" };
+  const livePos = { position: "PubkeyAbc123Xyz", pair: "BAR-SOL" };
+
+  const vpId = parseVirtualPositionAddress(vpPos.position);
+  const liveId = parseVirtualPositionAddress(livePos.position);
+
+  if (vpId !== "vp_001") throw new Error("VP should route to VP path");
+  if (liveId !== null) throw new Error("Live should route to live path");
+});
+
+// ════════════════════════════════════════════════════════════
 console.log(`\n${passed + failed} tests: ${passed} passed, ${failed} failed`);
 if (failed > 0) process.exitCode = 1;
