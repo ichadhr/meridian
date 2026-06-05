@@ -772,6 +772,22 @@ async function runSafetyChecks(name, args) {
         };
       }
 
+      // Check SOL balance BEFORE position count. If the wallet is empty,
+      // "insufficient_funds" is the more specific blocker and the LLM should
+      // see it first — not a misleading "max positions" error.
+      // Skipped in DRY_RUN since balance is irrelevant for simulated deploys.
+      if (process.env.DRY_RUN !== "true") {
+        const balance = await getWalletBalances();
+        const gasReserve = config.management.gasReserve;
+        const minRequired = amountY + gasReserve;
+        if (balance.sol < minRequired) {
+          return {
+            pass: false,
+            reason: `Insufficient SOL: have ${balance.sol} SOL, need ${minRequired} SOL (${amountY} deploy + ${gasReserve} gas reserve).`,
+          };
+        }
+      }
+
       // Check position count limit + duplicate pool guard — force fresh scan to avoid stale cache
       // In DRY_RUN mode, getMyPositions already includes virtual positions, so
       // totalPositions / occupiedPools / occupiedMints are the single source of truth.
@@ -822,19 +838,6 @@ async function runSafetyChecks(name, args) {
           pass: false,
           reason: `SOL amount ${amountY} exceeds maximum allowed per position (${config.risk.maxDeployAmount}).`,
         };
-      }
-
-      // Check SOL balance
-      if (process.env.DRY_RUN !== "true") {
-        const balance = await getWalletBalances();
-        const gasReserve = config.management.gasReserve;
-        const minRequired = amountY + gasReserve;
-        if (balance.sol < minRequired) {
-          return {
-            pass: false,
-            reason: `Insufficient SOL: have ${balance.sol} SOL, need ${minRequired} SOL (${amountY} deploy + ${gasReserve} gas reserve).`,
-          };
-        }
       }
 
       return { pass: true };

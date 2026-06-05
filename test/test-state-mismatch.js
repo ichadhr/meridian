@@ -13,6 +13,12 @@
  * Pure functions, no npm install needed.
  */
 
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
 let passed = 0;
 let failed = 0;
 function test(name, fn) {
@@ -322,6 +328,71 @@ test("C8: computeSimpleVirtualPnl — division-by-zero guard (initial=0)", () =>
   const { pnlUsd, pnlPct } = computeSimpleVirtualPnl(vp);
   if (pnlUsd !== 100) throw new Error(`pnlUsd: expected 100, got ${pnlUsd}`);
   if (pnlPct !== null) throw new Error(`pnlPct: expected null (div-by-zero guard), got ${pnlPct}`);
+});
+
+// ════════════════════════════════════════════════════════════
+//  SECTION D: Source-order check (meridian-5ry fix)
+// ════════════════════════════════════════════════════════════
+//
+// runSafetyChecks in executor.js has hard-to-test side effects, so we
+// verify the fix via source-level order check. The "Insufficient SOL"
+// check must appear in the deploy_position case BEFORE the
+// "Max positions" check, so the LLM sees the real blocker first.
+
+const executorSrc = fs.readFileSync(
+  path.join(__dirname, "..", "tools", "executor.js"),
+  "utf8"
+);
+
+// Extract just the deploy_position case body for focused comparison
+function extractDeployCase(src) {
+  const start = src.indexOf('case "deploy_position"');
+  if (start === -1) throw new Error("deploy_position case not found");
+  // Find the closing brace at the same indent level
+  const lines = src.slice(start).split("\n");
+  let depth = 0;
+  let end = lines.length;
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i].includes("{")) depth++;
+    if (lines[i].includes("}")) {
+      depth--;
+      if (depth === 0) { end = i; break; }
+    }
+  }
+  return lines.slice(0, end + 1).join("\n");
+}
+
+test("D1: balance check appears BEFORE position count check in deploy pre-check", () => {
+  const deployCase = extractDeployCase(executorSrc);
+  const balanceIdx = deployCase.indexOf("Insufficient SOL");
+  const maxPosIdx = deployCase.indexOf("Max positions");
+  if (balanceIdx === -1) throw new Error("'Insufficient SOL' check not found in deploy_position case");
+  if (maxPosIdx === -1) throw new Error("'Max positions' check not found in deploy_position case");
+  if (balanceIdx >= maxPosIdx) {
+    throw new Error(
+      `Balance check at offset ${balanceIdx} should come BEFORE position count check at offset ${maxPosIdx}`
+    );
+  }
+});
+
+test("D2: balance check is gated on DRY_RUN (skipped in simulation)", () => {
+  const deployCase = extractDeployCase(executorSrc);
+  // Find the position of "Insufficient SOL" and check the surrounding
+  // ~20 lines above for a DRY_RUN guard
+  const idx = deployCase.indexOf("Insufficient SOL");
+  if (idx === -1) throw new Error("'Insufficient SOL' check not found");
+  // Look back ~300 chars for the nearest DRY_RUN reference
+  const before = deployCase.slice(Math.max(0, idx - 300), idx);
+  if (!before.includes("DRY_RUN")) {
+    throw new Error("Insufficient SOL check should be gated on DRY_RUN (not found within 300 chars before)");
+  }
+});
+
+test("D3: position count check still present (regression guard)", () => {
+  const deployCase = extractDeployCase(executorSrc);
+  if (!deployCase.includes("Max positions")) {
+    throw new Error("'Max positions' check should still exist in deploy_position case");
+  }
 });
 
 test("C7: routing — VP position routes to VP close, live routes to live close", () => {
