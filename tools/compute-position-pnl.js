@@ -338,9 +338,9 @@ export function estimateSlippageLamports(perBin, binData, activeBinId, opts = {}
         if (!bin.yAmount || !bin.priceQ64) continue;
         const sdkBin = {
           binId: bin.binId,
-          xAmount: new BN(bin.xAmount ?? "0"),
-          yAmount: new BN(bin.yAmount ?? "0"),
-          supply: new BN(bin.supply ?? "0"),
+          // SDK's swapExactInQuoteAtBin uses amountX/amountY, not xAmount/yAmount
+          amountX: new BN(bin.xAmount ?? "0"),
+          amountY: new BN(bin.yAmount ?? "0"),
           price: bin.price,
           priceQ64: bin.priceQ64,
         };
