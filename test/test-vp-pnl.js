@@ -471,6 +471,290 @@ test("Trend exit (Rule 6): does NOT trigger when trend is broken", () => {
 });
 
 // ════════════════════════════════════════════════════════════
+//  SECTION 7: Slippage Algorithm (estimateSlippageLamports)
+// ════════════════════════════════════════════════════════════
+
+// Mirror of tools/manage-virtual.js:242 estimateSlippageLamports.
+// Inlined to keep the test self-contained (matches the rest of this file's
+// standalone BigInt style — no Jest/Mocha, no module imports).
+function estimateSlippageLamports(perBin, binData, activeBinId, opts = {}) {
+  const PRICE_SCALE = 1n << 64n;
+
+  // Guard: missing active bin → null (caller applies fallback premium)
+  if (activeBinId == null) return null;
+
+  // Pre-check: binData must extend ≥10 bins below the position's lowerBin
+  const lowerBin = opts.lowerBin;
+  if (lowerBin != null && binData.length > 0) {
+    const minBinInData = binData.reduce((m, b) => (b.binId < m ? b.binId : m), binData[0].binId);
+    if (minBinInData > lowerBin - 10) return null;
+  }
+
+  // Sum X from bins > active (bins ≤ active hold Y, no swap needed)
+  let remainingX = 0n;
+  for (const pb of perBin) {
+    if (pb.binId > activeBinId) remainingX += BigInt(pb.ourX ?? "0");
+  }
+  if (remainingX === 0n) return 0n;  // legitimate 0, NOT null
+
+  // Find active bin's price (theoretical "no slippage" price)
+  const activeBin = binData.find((b) => b.binId === activeBinId);
+  if (!activeBin) return null;
+  const activePriceBN = BigInt(activeBin.priceQ64 ?? "0");
+  if (activePriceBN === 0n) return null;
+
+  // Theoretical Y = X × activePrice
+  const theoreticalY = (remainingX * activePriceBN) / PRICE_SCALE;
+
+  // Walk bins ≤ active in price-DESCENDING order
+  const binsBelowActive = binData
+    .filter((b) => b.binId <= activeBinId)
+    .sort((a, b) => {
+      const aP = BigInt(a.priceQ64 ?? "0"), bP = BigInt(b.priceQ64 ?? "0");
+      return bP > aP ? 1 : bP < aP ? -1 : 0;
+    });
+
+  let totalYReceived = 0n;
+  for (const bin of binsBelowActive) {
+    if (remainingX <= 0n) break;
+    const yAvailable = BigInt(bin.yAmount ?? "0");
+    const priceBN = BigInt(bin.priceQ64 ?? "0");
+    if (yAvailable === 0n || priceBN === 0n) continue;
+
+    const maxXCanSwap = (yAvailable * PRICE_SCALE) / priceBN;
+    const xToSwap = remainingX < maxXCanSwap ? remainingX : maxXCanSwap;
+    const yReceived = (xToSwap * priceBN) / PRICE_SCALE;
+    totalYReceived += yReceived;
+    remainingX -= xToSwap;
+  }
+
+  // Post-check: did we finish the swap within our data?
+  if (remainingX > 0n) return null;
+
+  return theoreticalY > totalYReceived ? theoreticalY - totalYReceived : 0n;
+}
+
+// ── Test helpers ──
+// SCALE is already defined at line 8 (1n << 64n)
+const ONE_SOL = 1_000_000_000n;
+
+/**
+ * Build a bin data array with specified Y liquidity per bin.
+ * prices[i] = priceQ64 for binId = (lowerBinId + i). All xAmount = 0 unless specified.
+ */
+function buildBins(lowerBinId, upperBinId, yAmounts, prices = []) {
+  const bins = [];
+  for (let i = lowerBinId; i <= upperBinId; i++) {
+    bins.push({
+      binId: i,
+      xAmount: "0",
+      yAmount: yAmounts[i - lowerBinId] ?? "0",
+      priceQ64: prices[i - lowerBinId] ?? SCALE.toString(),
+    });
+  }
+  return bins;
+}
+
+test("Slippage 1: Y-only position, active bin has Y, no X → 0n (no slippage)", () => {
+  // Position has Y in active bin only — no X to swap, no slippage
+  // binData must extend ≥10 bins below position.lowerBin (95) → start at 85
+  const activeBinId = 100;
+  const binData = buildBins(85, 105, [
+    "0", "0", "0", "0", "0", "0", "0", "0", "0", "0",  // bins 85-94: empty (buffer)
+    "0", "0", "0", "0", "0",                            // bins 95-99: empty
+    "5000000000",                                       // bin 100 (active): 5 SOL Y
+    "0", "0", "0", "0", "0",                            // bins 101-105: empty
+  ]);
+  const perBin = [
+    { binId: activeBinId, ourX: "0", ourY: "5000000000" },
+  ];
+  const result = estimateSlippageLamports(perBin, binData, activeBinId, { lowerBin: 95 });
+  console.log(`  result: ${result} (expected 0n)`);
+  if (result !== 0n) throw new Error(`Expected 0n, got ${result}`);
+});
+
+test("Slippage 2: small X in deep pool → small shortfall (<5% loss)", () => {
+  // X in bin above active, deep Y in lower bins at slightly lower price
+  // → small slippage (~1% loss)
+  const activeBinId = 100;
+  const lowerPrice = (SCALE * 99n / 100n).toString();  // 0.99 * SCALE
+  const binData = buildBins(85, 105, [
+    "0", "0", "0", "0", "0", "0", "0", "0", "0", "0",  // 85-94: empty (buffer)
+    "1000000000000", "1000000000000", "1000000000000", "1000000000000", "1000000000000", // 95-99
+    "0",                                                                                 // 100 (active, no Y — must walk lower)
+    "0", "0", "0", "0", "0",
+  ], [
+    SCALE.toString(), SCALE.toString(), SCALE.toString(), SCALE.toString(), SCALE.toString(), // 85-89
+    SCALE.toString(), SCALE.toString(), SCALE.toString(), SCALE.toString(), SCALE.toString(), // 90-94
+    lowerPrice, lowerPrice, lowerPrice, lowerPrice, lowerPrice,  // 95-99
+    SCALE.toString(),                                            // 100 (active, price = 1.0)
+    SCALE.toString(), SCALE.toString(), SCALE.toString(), SCALE.toString(), SCALE.toString(), // 101-105
+  ]);
+  const perBin = [{ binId: 101, ourX: ONE_SOL.toString(), ourY: "0" }];
+  const result = estimateSlippageLamports(perBin, binData, activeBinId, { lowerBin: 95 });
+  // theoreticalY = 1 SOL (active price = 1.0)
+  // Walks bin 100 (no Y), then 95-99 at price 0.99
+  //   - yReceived = X * 0.99 = 0.99 SOL
+  // Shortfall = 0.01 SOL = 1e7 lamports
+  const theoreticalY = ONE_SOL;  // 1e9
+  const shortfallPct = Number(result) / Number(theoreticalY) * 100;
+  console.log(`  result: ${result} lamports, ~${shortfallPct.toFixed(2)}% loss (expected < 5%)`);
+  if (result === null) throw new Error("Expected non-null result");
+  if (result >= theoreticalY / 20n) throw new Error(`Shortfall >= 5% of theoretical: ${result} vs ${theoreticalY / 20n}`);
+});
+
+test("Slippage 3: X larger than bin depth → null (post-check fails)", () => {
+  // X is huge, Y in active bin is tiny, lower bins have some Y but not enough
+  // → post-check fails (remainingX > 0 after walk) → null
+  const activeBinId = 100;
+  const binData = buildBins(85, 105, [
+    "1000000000", "1000000000", "1000000000", "1000000000", "1000000000", // 85-89
+    "1000000000", "1000000000", "1000000000", "1000000000", "1000000000", // 90-94
+    "1000000000", "1000000000", "1000000000", "1000000000", "1000000000", // 95-99
+    "100",                                                                    // 100 (active, tiny Y)
+    "0", "0", "0", "0", "0",
+  ]);
+  const perBin = [{ binId: 101, ourX: (ONE_SOL * 1000n).toString(), ourY: "0" }];  // 1000 SOL
+  const result = estimateSlippageLamports(perBin, binData, activeBinId, { lowerBin: 95 });
+  console.log(`  result: ${result} (expected null)`);
+  if (result !== null) throw new Error(`Expected null, got ${result}`);
+});
+
+test("Slippage 4: position straddles active bin — only ourX from bins > active counts", () => {
+  // X in bin 99 (below active, should be IGNORED) and bin 101 (above active, should be counted)
+  const activeBinId = 100;
+  const binData = buildBins(85, 105, [
+    "1000000000", "1000000000", "1000000000", "1000000000", "1000000000", // 85-89
+    "1000000000", "1000000000", "1000000000", "1000000000", "1000000000", // 90-94
+    "1000000000", "1000000000", "1000000000", "1000000000", "1000000000", // 95-99
+    "0",                                                                                  // 100
+    "0", "0", "0", "0", "0",
+  ]);
+  // Both X entries
+  const perBinBoth = [
+    { binId: 99, ourX: ONE_SOL.toString(), ourY: "0" },   // X below active — IGNORED
+    { binId: 101, ourX: (ONE_SOL * 5n).toString(), ourY: "0" },  // X above active — counted
+  ];
+  // Only X above active
+  const perBinOnly = [
+    { binId: 101, ourX: (ONE_SOL * 5n).toString(), ourY: "0" },
+  ];
+  const resultBoth = estimateSlippageLamports(perBinBoth, binData, activeBinId, { lowerBin: 95 });
+  const resultOnly = estimateSlippageLamports(perBinOnly, binData, activeBinId, { lowerBin: 95 });
+  console.log(`  result (both): ${resultBoth}, result (only-above): ${resultOnly}`);
+  if (resultBoth !== resultOnly) throw new Error(`Straddling bin ignored: ${resultBoth} vs ${resultOnly}`);
+});
+
+test("Slippage 5: all Y, all ≤ active, no X → 0n (legitimate 0, NOT null)", () => {
+  // Y-only position where ALL Y is in bins ≤ active (no X to swap)
+  const activeBinId = 100;
+  const binData = buildBins(85, 105, [
+    "1000000000", "1000000000", "1000000000", "1000000000", "1000000000", // 85-89
+    "1000000000", "1000000000", "1000000000", "1000000000", "1000000000", // 90-94
+    "1000000000", "1000000000", "1000000000", "1000000000", "1000000000", // 95-99
+    "1000000000",                                                          // 100
+    "0", "0", "0", "0", "0",
+  ]);
+  const perBin = [
+    { binId: 95, ourX: "0", ourY: "1000000000" },
+    { binId: 100, ourX: "0", ourY: "1000000000" },
+  ];
+  const result = estimateSlippageLamports(perBin, binData, activeBinId, { lowerBin: 95 });
+  console.log(`  result: ${result} (expected 0n, not null)`);
+  if (result !== 0n) throw new Error(`Expected 0n, got ${result}`);
+  if (result === null) throw new Error("Must not be null — legitimate 0n case");
+});
+
+test("Slippage 6: missing active bin (price moved below our range) → null", () => {
+  // binData doesn't include the active bin (price moved below our range)
+  // Pre-check PASSES (binData covers 85+, has 10 bins below 95)
+  const activeBinId = 100;
+  const binData = buildBins(85, 105, [
+    "1000000000", "1000000000", "1000000000", "1000000000", "1000000000", // 85-89
+    "1000000000", "1000000000", "1000000000", "1000000000", "1000000000", // 90-94
+    "1000000000", "1000000000", "1000000000", "1000000000", "1000000000", // 95-99
+    /* bin 100 MISSING */
+    "0", "0", "0", "0", "0",
+  ].slice(0, 20)); // simulate missing bin 100
+  // Actually simpler: build bins 85-99 and 101-105 with bin 100 missing
+  const binDataNoActive = [
+    ...buildBins(85, 99, [
+      "1000000000", "1000000000", "1000000000", "1000000000", "1000000000",
+      "1000000000", "1000000000", "1000000000", "1000000000", "1000000000",
+      "1000000000", "1000000000", "1000000000", "1000000000", "1000000000",
+    ]),
+    ...buildBins(101, 105, ["0", "0", "0", "0", "0"]),
+  ];
+  const perBin = [{ binId: 102, ourX: ONE_SOL.toString(), ourY: "0" }];
+  const result = estimateSlippageLamports(perBin, binDataNoActive, activeBinId, { lowerBin: 95 });
+  console.log(`  result: ${result} (expected null — missing active bin)`);
+  if (result !== null) throw new Error(`Expected null, got ${result}`);
+});
+
+test("Slippage 7: pre-check fails (binData has no buffer below position) → null", () => {
+  // lowerBin = 95, binData starts at 95 (no buffer)
+  // pre-check: minBinInData (95) > lowerBin - 10 (85) → TRUE → fail
+  const activeBinId = 100;
+  const binData = buildBins(95, 105, [
+    "1000000000000", "1000000000000", "1000000000000", "1000000000000", "1000000000000",
+    "1000000000000",
+    "0", "0", "0", "0", "0",
+  ]);
+  const perBin = [{ binId: 101, ourX: ONE_SOL.toString(), ourY: "0" }];
+  const result = estimateSlippageLamports(perBin, binData, activeBinId, { lowerBin: 95 });
+  console.log(`  result: ${result} (expected null — pre-check)`);
+  if (result !== null) throw new Error(`Expected null, got ${result}`);
+});
+
+test("Slippage 8: activeBinId is null → null (fallback, NOT 0n)", () => {
+  // Bug: pre-fix, `pb.binId > null` is always false in JS, so remainingX
+  // stays 0n and the function returns 0n — caller treats as legitimate zero
+  // slippage and the unreliable-data fallback never fires.
+  const binData = buildBins(85, 105, ["0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0"]);
+  const perBin = [{ binId: 101, ourX: ONE_SOL.toString(), ourY: "0" }];
+  const result = estimateSlippageLamports(perBin, binData, null, { lowerBin: 95 });
+  console.log(`  result: ${result} (expected null — activeBinId null guard)`);
+  if (result !== null) throw new Error(`Expected null, got ${result}`);
+});
+
+test("Slippage 9: walk loop bins with priceQ64 = 0 (RPC partial) → no crash", () => {
+  // SDK can return a bin with priceQ64: null/0 on partial RPC responses.
+  // Pre-fix, `BigInt(undefined)` throws. Fix: `BigInt(x?.priceQ64 ?? "0")`
+  // and `continue` on 0n.
+  const activeBinId = 100;
+  const binData = buildBins(85, 105, [
+    "0", "0", "0", "0", "0", "0", "0", "0", "0", "0",  // bins 85-94: empty (buffer)
+    "0", "0", "0", "0", "0",                            // bins 95-99: empty
+    "0",                                                // bin 100 (active): priceQ64=0 → guard fires
+    "0", "0", "0", "0", "0",                            // bins 101-105: empty
+  ]);
+  const perBin = [{ binId: 101, ourX: ONE_SOL.toString(), ourY: "0" }];
+  // Active bin price is 0 → must return null (pathological), not throw
+  const result = estimateSlippageLamports(perBin, binData, activeBinId, { lowerBin: 95 });
+  console.log(`  result: ${result} (expected null — active price 0)`);
+  if (result !== null) throw new Error(`Expected null, got ${result}`);
+});
+
+test("Slippage 10: walk loop skips bin with priceQ64=0 (active is valid)", () => {
+  // Active bin has valid price, but one walk bin has priceQ64=0. The walk
+  // must `continue` past it without crashing. Other walk bins complete
+  // the swap → returns bigint.
+  const activeBinId = 100;
+  // Build bins manually so we can inject priceQ64=0 in a walk bin
+  const binData = [
+    { binId: 90, xAmount: "0", yAmount: "0", priceQ64: "0" },   // walk bin: 0 price, 0 Y → skip
+    { binId: 91, xAmount: "0", yAmount: "10000000000", priceQ64: SCALE.toString() }, // walk bin
+    { binId: 100, xAmount: "0", yAmount: "0", priceQ64: SCALE.toString() }, // active: valid
+  ];
+  // Position has 0.5 SOL worth of X above active
+  const perBin = [{ binId: 101, ourX: (ONE_SOL / 2n).toString(), ourY: "0" }];
+  const result = estimateSlippageLamports(perBin, binData, activeBinId, { lowerBin: 100 });
+  console.log(`  result: ${result} (expected bigint ≥ 0 — walk completed past price=0 bin)`);
+  if (result === null) throw new Error("Expected bigint, got null");
+  if (typeof result !== "bigint") throw new Error(`Expected bigint, got ${typeof result}`);
+});
+
+// ════════════════════════════════════════════════════════════
 console.log(`\n${passed + failed} tests: ${passed} passed, ${failed} failed`);
 if (failed > 0) process.exitCode = 1;
 

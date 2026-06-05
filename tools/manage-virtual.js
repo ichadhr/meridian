@@ -43,7 +43,10 @@ function mulShr(a, b, shift) {
 export function computeVirtualPnl(vp, binData, solPrice, opts = {}) {
   // Optional override for close gas (in SOL). Pass in to re-estimate close
   // gas at the current priority fee. If omitted, uses vp.close_gas_sol.
-  const { closeGasSolOverride = null } = opts;
+  // activeBinId is required for the new real-depth slippage algorithm
+  // (see estimateSlippageLamports below). Pass it from getBinsInRange's
+  // `{activeBin, bins}` result.
+  const { closeGasSolOverride = null, activeBinId = null } = opts;
   const shareMap = new Map();
   for (const s of vp.bin_shares || []) {
     shareMap.set(s.binId, s);
@@ -124,8 +127,11 @@ export function computeVirtualPnl(vp, binData, solPrice, opts = {}) {
   //   - Close gas: re-estimated at close time using current priority fee,
   //     passed in via closeGasSolOverride. Falls back to vp.close_gas_sol
   //     (initial deploy-time estimate) when not provided.
-  //   - Slippage: dynamic based on bin_step (half a bin width per entry/exit)
-  //     bin_step 80 → 0.40%, bin_step 100 → 0.50%, bin_step 125 → 0.625%
+  //   - Slippage: real on-chain X→Y swap simulation (estimateSlippageLamports).
+  //     Walks bins below the active price, summing Y reserves, and compares
+  //     actual output to the theoretical no-slippage output. Falls back to
+  //     config.management.vpSlippagePctUnreliable (default 2.0%) when the
+  //     estimator returns null (data insufficient).
   // Migration: VPs deployed under the previous version have only
   // vp.gas_cost_sol (a single total). Split it by CU ratio to approximate
   // the real deploy vs. close cost (1.38M deploy CU + 300k close CU = 1.68M).
@@ -151,9 +157,27 @@ export function computeVirtualPnl(vp, binData, solPrice, opts = {}) {
     closeGasSol = closeGasSolOverride != null ? closeGasSolOverride : configFallback * (1 - DEPLOY_RATIO);
   }
   const gasCostSol = deployGasSol + closeGasSol;
-  const slippagePct = vp.bin_step
-    ? (vp.bin_step / 10000 / 2) * 100   // half a bin width as %
-    : (config.management.vpSlippagePct ?? 0.3);
+  // Real slippage from on-chain X→Y swap simulation. Returns bigint|null.
+  //   - bigint: Y-lamports shortfall (0n is legitimate: no slippage)
+  //   - null:   data insufficient (pre-check or post-check failed)
+  // The caller applies a 1-tier unreliable-data fallback premium.
+  const unreliablePct = config.management.vpSlippagePctUnreliable ?? 2.0;
+  let slippagePct;
+  const slippageLamports = estimateSlippageLamports(perBin, binData, activeBinId, { lowerBin: vp.lower_bin });
+  if (slippageLamports === null) {
+    // Data insufficient — apply the unreliable-data safety premium.
+    // vp_warn gives pool memory a signal to flag thin pools.
+    log("vp_warn", `VP ${vp.id} (${vp.pair}) slippage data insufficient — using ${unreliablePct}% safety premium`);
+    slippagePct = unreliablePct;
+  } else {
+    // Express shortfall as % of total position value (X-component loss is
+    // already captured in the shortfall; this denominator keeps the %
+    // comparable to position size).
+    const shortfallSol = Number(slippageLamports) / LAMPORTS_PER_SOL;
+    slippagePct = rawPositionValueSol > 0
+      ? (shortfallSol / rawPositionValueSol) * 100
+      : 0;
+  }
   const slippageSol = rawPositionValueSol * (slippagePct / 100);
   const positionValueSol = Math.max(0, rawPositionValueSol - gasCostSol - slippageSol);
 
@@ -209,6 +233,115 @@ export function computeVirtualPnl(vp, binData, solPrice, opts = {}) {
     totalCostUsd,
     perBin,
   };
+}
+
+/**
+ * Estimate slippage for closing a single-sided SOL (Y-only) LP position.
+ *
+ * For a Y-only position:
+ *   - Bins ≤ active bin: we hold Y (no swap needed to extract)
+ *   - Bins > active bin: we hold X (must swap to Y to flatten)
+ *
+ * To flatten, we swap our X through bins ≤ active (consuming their Y reserves).
+ * Real slippage = how much Y we lose vs the theoretical no-slippage output.
+ *
+ * This is a LOWER-BOUND ESTIMATOR. The algorithm assumes the swap path stays
+ * within `binData` (which is fetched for the position's range, typically 35-69
+ * bins). For the median Meridian deploy (position size from computeDeployAmount,
+ * 80-125 bin step), this holds in practice. See docs/vp-slippage-plan.md.
+ *
+ * Hybrid safety check (returns null on data insufficient):
+ *   - Pre-check: if minBin in binData > opts.lowerBin - 10, log + return null
+ *   - Post-check: if swap walk exits with remainingX > 0n, log + return null
+ *
+ * @param {Object[]} perBin     Per-bin ourX/ourY from computeVirtualPnl
+ * @param {Object[]} binData    Current bin state from getBinsInRange (or wider)
+ * @param {number}   activeBinId  Pool's current active bin
+ * @param {Object}   [opts]
+ * @param {number}   [opts.lowerBin]  Position's lower bin (for pre-check)
+ * @returns {bigint|null}  Y-lamports shortfall, or null if data insufficient.
+ *                          - bigint >= 0: real shortfall (0n is valid: no slippage)
+ *                          - null: data insufficient, caller applies fallback
+ */
+export function estimateSlippageLamports(perBin, binData, activeBinId, opts = {}) {
+  const PRICE_SCALE = 1n << 64n;
+
+  // ── Guard: missing active bin → null (fallback premium in caller) ───
+  // Without this, `pb.binId > null` is always false → remainingX stays 0n
+  // → function returns 0n → caller treats as legitimate zero slippage,
+  // silently disabling the unreliable-data fallback.
+  if (activeBinId == null) return null;
+
+  // ── Pre-check: do we have enough data below the position? ──────────
+  const lowerBin = opts.lowerBin;
+  if (lowerBin != null && binData.length > 0) {
+    const minBinInData = Math.min(...binData.map(b => b.binId));
+    if (minBinInData > lowerBin - 10) {
+      // binData doesn't extend 10 bins below position — pre-check fails
+      return null;  // caller logs warning with vp.id
+    }
+  }
+
+  // 1. Sum X to swap (only from bins > active; Y from bins ≤ active needs no swap)
+  let remainingX = 0n;
+  for (const pb of perBin) {
+    if (pb.binId > activeBinId) {
+      // ourX is a stringified BN — guard against missing/null values
+      remainingX += BigInt(pb.ourX ?? "0");
+    }
+  }
+  if (remainingX === 0n) return 0n;  // no X to swap = no slippage (legitimate 0)
+
+  // 2. Find the active bin's price (theoretical "no slippage" price)
+  const activeBin = binData.find(b => b.binId === activeBinId);
+  if (!activeBin) {
+    // Active bin is outside our binData (price moved below our range).
+    return null;  // caller logs warning
+  }
+  // priceQ64 may be null/0 if SDK returns a partial/corrupted response
+  const activePriceBN = BigInt(activeBin.priceQ64 ?? "0");
+  if (activePriceBN === 0n) {
+    // Pathological: price is zero but X > 0. Impossible swap.
+    return null;  // caller logs warning
+  }
+
+  // 3. Theoretical Y output at no-slippage: X × activePrice
+  const theoreticalY = (remainingX * activePriceBN) / PRICE_SCALE;
+
+  // 4. Walk bins ≤ active in price-DESCENDING order (best price first).
+  //    BigInt comparator (NOT Number conversion — Q64.64 values can exceed 2^53)
+  const binsBelowActive = binData
+    .filter(b => b.binId <= activeBinId)
+    .sort((a, b) => {
+      const aP = BigInt(a.priceQ64 ?? "0"), bP = BigInt(b.priceQ64 ?? "0");
+      return bP > aP ? 1 : bP < aP ? -1 : 0;
+    });
+
+  let totalYReceived = 0n;
+  for (const bin of binsBelowActive) {
+    if (remainingX <= 0n) break;
+    const yAvailable = BigInt(bin.yAmount ?? "0");
+    const priceBN = BigInt(bin.priceQ64 ?? "0");
+    if (yAvailable === 0n || priceBN === 0n) continue;
+
+    // max X this bin can absorb: yAvailable × SCALE / price
+    const maxXCanSwap = (yAvailable * PRICE_SCALE) / priceBN;
+    const xToSwap = remainingX < maxXCanSwap ? remainingX : maxXCanSwap;
+
+    // Y received = X × price / SCALE
+    const yReceived = (xToSwap * priceBN) / PRICE_SCALE;
+    totalYReceived += yReceived;
+    remainingX -= xToSwap;
+  }
+
+  // ── Post-check: did we finish the swap within our data? ──────────
+  if (remainingX > 0n) {
+    // Pool exhausted within fetched range — couldn't complete swap
+    return null;  // caller logs warning
+  }
+
+  // 5. Shortfall = theoretical - actual (always >= 0)
+  return theoreticalY > totalYReceived ? theoreticalY - totalYReceived : 0n;
 }
 
 /**
@@ -423,11 +556,13 @@ export async function runVirtualManagementCycle() {
 
       // ── Compute PnL ───────────────────────────────────────────────
       // Pass cycleCloseGasSol so close gas reflects current priority fee
-      // (re-estimated once per cycle for all VPs).
+      // (re-estimated once per cycle for all VPs). Pass activeBin so the
+      // real-depth slippage algorithm knows where the price is.
+      const activeBin = binResult.activeBin;
       const pnl = computeVirtualPnl(vp, binResult.bins, solPrice, {
         closeGasSolOverride: cycleCloseGasSol,
+        activeBinId: activeBin,
       });
-      const activeBin = binResult.activeBin;
       const now = Date.now();
       const isOOR = activeBin > vp.upper_bin;
 
@@ -529,6 +664,7 @@ export async function runVirtualManagementCycle() {
         const finalCloseGasSol = await getFreshCloseGasSol(cycleCloseGasSol, vp.id);
         const finalPnl = computeVirtualPnl(vp, binResult.bins, solPrice, {
           closeGasSolOverride: finalCloseGasSol,
+          activeBinId: activeBin,
         });
 
         const closed = closeVirtualPosition(vp.id, closeRule.reason, finalPnl.pnlPct, finalPnl.pnlUsd, {
@@ -567,6 +703,7 @@ export async function runVirtualManagementCycle() {
         const trailingCloseGasSol = await getFreshCloseGasSol(cycleCloseGasSol, vp.id);
         const trailingFinalPnl = computeVirtualPnl(vp, binResult.bins, solPrice, {
           closeGasSolOverride: trailingCloseGasSol,
+          activeBinId: activeBin,
         });
 
         const closed = closeVirtualPosition(vp.id, trailingCloseReason, trailingFinalPnl.pnlPct, trailingFinalPnl.pnlUsd, {

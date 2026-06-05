@@ -124,7 +124,12 @@ export const config = {
     // + 0.00001 SOL base fees. Rent (~0.145 SOL) is fully recovered on close.
     // 0.0002 covers quiet-to-normal network; ~0.001 covers busy/high-priority.
     vpGasCostSol:          u.vpGasCostSol          ?? 0.0002,  // deploy + close tx fees
-    vpSlippagePct:         u.vpSlippagePct         ?? 0.3,    // estimated entry/exit slippage %
+    // Slippage model: real on-chain X→Y swap simulation is used in
+    // tools/manage-virtual.js.estimateSlippageLamports (added 2026-06).
+    // vpSlippagePct is now LEGACY and unused — kept for one release to give
+    // users a deprecation warning. See meridian-z06.
+    vpSlippagePct:         u.vpSlippagePct         ?? 0.3,
+    vpSlippagePctUnreliable: u.vpSlippagePctUnreliable ?? 2.0, // safety premium when estimator returns null
     vpTrendExitCycles:     u.vpTrendExitCycles     ?? 3,      // number of consecutive down cycles under loss to trigger early exit
   },
 
@@ -216,6 +221,19 @@ export const config = {
     requireAllIntervals: indicatorUserConfig.requireAllIntervals ?? false,
   },
 };
+
+// Deprecation warning for legacy vpSlippagePct config key.
+// The new real-depth slippage model in tools/manage-virtual.js no longer
+// references it. The key is kept for one release so user-config.json
+// values don't silently get dropped — users see this and can remove it.
+if (u.vpSlippagePct !== undefined) {
+  console.warn(
+    "[config] management.vpSlippagePct is deprecated and unused " +
+    "(replaced by real-depth estimation in estimateSlippageLamports). " +
+    "Remove it from user-config.json. The unreliable-data fallback now " +
+    "uses management.vpSlippagePctUnreliable (default 2.0).",
+  );
+}
 
 /**
  * Compute the optimal deploy amount for a given wallet balance.
