@@ -266,7 +266,7 @@ export async function runManagementCycle({ silent = false } = {}) {
             : "?";
           return `**${r.pair}** | ${ageStr}Val: ${val} | Unclaimed: ${fees} | Yield: ${yieldVal}% | PnL: ${pnlVal.toFixed(2)}% | ${rangeIcon} ${r.oor} | STAY`;
         }).join("\n");
-        report += `\n\n---\n**Virtual Positions**\n${vpLines}\n\n${vpSummary}`;
+        report += `\n\n---\n**Virtual Positions**\n\n${vpLines}\n\n${vpSummary}`;
       }
       mgmtReport = report;
       tryStartScreening("mgmt-no-positions");
@@ -456,7 +456,7 @@ After executing, write a brief one-line result per position.
           : "?";
         return `**${r.pair}** | ${ageStr}Val: ${val} | Unclaimed: ${fees} | Yield: ${yieldVal}% | PnL: ${pnlVal.toFixed(2)}% | ${rangeIcon} ${r.oor} | STAY`;
       }).join("\n");
-      mgmtReport += `\n\n---\n**Virtual Positions**\n${vpLines}\n\n${vpSummary}`;
+      mgmtReport += `\n\n---\n**Virtual Positions**\n\n${vpLines}\n\n${vpSummary}`;
     }
 
     // Trigger screening after management
