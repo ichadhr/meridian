@@ -1711,7 +1711,9 @@ export async function getMyPositions({ force = false, silent = false, wallet_add
               lower_bin: vp.lower_bin,
               upper_bin: vp.upper_bin,
             });
-            const poolParams = { binStep, sParameter, vParameter };
+            const poolParams = binStep != null && sParameter != null && vParameter != null
+              ? { binStep, sParameter, vParameter }
+              : null;
             return { vp, activeBin, pnl: computePositionPnl(vp, bins, realSolPrice, { activeBinId: activeBin, poolParams }) };
           }));
           for (const r of results) {

@@ -196,7 +196,9 @@ export async function closeVpManual(vpId, reason) {
     // Manual close: no cycleCloseGasSol — use a fresh sample.
     const freshPf = await samplePriorityFee(getConnection(), { fresh: true });
     const freshCloseGasSol = await estimateCloseGasSol(getConnection(), freshPf);
-    const poolParams = { binStep, sParameter, vParameter };
+    const poolParams = binStep != null && sParameter != null && vParameter != null
+      ? { binStep, sParameter, vParameter }
+      : null;
     finalPnl = computePositionPnl(vp, bins, solPrice, {
       closeGasSolOverride: freshCloseGasSol,
       activeBinId: activeBin,
@@ -308,7 +310,7 @@ export async function runVirtualManagementCycle() {
       // (re-estimated once per cycle for all VPs). Pass activeBin so the
       // real-depth slippage algorithm knows where the price is.
       const activeBin = binResult.activeBin;
-      const poolParams = binResult.binStep != null
+      const poolParams = binResult.binStep != null && binResult.sParameter != null && binResult.vParameter != null
         ? { binStep: binResult.binStep, sParameter: binResult.sParameter, vParameter: binResult.vParameter }
         : null;
       const pnl = computePositionPnl(vp, binResult.bins, solPrice, {

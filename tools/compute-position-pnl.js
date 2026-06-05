@@ -322,7 +322,7 @@ export function estimateSlippageLamports(perBin, binData, activeBinId, opts = {}
       return bP > aP ? 1 : bP < aP ? -1 : 0;
     });
 
-  if (swapFn && poolParams) {
+  if (swapFn && poolParams && poolParams.binStep != null && poolParams.sParameter != null && poolParams.vParameter != null) {
     // ── SDK path: use swapExactInQuoteAtBin for exact on-chain parity ──
     // Each swap step properly accounts for the pool's base + variable fee
     // via the SDK's sParameter / vParameter. Fees are deducted from inAmount;
