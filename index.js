@@ -264,15 +264,20 @@ export async function runManagementCycle({ silent = false } = {}) {
       return mgmtReport;
     }
 
-    // Snapshot + load pool memory
+    // Snapshot + load pool memory.
+    // VPs are managed separately by runVirtualManagementCycle below —
+    // they get their own dedicated report section. Exclude them from the
+    // top-section logic (trailing TP, action map, LLM) which is designed
+    // for live positions.
     const positionData = positions.map((p) => {
       recordPositionSnapshot(p.pool, p);
       return { ...p, recall: recallForPool(p.pool) };
     });
+    const livePositionData = positionData.filter(p => !p.position?.startsWith?.("vp:"));
 
-    // JS trailing TP check
+    // JS trailing TP check (live positions only)
     const exitMap = new Map();
-    for (const p of positionData) {
+    for (const p of livePositionData) {
       if (
         !p.pnl_pct_suspicious &&
         queuePeakConfirmation(p.position, p.pnl_pct, { immediate: !shouldUsePnlRecheck() }) &&
@@ -296,7 +301,7 @@ export async function runManagementCycle({ silent = false } = {}) {
     // ── Deterministic rule checks (no LLM) ──────────────────────────
     // action: CLOSE | CLAIM | STAY | INSTRUCTION (needs LLM)
     const actionMap = new Map();
-    for (const p of positionData) {
+    for (const p of livePositionData) {
       // Hard exit — highest priority
       if (exitMap.has(p.position)) {
         actionMap.set(p.position, { action: "CLOSE", rule: "exit", reason: exitMap.get(p.position) });
@@ -321,11 +326,11 @@ export async function runManagementCycle({ silent = false } = {}) {
       actionMap.set(p.position, { action: "STAY" });
     }
 
-    // ── Build JS report ──────────────────────────────────────────────
-    const totalValue = positionData.reduce((s, p) => s + (p.total_value_usd ?? 0), 0);
-    const totalUnclaimed = positionData.reduce((s, p) => s + (p.unclaimed_fees_usd ?? 0), 0);
+    // ── Build JS report (live positions only — VPs in separate section below) ─
+    const totalValue = livePositionData.reduce((s, p) => s + (p.total_value_usd ?? 0), 0);
+    const totalUnclaimed = livePositionData.reduce((s, p) => s + (p.unclaimed_fees_usd ?? 0), 0);
 
-    const reportLines = positionData.map((p) => {
+    const reportLines = livePositionData.map((p) => {
       const act = actionMap.get(p.position);
       // Step 7 (meridian-wie): null in_range = "no fresh PnL" (RPC outage).
       // True → 🟢 IN. False → 🔴 OOR <time>m. Null → ?? (unknown — no red bullet).
@@ -348,10 +353,10 @@ export async function runManagementCycle({ silent = false } = {}) {
 
     const cur = config.management.solMode ? "◎" : "$";
     mgmtReport = reportLines.join("\n\n") +
-      `\n\nSummary: 💼 ${positions.length} positions | ${cur}${totalValue.toFixed(4)} | fees: ${cur}${totalUnclaimed.toFixed(4)} | ${actionSummary}`;
+      `\n\nSummary: 💼 ${livePositionData.length} positions | ${cur}${totalValue.toFixed(4)} | fees: ${cur}${totalUnclaimed.toFixed(4)} | ${actionSummary}`;
 
-    // ── Call LLM only if action needed ──────────────────────────────
-    const actionPositions = positionData.filter(p => {
+    // ── Call LLM only if action needed (live positions only) ─────────
+    const actionPositions = livePositionData.filter(p => {
       const a = actionMap.get(p.position);
       return a.action !== "STAY";
     });

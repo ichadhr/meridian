@@ -46,6 +46,9 @@ let _deriveBinArrayBitmapExtension = null;
 let _isOverflowDefaultBinArrayBitmap = null;
 let _BIN_ARRAY_FEE = null;
 let _BIN_ARRAY_BITMAP_FEE = null;
+let _calculateSpotDistribution = null;
+let _calculateBidAskDistribution = null;
+let _calculateNormalDistribution = null;
 
 async function getDLMM() {
   if (!_DLMM) {
@@ -60,6 +63,10 @@ async function getDLMM() {
     _isOverflowDefaultBinArrayBitmap = mod.isOverflowDefaultBinArrayBitmap;
     _BIN_ARRAY_FEE = mod.BIN_ARRAY_FEE;
     _BIN_ARRAY_BITMAP_FEE = mod.BIN_ARRAY_BITMAP_FEE;
+    // SDK distribution functions — same logic as addLiquidityByStrategy uses
+    _calculateSpotDistribution = mod.calculateSpotDistribution;
+    _calculateBidAskDistribution = mod.calculateBidAskDistribution;
+    _calculateNormalDistribution = mod.calculateNormalDistribution;
   }
   return {
     DLMM: _DLMM,
@@ -72,6 +79,9 @@ async function getDLMM() {
     isOverflowDefaultBinArrayBitmap: _isOverflowDefaultBinArrayBitmap,
     BIN_ARRAY_FEE: _BIN_ARRAY_FEE,
     BIN_ARRAY_BITMAP_FEE: _BIN_ARRAY_BITMAP_FEE,
+    calculateSpotDistribution: _calculateSpotDistribution,
+    calculateBidAskDistribution: _calculateBidAskDistribution,
+    calculateNormalDistribution: _calculateNormalDistribution,
   };
 }
 
@@ -547,26 +557,20 @@ export async function getBinsInRange({ pool_address, lower_bin, upper_bin, skipC
 
 // ─── VP Strategy Distribution ──────────────────────────────────
 // Computes per-bin Y-side BPS (basis points out of 10000) allocation for
-// virtual position deploys. Matches the SDK's calculateSpotDistribution,
-// calculateBidAskDistribution, and calculateNormalDistribution logic.
-
-/**
- * Minimal Gaussian PDF for VP distribution — avoids external 'gaussian' dependency.
- * @param {number} mean   Center of distribution
- * @param {number} variance  Variance (σ²)
- * @returns {(x: number) => number}  PDF function
- */
-function gaussianPdf(mean, variance) {
-  const stdDev = Math.sqrt(variance);
-  const coeff = 1 / (stdDev * Math.sqrt(2 * Math.PI));
-  return (x) => coeff * Math.exp(-0.5 * ((x - mean) / stdDev) ** 2);
-}
+// virtual position deploys. Delegates to the Meteora SDK's distribution
+// functions — the same logic addLiquidityByStrategy uses on-chain — so VP
+// share allocations match what a live deploy would produce exactly.
+//
+// The SDK functions are loaded once by getDLMM() (called before this path
+// in deployPosition at line 702). They are cached in module-level vars.
 
 /**
  * Compute per-bin Y-side BPS allocation for a VP deploy.
  *
- * For single-sided SOL (Y-only) deposits where all bins are ≤ active bin,
- * this computes how to distribute totalY across the bins.
+ * Delegates to Meteora SDK's calculateSpotDistribution,
+ * calculateBidAskDistribution, and calculateNormalDistribution.
+ * These produce the exact same BPS weights that a real
+ * addLiquidityByStrategy call would use on-chain.
  *
  * @param {string} strategy   "spot" | "bid_ask" | "curve"
  * @param {number} activeBinId  The pool's current active bin ID
@@ -577,86 +581,30 @@ function computeVpYDistribution(strategy, activeBinId, binIds) {
   const result = new Map();
   if (binIds.length === 0) return result;
 
-  // Y-side bins = bins strictly below active + active bin itself (gets half weight for Y)
+  // Y-side bins = bins ≤ active bin (single-side SOL goes to Y side only)
   const yBins = binIds.filter(id => id <= activeBinId);
   if (yBins.length === 0) {
-    // All bins above active — no Y allocation (shouldn't happen for SOL-only deploy)
     for (const id of binIds) result.set(id, 0);
     return result;
   }
 
+  let distribution;
   if (strategy === "spot" || !strategy) {
-    // ── Spot: uniform weight, active bin gets half ──
-    const belowCount = yBins.filter(id => id < activeBinId).length;
-    const hasActive = yBins.includes(activeBinId);
-    const totalCapacity = belowCount + (hasActive ? 0.5 : 0);
-
-    if (totalCapacity <= 0) {
-      // Only the active bin
-      result.set(activeBinId, 10000);
-    } else {
-      const perBinBps = Math.floor(10000 / totalCapacity);
-      let assigned = 0;
-      for (const id of yBins) {
-        if (id === activeBinId) {
-          const activeBps = 10000 - perBinBps * belowCount;
-          result.set(id, activeBps);
-          assigned += activeBps;
-        } else {
-          result.set(id, perBinBps);
-          assigned += perBinBps;
-        }
-      }
-    }
-  } else if (strategy === "bid_ask" || strategy === "curve") {
-    // ── Gaussian-based: bid_ask uses inverted Gaussian, curve uses normal ──
-    // Both use the same Gaussian shape but bid_ask inverts the PDF (1/pdf)
-    // so edges get more weight, while curve concentrates at center.
-    const invert = strategy === "bid_ask";
-
-    // Build Gaussian centered on active bin (or nearest edge)
-    const smallestBin = Math.min(...yBins);
-    const largestBin = Math.max(...yBins);
-    let mean;
-    if (yBins.includes(activeBinId)) {
-      mean = activeBinId;
-    } else if (activeBinId < smallestBin) {
-      mean = smallestBin;
-    } else {
-      mean = largestBin;
-    }
-
-    const TWO_STANDARD_DEVIATION = 4;
-    const stdDev = (largestBin - smallestBin) / TWO_STANDARD_DEVIATION;
-    const variance = Math.max(stdDev ** 2, 1);
-    const pdf = gaussianPdf(mean, variance);
-
-    // Compute raw allocations
-    const allocations = yBins.map(id => invert ? 1 / pdf(id) : pdf(id));
-    const totalAlloc = allocations.reduce((sum, a) => sum + a, 0);
-
-    // Normalize to BPS
-    let totalBps = 0;
-    const bpsValues = allocations.map(a => {
-      const bps = Math.floor((a / totalAlloc) * 10000);
-      totalBps += bps;
-      return bps;
-    });
-
-    // Distribute rounding loss to first bin
-    const loss = 10000 - totalBps;
-    bpsValues[0] += loss;
-
-    for (let i = 0; i < yBins.length; i++) {
-      result.set(yBins[i], bpsValues[i]);
-    }
+    distribution = _calculateSpotDistribution(activeBinId, binIds);
+  } else if (strategy === "bid_ask") {
+    distribution = _calculateBidAskDistribution(activeBinId, binIds);
+  } else if (strategy === "curve") {
+    distribution = _calculateNormalDistribution(activeBinId, binIds);
   } else {
-    // Unknown strategy — fall back to spot
     log("deploy", `VP: unknown strategy "${strategy}", falling back to spot`);
-    return computeVpYDistribution("spot", activeBinId, binIds);
+    distribution = _calculateSpotDistribution(activeBinId, binIds);
   }
 
-  // Set X-side bins (above active) to 0 — VP only deposits Y
+  for (const d of distribution) {
+    result.set(d.binId, Number(d.yAmountBpsOfTotal.toString()));
+  }
+
+  // X-side bins (above active) get 0 — VP only deposits Y
   for (const id of binIds) {
     if (!result.has(id)) result.set(id, 0);
   }
@@ -819,13 +767,9 @@ export async function deployPosition({
       const SCALE = new BN(1).shln(64); // Q64.64 scaling factor
 
       // ── Strategy-aware Y-side BPS distribution ──────────────────
-      // Computes per-bin yBps (basis points out of 10000) for how to
-      // distribute totalYLamports across bins below the active bin.
-      //
-      // Strategies:
-      //   spot:    uniform distribution (equal weight per bin, active gets half)
-      //   bid_ask: inverted Gaussian (more liquidity at edges, less at center)
-      //   curve:   normal Gaussian (more liquidity at center, less at edges)
+      // Delegates to Meteora SDK's calculateSpotDistribution /
+      // calculateBidAskDistribution / calculateNormalDistribution —
+      // same BPS weights a real addLiquidityByStrategy uses on-chain.
       const binIds = bins.map(b => b.binId).sort((a, b) => a - b);
       const yBpsMap = computeVpYDistribution(activeStrategy, activeBin.binId, binIds);
 
