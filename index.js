@@ -240,8 +240,14 @@ export async function runManagementCycle({ silent = false } = {}) {
           log("cron_error", `Virtual position management failed: ${e.message}`);
         }
       }
-      let report = "No open positions. Triggering screening cycle.";
+      let report = vpEarlyResults.length > 0 ? "" : "No open positions. Triggering screening cycle.";
       if (vpEarlyResults.length > 0) {
+        const stayResults = vpEarlyResults.filter(r => r.action === "STAY");
+        const vpTotalVal = stayResults.reduce((s, r) => s + (r.value_sol ?? r.value_usd ?? 0), 0);
+        const vpTotalFees = stayResults.reduce((s, r) => s + (r.unclaimed_fees_sol ?? r.unclaimed_fees_usd ?? 0), 0);
+        const cur = config.management.solMode ? "◎" : "$";
+        const vpSummary = `💼 ${stayResults.length} VPs | ${cur}${vpTotalVal.toFixed(4)} | fees: ${cur}${vpTotalFees.toFixed(4)}`;
+
         const vpLines = vpEarlyResults.map(r => {
           const isSol = !!config.management.solMode;
           const pnlVal = isSol ? (r.pnl_sol_pct ?? 0) : (r.pnl_pct ?? 0);
@@ -255,9 +261,12 @@ export async function runManagementCycle({ silent = false } = {}) {
 
           const val = isSol ? `◎ ${(r.value_sol ?? 0).toFixed(4)}` : `$ ${(r.value_usd ?? 0).toFixed(2)}`;
           const fees = isSol ? `◎ ${(r.unclaimed_fees_sol ?? 0).toFixed(4)}` : `$ ${(r.unclaimed_fees_usd ?? 0).toFixed(2)}`;
-          return `**${r.pair}** | ${ageStr}Val: ${val} | Unclaimed: ${fees} | PnL: ${pnlVal.toFixed(2)}% | ${rangeIcon} ${r.oor} | STAY`;
+          const yieldVal = r.age_minutes > 0 && (r.value_sol ?? r.value_usd ?? 0) > 0
+            ? (((isSol ? r.unclaimed_fees_sol : r.unclaimed_fees_usd) ?? 0) / (isSol ? (r.value_sol ?? 1) : (r.value_usd ?? 1)) * (1440 / r.age_minutes) * 100).toFixed(1)
+            : "?";
+          return `**${r.pair}** | ${ageStr}Val: ${val} | Unclaimed: ${fees} | Yield: ${yieldVal}% | PnL: ${pnlVal.toFixed(2)}% | ${rangeIcon} ${r.oor} | STAY`;
         }).join("\n");
-        report += `\n\n---\n**Virtual Positions**\n${vpLines}`;
+        report += `\n\n---\n**Virtual Positions**\n${vpLines}\n\n${vpSummary}`;
       }
       mgmtReport = report;
       tryStartScreening("mgmt-no-positions");
@@ -416,8 +425,17 @@ After executing, write a brief one-line result per position.
       }
     }
 
-    // Append VP summary to management report
+    // Append VP summary to management report.
+    // When there are no live positions, skip the "Summary: 💼 0 positions" header
+    // — the Virtual Positions section is the only content.
+    if (livePositionData.length === 0) mgmtReport = "";
+
     if (vpResults.length > 0) {
+      const stayResults = vpResults.filter(r => r.action === "STAY");
+      const vpTotalVal = stayResults.reduce((s, r) => s + (r.value_sol ?? r.value_usd ?? 0), 0);
+      const vpTotalFees = stayResults.reduce((s, r) => s + (r.unclaimed_fees_sol ?? r.unclaimed_fees_usd ?? 0), 0);
+      const vpSummary = `💼 ${stayResults.length} VPs | ${cur}${vpTotalVal.toFixed(4)} | fees: ${cur}${vpTotalFees.toFixed(4)}`;
+
       const vpLines = vpResults.map(r => {
         const isSol = !!config.management.solMode;
         const pnlVal = isSol ? (r.pnl_sol_pct ?? 0) : (r.pnl_pct ?? 0);
@@ -431,9 +449,14 @@ After executing, write a brief one-line result per position.
 
         const val = isSol ? `◎ ${(r.value_sol ?? 0).toFixed(4)}` : `$ ${(r.value_usd ?? 0).toFixed(2)}`;
         const fees = isSol ? `◎ ${(r.unclaimed_fees_sol ?? 0).toFixed(4)}` : `$ ${(r.unclaimed_fees_usd ?? 0).toFixed(2)}`;
-        return `**${r.pair}** | ${ageStr}Val: ${val} | Unclaimed: ${fees} | PnL: ${pnlVal.toFixed(2)}% | ${rangeIcon} ${r.oor} | STAY`;
+        // Synthetic 24h yield: (fees / value) × (1440 / age) × 100.
+        // Same formula as Rule 5 — position-specific, unit-agnostic.
+        const yieldVal = r.age_minutes > 0 && (r.value_sol ?? r.value_usd ?? 0) > 0
+          ? (((isSol ? r.unclaimed_fees_sol : r.unclaimed_fees_usd) ?? 0) / (isSol ? (r.value_sol ?? 1) : (r.value_usd ?? 1)) * (1440 / r.age_minutes) * 100).toFixed(1)
+          : "?";
+        return `**${r.pair}** | ${ageStr}Val: ${val} | Unclaimed: ${fees} | Yield: ${yieldVal}% | PnL: ${pnlVal.toFixed(2)}% | ${rangeIcon} ${r.oor} | STAY`;
       }).join("\n");
-      mgmtReport += `\n\n---\n**Virtual Positions**\n${vpLines}`;
+      mgmtReport += `\n\n---\n**Virtual Positions**\n${vpLines}\n\n${vpSummary}`;
     }
 
     // Trigger screening after management
