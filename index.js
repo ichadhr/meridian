@@ -246,7 +246,7 @@ export async function runManagementCycle({ silent = false } = {}) {
         const vpTotalVal = stayResults.reduce((s, r) => s + (r.value_sol ?? r.value_usd ?? 0), 0);
         const vpTotalFees = stayResults.reduce((s, r) => s + (r.unclaimed_fees_sol ?? r.unclaimed_fees_usd ?? 0), 0);
         const cur = config.management.solMode ? "◎" : "$";
-        const vpSummary = `💼 ${stayResults.length} VPs | ${cur}${vpTotalVal.toFixed(4)} | fees: ${cur}${vpTotalFees.toFixed(4)}`;
+        const vpSummary = `💼 ${stayResults.length} VPs | ${cur} ${vpTotalVal.toFixed(4)} | fees: ${cur} ${vpTotalFees.toFixed(4)}`;
 
         const vpLines = vpEarlyResults.map(r => {
           const isSol = !!config.management.solMode;
@@ -434,7 +434,7 @@ After executing, write a brief one-line result per position.
       const stayResults = vpResults.filter(r => r.action === "STAY");
       const vpTotalVal = stayResults.reduce((s, r) => s + (r.value_sol ?? r.value_usd ?? 0), 0);
       const vpTotalFees = stayResults.reduce((s, r) => s + (r.unclaimed_fees_sol ?? r.unclaimed_fees_usd ?? 0), 0);
-      const vpSummary = `💼 ${stayResults.length} VPs | ${cur}${vpTotalVal.toFixed(4)} | fees: ${cur}${vpTotalFees.toFixed(4)}`;
+      const vpSummary = `💼 ${stayResults.length} VPs | ${cur} ${vpTotalVal.toFixed(4)} | fees: ${cur} ${vpTotalFees.toFixed(4)}`;
 
       const vpLines = vpResults.map(r => {
         const isSol = !!config.management.solMode;
