@@ -364,7 +364,7 @@ export function estimateSlippageLamports(perBin, binData, activeBinId, opts = {}
  */
 export function getVirtualCloseRule(vp, pnlPct, currentValueUsd, activeBin, mgmtConfig, effectiveOorMinutes = 0) {
   const stopLossPct = mgmtConfig.stopLossPct ?? -50;
-  const takeProfitPct = mgmtConfig.takeProfitPct ?? 100;
+  const takeProfitPct = mgmtConfig.takeProfitPct;
   const oorWaitMinutes = mgmtConfig.outOfRangeWaitMinutes ?? 30;
   // Guard against corrupted position state
   if (vp.upper_bin == null || activeBin == null) return null;
