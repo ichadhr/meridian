@@ -37,7 +37,8 @@ import { getWeightsSummary } from "./signal-weights.js";
 import { bootstrapHiveMind, ensureAgentId, getHiveMindPullMode, isHiveMindEnabled, pullHiveMindLessons, pullHiveMindPresets, registerHiveMindAgent, startHiveMindBackgroundSync } from "./hivemind.js";
 import { appendDecision } from "./decision-log.js";
 import { runVirtualManagementCycle } from "./tools/manage-virtual.js";
-import { listVirtualPositions, closeVirtualPosition, getVirtualPosition, computeSimpleVirtualPnl, parseVirtualPositionAddress } from "./tools/dry-run-state.js";
+import { parseVirtualPositionAddress } from "./tools/dry-run-state.js";
+import { closeVpManual } from "./tools/manage-virtual.js";
 import { generateDryRunReport } from "./tools/generate-dry-run-report.js";
 import { readArchive, compileVpStats } from "./tools/position-archive.js";
 
@@ -1565,16 +1566,19 @@ async function telegramHandler(msg) {
         const sent = await sendDocument(filePath, { caption: "📄 Dry-run VP report" });
         if (!sent) await sendMessage("❌ Failed to upload HTML report — check logs.");
       } else {
-        const vps = listVirtualPositions("open");
+        // Use getMyPositions({force:true}) so the display has FRESH PnL
+        // (via Step 3 fresh path) and live in_range — not the stale cached
+        // fields. Filter to VPs only.
+        const { positions } = await getMyPositions({ force: true });
+        const vps = positions.filter(p => p.position?.startsWith("vp:"));
         if (vps.length === 0) { await sendMessage("No open virtual positions."); return; }
         const cur = config.management.solMode ? "◎" : "$";
-        const lines = vps.map((vp) => {
-          const pnl = vp.current_value_usd != null && vp.initial_value_usd != null
-            ? `${((vp.current_value_usd / vp.initial_value_usd - 1) * 100).toFixed(2)}%`
-            : "?";
-          const fees = vp.total_fees_earned_usd != null ? `${cur}${vp.total_fees_earned_usd.toFixed(2)}` : "?";
-          const oor = vp._oor_since ? "⚠️OOR" : "IN";
-          return `${vp.id} | ${vp.pair} | PnL: ${pnl} | fees: ${fees} | ${oor}`;
+        const lines = vps.map((pos) => {
+          const vpId = pos.position.slice(3); // strip "vp:" prefix
+          const pnl = pos.pnl_pct != null ? `${pos.pnl_pct.toFixed(2)}%` : "?";
+          const fees = pos.unclaimed_fees_usd != null ? `${cur}${pos.unclaimed_fees_usd.toFixed(2)}` : "?";
+          const oor = pos.in_range ? "🟢 IN" : "🔴 OOR";
+          return `${vpId} | ${pos.pair} | PnL: ${pnl} | fees: ${fees} | ${oor}`;
         });
         await sendMessage(`📊 Virtual Positions (${vps.length}):\n\n${lines.join("\n")}`);
       }
@@ -1612,18 +1616,10 @@ async function telegramHandler(msg) {
   async function closeTelegramPosition(pos) {
     const vpId = parseVirtualPositionAddress(pos.position);
     if (vpId) {
-      const vp = getVirtualPosition(vpId);
-      if (!vp) return { success: false, error: `VP not found: ${vpId}` };
-      // USD values still go to the archive (accounting is always USD-native).
-      // The returned pnl_usd/pnl_pct come from the polymorphic `pos` (already
-      // routed through mergeVirtualPositions), so the Telegram notification
-      // shows the right unit for the current solMode.
-      const { pnlUsd, pnlPct } = computeSimpleVirtualPnl(vp);
-      const closed = closeVirtualPosition(vpId, "manual close via telegram /close", pnlPct, pnlUsd);
-      if (closed) invalidatePositionsCache(); // drop stale positions cache
-      return closed
-        ? { success: true, dry_run: true, is_virtual: true, pnl_usd: pos.pnl_usd, pnl_pct: pos.pnl_pct }
-        : { success: false, error: "VP close failed (archive write error?)" };
+      // closeVpManual does a fresh bin fetch + computePositionPnl — the
+      // legacy computeSimpleVirtualPnl read stale `vp.current_value_usd`.
+      // Returns polymorphic pnl_usd/pnl_pct matching the current solMode.
+      return await closeVpManual(vpId, "manual close via telegram /close");
     }
     return await closePosition({ position_address: pos.position });
   }
@@ -2164,20 +2160,23 @@ Focus on: hold duration, entry/exit timing, what win rates look like, whether sc
           fs.writeFileSync(filePath, html, "utf8");
           console.log(`✅ Report saved to ${filePath}\n`);
         } else {
-          const vps = listVirtualPositions("open");
+          // Use getMyPositions({force:true}) so the display has FRESH PnL
+          // (via Step 3 fresh path) and live in_range — not the stale cached
+          // fields. Filter to VPs only.
+          const { positions } = await getMyPositions({ force: true });
+          const vps = positions.filter(p => p.position?.startsWith("vp:"));
           if (vps.length === 0) {
             console.log("No open virtual positions.\n");
             return;
           }
           const solFmt = config.management.solMode ? "◎" : "$";
           console.log(`\nVirtual positions (${vps.length}):\n`);
-          for (const vp of vps) {
-            const pnl = vp.current_value_usd != null && vp.initial_value_usd != null
-              ? `${((vp.current_value_usd / vp.initial_value_usd - 1) * 100).toFixed(2)}%`
-              : "?";
-            const fees = vp.total_fees_earned_usd != null ? `${solFmt}${vp.total_fees_earned_usd.toFixed(2)}` : "?" ;
-            const oor = vp._oor_since ? `OOR` : "IN";
-            console.log(`  ${vp.id} | ${vp.pair.padEnd(16)} | PnL: ${pnl.padStart(8)} | fees: ${fees} | ${oor}`);
+          for (const pos of vps) {
+            const vpId = pos.position.slice(3); // strip "vp:" prefix
+            const pnl = pos.pnl_pct != null ? `${pos.pnl_pct.toFixed(2)}%` : "?";
+            const fees = pos.unclaimed_fees_usd != null ? `${solFmt}${pos.unclaimed_fees_usd.toFixed(2)}` : "?";
+            const oor = pos.in_range ? "🟢 IN" : "🔴 OOR";
+            console.log(`  ${vpId} | ${pos.pair.padEnd(16)} | PnL: ${pnl.padStart(8)} | fees: ${fees} | ${oor}`);
           }
           console.log();
         }

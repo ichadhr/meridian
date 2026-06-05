@@ -10,7 +10,8 @@ import {
   searchPools,
   invalidatePositionsCache,
 } from "./dlmm.js";
-import { closeVirtualPosition, getVirtualPosition, computeSimpleVirtualPnl, parseVirtualPositionAddress } from "./dry-run-state.js";
+import { parseVirtualPositionAddress } from "./dry-run-state.js";
+import { closeVpManual } from "./manage-virtual.js";
 import { getWalletBalances, swapToken } from "./wallet.js";
 import { studyTopLPers } from "./study.js";
 import { addLesson, clearAllLessons, clearPerformance, removeLessonsByKeyword, getPerformanceHistory, pinLesson, unpinLesson, listLessons } from "../lessons.js";
@@ -264,34 +265,14 @@ const toolMap = {
   check_smart_wallets_on_pool: checkSmartWalletsOnPool,
   claim_fees: claimFees,
   close_position: async (args) => {
-    // Route VP addresses (prefixed "vp:") to closeVirtualPosition. Without
+    // Route VP addresses (prefixed "vp:") to closeVpManual. Without
     // this, the LLM's close_position on a VP in DRY_RUN mode returns the
     // generic dry-run response without actually closing the VP.
+    // closeVpManual does a fresh bin fetch + computePositionPnl — the
+    // legacy computeSimpleVirtualPnl read stale `vp.current_value_usd`.
     const vpId = parseVirtualPositionAddress(args?.position_address);
     if (vpId) {
-      const vp = getVirtualPosition(vpId);
-      if (!vp) return { success: false, error: `VP not found: ${vpId}` };
-      // USD values still go to the archive (accounting is always USD-native).
-      // Returned pnl_usd/pnl_pct are polymorphic (SOL when solMode, USD when not)
-      // to match getMyPositions convention and the Telegram close notification.
-      const { pnlUsd, pnlPct } = computeSimpleVirtualPnl(vp);
-      const isSol = !!config.management.solMode;
-      const closed = closeVirtualPosition(vpId, "LLM close_position tool", pnlPct, pnlUsd);
-      if (closed) invalidatePositionsCache(); // drop stale positions cache
-      return closed
-        ? {
-            success: true,
-            dry_run: true,
-            is_virtual: true,
-            position: args.position_address,
-            pair: vp.pair || vp.pool_name || args.position_address,
-            pool: vp.pool,
-            pool_name: vp.pool_name || vp.pair,
-            base_mint: vp.base_mint || null,
-            pnl_usd: isSol ? (vp.pnl_sol ?? 0) : pnlUsd,
-            pnl_pct: isSol ? (vp.pnl_sol_pct ?? 0) : pnlPct,
-          }
-        : { success: false, error: "VP close failed (archive write error?)" };
+      return await closeVpManual(vpId, "LLM close_position tool");
     }
     return closePosition(args);
   },

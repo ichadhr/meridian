@@ -4,6 +4,7 @@ import {
   listVirtualPositions,
   updateVirtualPosition,
   closeVirtualPosition,
+  getVirtualPosition,
 } from "./dry-run-state.js";
 import { fetchSolPrice } from "./wallet.js";
 import { recordPoolDeploy } from "../pool-memory.js";
@@ -159,6 +160,91 @@ async function closeVpAndRecord(vp, reason, bins, solPrice, activeBin, cycleClos
   recordVpDeployToPoolMemory(vp, finalPnl, reason, effectiveOorMinutes);
   log("vp", `VP ${vp.id} (${vp.pair}) CLOSED: ${reason} PnL=${finalPnl.pnlPct.toFixed(2)}% (SOL: ${finalPnl.pnlSolPct.toFixed(2)}%) deployGas=${finalPnl.deployGasSol.toFixed(6)} closeGas=${finalPnl.closeGasSol.toFixed(6)}`);
   return finalPnl;
+}
+
+/**
+ * Manually close a VP with FRESH PnL computation. Used by:
+ * - LLM `close_position` tool (executor.js)
+ * - Telegram /close <n> command (index.js)
+ *
+ * Fetches fresh bins, fetches SOL price, recomputes PnL via
+ * computePositionPnl — replacing the legacy `computeSimpleVirtualPnl`
+ * which read the stale `vp.current_value_usd` field. Records to
+ * pool memory, invalidates the positions cache.
+ *
+ * On any failure (VP not found, RPC error, archive write) returns
+ * `{ success: false, error }` with NO partial state mutation.
+ *
+ * @param {string} vpId     the VP id (without "vp:" prefix)
+ * @param {string} reason   the close reason (e.g. "LLM close_position tool")
+ * @returns {Promise<{success: boolean, error?: string, dry_run?: true, is_virtual?: true, vp?: object, finalPnl?: object, pnl_usd?: number, pnl_pct?: number, position?: string, pair?: string, pool?: string, pool_name?: string, base_mint?: string}>}
+ */
+export async function closeVpManual(vpId, reason) {
+  const vp = getVirtualPosition(vpId);
+  if (!vp) return { success: false, error: `VP not found: ${vpId}` };
+
+  // Fetch fresh bins + compute PnL. Mirrors the cycle's per-VP flow.
+  let finalPnl;
+  try {
+    const { activeBin, bins } = await getBinsInRange({
+      pool_address: vp.pool,
+      lower_bin: vp.lower_bin,
+      upper_bin: vp.upper_bin,
+    });
+    const solPrice = await fetchSolPrice();
+    if (solPrice == null) {
+      return { success: false, error: "Could not fetch SOL price for close PnL" };
+    }
+    // Manual close: no cycleCloseGasSol — use a fresh sample.
+    const freshPf = await samplePriorityFee(getConnection(), { fresh: true });
+    const freshCloseGasSol = await estimateCloseGasSol(getConnection(), freshPf);
+    finalPnl = computePositionPnl(vp, bins, solPrice, {
+      closeGasSolOverride: freshCloseGasSol,
+      activeBinId: activeBin,
+    });
+  } catch (e) {
+    log("vp_close", `Fresh PnL failed for manual close ${vpId}: ${e.message}`);
+    return { success: false, error: `Fresh PnL failed: ${e.message}` };
+  }
+
+  // Close with USD values (archive is USD-native); pass extra fields for
+  // the JSONL archive. Mirrors closeVpAndRecord's extraFields exactly.
+  const closed = closeVirtualPosition(vpId, reason, finalPnl.pnlPct, finalPnl.pnlUsd, {
+    close_pnl_sol_pct: finalPnl.pnlSolPct,
+    close_pnl_sol: finalPnl.netPnlSol,
+    close_il_sol: finalPnl.rawPnlSol,
+    close_fees_sol: finalPnl.feesSol,
+    close_cost_sol: finalPnl.totalCostSol,
+    close_il_usd: finalPnl.ilUsd,
+    close_fees_usd: finalPnl.feesUsd,
+    close_cost_usd: finalPnl.totalCostUsd,
+  });
+  if (!closed) {
+    return { success: false, error: "VP close failed (archive write error?)" };
+  }
+  invalidatePositionsCache();
+  // Manual close has no fresh effectiveOorMinutes from a cycle; pass
+  // the stored value (may be stale by minutes, but it's the best we have
+  // without a separate OOR computation pass).
+  recordVpDeployToPoolMemory(vp, finalPnl, reason, vp._oor_minutes || 0);
+  log("vp_close", `VP ${vpId} (${vp.pair}) CLOSED (manual): ${reason} PnL=${finalPnl.pnlPct.toFixed(2)}% (SOL: ${finalPnl.pnlSolPct.toFixed(2)}%)`);
+
+  // Polymorphic for display (matches getMyPositions convention).
+  const isSol = !!config.management.solMode;
+  return {
+    success: true,
+    dry_run: true,
+    is_virtual: true,
+    vp,
+    finalPnl,
+    position: `vp:${vpId}`,
+    pair: vp.pair || vp.pool_name || `vp:${vpId}`,
+    pool: vp.pool,
+    pool_name: vp.pool_name || vp.pair,
+    base_mint: vp.base_mint || null,
+    pnl_usd: isSol ? finalPnl.netPnlSol : finalPnl.pnlUsd,
+    pnl_pct: isSol ? finalPnl.pnlSolPct : finalPnl.pnlPct,
+  };
 }
 
 /**
