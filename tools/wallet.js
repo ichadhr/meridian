@@ -254,11 +254,27 @@ export async function swapToken({
   }
 }
 
+// 30s cache for SOL price. Short enough that deploy/display always see near-fresh price.
+// Only successful fetches are cached — failures (null) do not poison the cache.
+const SOL_PRICE_CACHE_TTL_MS = 30_000;
+let _cachedSolPrice = null;
+let _cachedSolPriceAt = 0;
+
+export function _resetSolPriceCacheForTesting() {
+  _cachedSolPrice = null;
+  _cachedSolPriceAt = 0;
+}
+
 /**
  * Fetch validated SOL/USD price with Jupiter primary + fallback chain.
  * Returns a validated price in [MIN_SOL_PRICE, MAX_SOL_PRICE] or null if unavailable.
  */
 export async function fetchSolPrice() {
+  if (_cachedSolPrice != null && Date.now() - _cachedSolPriceAt < SOL_PRICE_CACHE_TTL_MS) {
+    // Primitive (number) — no clone needed; immutable in JS.
+    return _cachedSolPrice;
+  }
+
   // ── Primary: Jupiter Price API ──────────────────────────────
   try {
     const res = await fetch(`${JUPITER_PRICE_API}?ids=${config.tokens.SOL}`, {
@@ -268,6 +284,8 @@ export async function fetchSolPrice() {
       const data = await res.json();
       const price = data?.[config.tokens.SOL]?.usdPrice;
       if (typeof price === "number" && Number.isFinite(price) && price >= MIN_SOL_PRICE && price <= MAX_SOL_PRICE) {
+        _cachedSolPrice = price;
+        _cachedSolPriceAt = Date.now();
         return price;
       }
       log("wallet_error", `Jupiter returned invalid SOL price: ${price}`);
@@ -283,6 +301,8 @@ export async function fetchSolPrice() {
   try {
     const balances = await getWalletBalances();
     if (typeof balances.sol_price === "number" && Number.isFinite(balances.sol_price) && balances.sol_price >= MIN_SOL_PRICE && balances.sol_price <= MAX_SOL_PRICE) {
+      _cachedSolPrice = balances.sol_price;
+      _cachedSolPriceAt = Date.now();
       return balances.sol_price;
     }
     log("wallet_error", `Helius returned invalid SOL price: ${balances.sol_price}`);

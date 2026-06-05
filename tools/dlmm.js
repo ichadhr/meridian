@@ -472,15 +472,46 @@ export async function getActiveBin({ pool_address }) {
   };
 }
 
+// 30s cache for getBinsInRange. Key = `${poolAddress}:${minBin}:${maxBin}`.
+// Deploy path must pass { skipCache: true } to read fresh bins at open.
+const BINS_IN_RANGE_CACHE_TTL_MS = 30_000;
+let _binsInRangeCache = new Map(); // key -> { data, expiresAt }
+
+export function _resetBinsInRangeCacheForTesting() {
+  _binsInRangeCache = new Map();
+}
+
+/** Test-only: pre-populate the cache to verify a subsequent call returns cached data. */
+export function _setBinsInRangeCacheForTesting(key, data, ttlMs = BINS_IN_RANGE_CACHE_TTL_MS) {
+  _binsInRangeCache.set(key, { data, expiresAt: Date.now() + ttlMs });
+}
+
+/** Test-only: inspect current cache state. */
+export function _getBinsInRangeCacheSizeForTesting() {
+  return _binsInRangeCache.size;
+}
+
 // ─── Get Bins In Range ─────────────────────────────────────────
-export async function getBinsInRange({ pool_address, lower_bin, upper_bin }) {
+export async function getBinsInRange({ pool_address, lower_bin, upper_bin, skipCache = false }) {
   pool_address = normalizeMint(pool_address);
   const pool = await getPool(pool_address);
   // Guard against swapped bounds (SDK may error or return empty if lower > upper)
   const minBin = Math.min(lower_bin, upper_bin);
   const maxBin = Math.max(lower_bin, upper_bin);
+  const cacheKey = `${pool_address}:${minBin}:${maxBin}`;
+
+  if (!skipCache) {
+    const cached = _binsInRangeCache.get(cacheKey);
+    if (cached && Date.now() < cached.expiresAt) {
+      log("bins_cache_hit", `key=${cacheKey}`);
+      // structuredClone: protect cache from caller mutations (e.g., in-place
+      // sort/filter of bins). Cost is negligible (~35-69 bins per entry).
+      return structuredClone(cached.data);
+    }
+  }
+
   const result = await pool.getBinsBetweenLowerAndUpperBound(minBin, maxBin);
-  return {
+  const data = {
     activeBin: result.activeBin,
     bins: result.bins.map((b) => {
       // SDK sometimes returns b.price as a BN object (Q64.64 integer) and
@@ -508,6 +539,10 @@ export async function getBinsInRange({ pool_address, lower_bin, upper_bin }) {
       };
     }),
   };
+
+  // Store successful result in cache
+  _binsInRangeCache.set(cacheKey, { data, expiresAt: Date.now() + BINS_IN_RANGE_CACHE_TTL_MS });
+  return data;
 }
 
 // ─── VP Strategy Distribution ──────────────────────────────────
@@ -776,7 +811,7 @@ export async function deployPosition({
   if (process.env.DRY_RUN === "true") {
     let vpId = null;
     try {
-      const { bins } = await getBinsInRange({ pool_address, lower_bin: minBinId, upper_bin: maxBinId });
+      const { bins } = await getBinsInRange({ pool_address, lower_bin: minBinId, upper_bin: maxBinId, skipCache: true });
       log("deploy", `DRY_RUN: bins=${bins.length}, activeBin=${activeBin.binId}, hasActive=${bins.some(b => b.binId === activeBin.binId)}, strategy=${activeStrategy}`);
       if (bins.length > 0) {
         log("deploy", `DRY_RUN: sample0=price=${bins[0].price}, xAmt=${bins[0].xAmount}, yAmt=${bins[0].yAmount}, supply=${bins[0].supply}`);

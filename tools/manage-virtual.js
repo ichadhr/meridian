@@ -395,7 +395,9 @@ export async function runVirtualManagementCycle() {
   const mgmtConfig = config.management || {};
   const results = [];
 
-  // Deduplicate bin fetches: key = "pool:lower:upper"
+  // Per-cycle in-flight Promise dedup (complements the 30s dlmm.js cache).
+  // Coalesces concurrent fetches for the same range within ONE cycle —
+  // the dlmm.js cache handles across-cycle dedup via its 30s TTL.
   const binCache = new Map();
 
   /**
