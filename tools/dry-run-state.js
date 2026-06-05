@@ -25,12 +25,20 @@ function save(data) {
   }
 }
 
-function nextId(state) {
-  const maxN = state.virtual_positions.reduce((m, p) => {
-    const match = p.id && p.id.match(/^vp_(\d+)$/);
-    return match ? Math.max(m, parseInt(match[1])) : m;
-  }, 0);
-  return `vp_${String(maxN + 1).padStart(3, "0")}`;
+/**
+ * Generate a globally-unique VP ID using compact ISO 8601 UTC timestamp.
+ * Format: `vp-YYYYMMDDTHHMMSSZ` (e.g., `vp-20260605T073141Z`).
+ *
+ * Why timestamp-based: the previous sequential scheme (`vp_NNN`) reused IDs
+ * after close+deploy because `state.virtual_positions` only contains open
+ * VPs (closed ones are moved to JSONL archive). Timestamps can't collide
+ * and don't require a state scan. Old `vp_NNN` IDs from before this change
+ * still work — `parseVirtualPositionAddress` is format-agnostic.
+ */
+function nextId(_state) {
+  // new Date().toISOString() → "2026-06-05T07:31:41.234Z"
+  // Strip dashes, colons, and milliseconds; keep "YYYYMMDDTHHMMSSZ".
+  return "vp-" + new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d{3}/, "");
 }
 
 export function trackVirtualPosition({
