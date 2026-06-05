@@ -13,6 +13,13 @@
 
 import BN from "bn.js";
 import { config } from "../config.js";
+
+// Q64.64 scale factor from SDK. Pre-loaded at module init (dlmm.js always
+// imports the SDK before any computePositionPnl code runs).
+let _PRICE_SCALE = null;
+import("@meteora-ag/dlmm").then(mod => {
+  _PRICE_SCALE = BigInt(mod.SCALE.toString());
+});
 import { log } from "../logger.js";
 
 const ZERO = new BN(0);
@@ -276,7 +283,7 @@ export function computePositionPnl(position, binData, solPrice, opts = {}) {
  *                          - null: data insufficient, caller applies fallback
  */
 export function estimateSlippageLamports(perBin, binData, activeBinId, opts = {}) {
-  const PRICE_SCALE = 1n << 64n;
+  const PRICE_SCALE = _PRICE_SCALE;
 
   // ── Guard: missing active bin → null (fallback premium in caller) ───
   // Without this, `pb.binId > null` is always false → remainingX stays 0n
