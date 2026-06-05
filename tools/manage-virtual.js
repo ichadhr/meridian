@@ -36,6 +36,132 @@ async function getFreshCloseGasSol(cycleCloseGasSol, vpId) {
 }
 
 /**
+ * Build the polymorphic position view for the close rule.
+ * Caller selects unit (SOL when solMode, USD otherwise) once; the rule
+ * reads pre-computed polymorphic values. Mirrors the live
+ * getDeterministicCloseRule shape in index.js, which sees
+ * position.pnl_pct from getMyPositions — already polymorphic via
+ * mergeVirtualPositions. Without this branching the rule would always
+ * check USD PnL while Telegram shows SOL PnL, so TP/SL/trailing-TP
+ * decisions would diverge from the display.
+ */
+function buildPosForRule(vp, updates, pnl, activeBin, exitIsSol) {
+  return {
+    ...vp,
+    ...updates,
+    pnl_pct: exitIsSol ? pnl.pnlSolPct : pnl.pnlPct,
+    total_value_usd: exitIsSol ? pnl.positionValueSol : pnl.currentValueUsd,
+    unclaimed_fees_usd: exitIsSol ? pnl.unclaimedFeesSol : pnl.unclaimedFeesUsd,
+    // Use the FRESH post-update totals so Rule 5 (low yield) sees this
+    // cycle's accrued fees, not the stale pre-update values. For old VPs
+    // (no `total_fees_earned_sol` field), `updates.total_fees_earned_sol`
+    // still starts at 0 and grows from `newlyAccruedFeesSol` each cycle,
+    // bounded by the transition period.
+    total_fees_earned_usd: exitIsSol
+      ? (updates.total_fees_earned_sol || 0)
+      : (updates.total_fees_earned_usd || 0),
+    active_bin: activeBin,
+  };
+}
+
+/**
+ * Build the result object for a closed VP. Used by both the rule-based
+ * and trailing-TP close paths.
+ */
+function buildCloseResult(pnl, ageMinutes) {
+  return {
+    age_minutes: ageMinutes,
+    pnl_pct: pnl.pnlPct, pnl_usd: pnl.pnlUsd,
+    pnl_sol_pct: pnl.pnlSolPct, pnl_sol: pnl.netPnlSol,
+    il_sol: pnl.rawPnlSol, unclaimed_fees_sol: pnl.feesSol,
+    cost_sol: pnl.totalCostSol, il_usd: pnl.ilUsd,
+    unclaimed_fees_usd: pnl.feesUsd, cost_usd: pnl.totalCostUsd,
+  };
+}
+
+/**
+ * Record VP close to pool memory (not lessons/evolution — see NOTES.md).
+ * Populates pool-memory.json so the SCREENER can skip pools with past losses.
+ *
+ * @param {object} vp       the (stale shallow) VP from listVirtualPositions
+ * @param {object} pnl      the fresh PnL snapshot
+ * @param {string} closeReason
+ * @param {number} effectiveOorMinutes  FRESH OOR minutes for this cycle —
+ *                     reads from `vp._oor_minutes` would be stale because
+ *                     updateVirtualPosition mutates the file, not the
+ *                     in-memory copy.
+ */
+function recordVpDeployToPoolMemory(vp, pnl, closeReason, effectiveOorMinutes) {
+  const minutesHeld = vp.deployed_at
+    ? Math.floor((Date.now() - new Date(vp.deployed_at).getTime()) / 60000)
+    : 0;
+  const minutesOOR = effectiveOorMinutes || 0;
+  const rangeEfficiency = minutesHeld > 0
+    ? Math.max(0, (minutesHeld - minutesOOR) / minutesHeld * 100)
+    : 0;
+
+  try {
+    recordPoolDeploy(vp.pool, {
+      pool_name: vp.pool_name || vp.pair,
+      base_mint: vp.base_mint ?? null,
+      deployed_at: vp.deployed_at,
+      closed_at: new Date().toISOString(),
+      pnl_pct: pnl.pnlPct,
+      pnl_usd: pnl.pnlUsd,
+      range_efficiency: rangeEfficiency,
+      minutes_held: minutesHeld,
+      fees_earned_usd: pnl.unclaimedFeesUsd,
+      fees_earned_sol: pnl.unclaimedFeesSol,
+      fee_earned_pct: vp.initial_value_usd > 0
+        ? ((pnl.unclaimedFeesUsd || 0) / vp.initial_value_usd) * 100
+        : null,
+      close_reason: closeReason,
+      strategy: vp.strategy,
+      volatility: null,
+    });
+  } catch (e) {
+    log("vp", `Failed to record VP deploy to pool memory: ${e.message}`);
+  }
+}
+
+/**
+ * Close a VP, record the result, and return the PnL snapshot for the
+ * result array. Returns null on close failure (caller continues to
+ * next VP). Consolidates the duplicate close logic from the rule-based
+ * and trailing-TP close paths.
+ *
+ * @param {number} effectiveOorMinutes  fresh OOR minutes for this cycle;
+ *                     threaded through to recordVpDeployToPoolMemory.
+ */
+async function closeVpAndRecord(vp, reason, bins, solPrice, activeBin, cycleCloseGasSol, effectiveOorMinutes) {
+  // Fresh re-estimate of close gas (bypass cycle cache)
+  const finalCloseGasSol = await getFreshCloseGasSol(cycleCloseGasSol, vp.id);
+  const finalPnl = computePositionPnl(vp, bins, solPrice, {
+    closeGasSolOverride: finalCloseGasSol,
+    activeBinId: activeBin,
+  });
+
+  const closed = closeVirtualPosition(vp.id, reason, finalPnl.pnlPct, finalPnl.pnlUsd, {
+    close_pnl_sol_pct: finalPnl.pnlSolPct,
+    close_pnl_sol: finalPnl.netPnlSol,
+    close_il_sol: finalPnl.rawPnlSol,
+    close_fees_sol: finalPnl.feesSol,
+    close_cost_sol: finalPnl.totalCostSol,
+    close_il_usd: finalPnl.ilUsd,
+    close_fees_usd: finalPnl.feesUsd,
+    close_cost_usd: finalPnl.totalCostUsd,
+  });
+  if (!closed) {
+    log("vp", `VP ${vp.id} (${vp.pair}) close ABORTED — archive write failed, retrying next cycle`);
+    return null;
+  }
+  invalidatePositionsCache(); // drop stale positions cache (next /positions re-fetches)
+  recordVpDeployToPoolMemory(vp, finalPnl, reason, effectiveOorMinutes);
+  log("vp", `VP ${vp.id} (${vp.pair}) CLOSED: ${reason} PnL=${finalPnl.pnlPct.toFixed(2)}% (SOL: ${finalPnl.pnlSolPct.toFixed(2)}%) deployGas=${finalPnl.deployGasSol.toFixed(6)} closeGas=${finalPnl.closeGasSol.toFixed(6)}`);
+  return finalPnl;
+}
+
+/**
  * Run one management cycle for all open virtual positions.
  * Fetches live bin state, computes PnL, updates state, auto-closes on exit conditions.
  *
@@ -67,43 +193,6 @@ export async function runVirtualManagementCycle() {
   // Coalesces concurrent fetches for the same range within ONE cycle —
   // the dlmm.js cache handles across-cycle dedup via its 30s TTL.
   const binCache = new Map();
-
-  /**
-   * Record VP close to pool memory (not lessons/evolution — see NOTES.md).
-   * Populates pool-memory.json so the SCREENER can skip pools with past losses.
-   */
-  function recordVpDeployToPoolMemory(vp, pnl, closeReason) {
-    const minutesHeld = vp.deployed_at
-      ? Math.floor((Date.now() - new Date(vp.deployed_at).getTime()) / 60000)
-      : 0;
-    const minutesOOR = vp._oor_minutes || 0;
-    const rangeEfficiency = minutesHeld > 0
-      ? Math.max(0, (minutesHeld - minutesOOR) / minutesHeld * 100)
-      : 0;
-
-    try {
-      recordPoolDeploy(vp.pool, {
-        pool_name: vp.pool_name || vp.pair,
-        base_mint: vp.base_mint ?? null,
-        deployed_at: vp.deployed_at,
-        closed_at: new Date().toISOString(),
-        pnl_pct: pnl.pnlPct,
-        pnl_usd: pnl.pnlUsd,
-        range_efficiency: rangeEfficiency,
-        minutes_held: minutesHeld,
-        fees_earned_usd: pnl.unclaimedFeesUsd,
-        fees_earned_sol: pnl.unclaimedFeesSol,
-        fee_earned_pct: vp.initial_value_usd > 0
-          ? ((pnl.unclaimedFeesUsd || 0) / vp.initial_value_usd) * 100
-          : null,
-        close_reason: closeReason,
-        strategy: vp.strategy,
-        volatility: null,
-      });
-    } catch (e) {
-      log("vp", `Failed to record VP deploy to pool memory: ${e.message}`);
-    }
-  }
 
   for (const vp of vpList) {
     try {
@@ -235,115 +324,29 @@ export async function runVirtualManagementCycle() {
       if (snapshots.length > 100) snapshots.splice(0, snapshots.length - 100);
       updates.snapshots = snapshots;
 
-      // ── Exit rules (build polymorphic position, call new signature) ─
-      // The caller selects the unit once (SOL when solMode, USD otherwise)
-      // and the function reads pre-computed polymorphic values. This mirrors
-      // the live getDeterministicCloseRule(position, mgmtConfig) shape in
-      // index.js, which sees position.pnl_pct from getMyPositions — already
-      // polymorphic via mergeVirtualPositions. Without this branching the
-      // rule would always check USD PnL while Telegram shows SOL PnL, so
-      // TP/SL/trailing-TP decisions would diverge from the display.
+      // ── Decide: close (rule OR trailing) or stay ───────────────────
       const exitIsSol = !!mgmtConfig.solMode;
-      const posForRule = {
-        ...vp,
-        ...updates,
-        pnl_pct: exitIsSol ? pnl.pnlSolPct : pnl.pnlPct,
-        total_value_usd: exitIsSol ? pnl.positionValueSol : pnl.currentValueUsd,
-        unclaimed_fees_usd: exitIsSol ? pnl.unclaimedFeesSol : pnl.unclaimedFeesUsd,
-        // Use the FRESH post-update totals so Rule 5 (low yield) sees this
-        // cycle's accrued fees, not the stale pre-update values. For old VPs
-        // (no `total_fees_earned_sol` field), `updates.total_fees_earned_sol`
-        // still starts at 0 and grows from `newlyAccruedFeesSol` each cycle,
-        // bounded by the transition period.
-        total_fees_earned_usd: exitIsSol
-          ? (updates.total_fees_earned_sol || 0)
-          : (updates.total_fees_earned_usd || 0),
-        active_bin: activeBin,
-      };
+      const posForRule = buildPosForRule(vp, updates, pnl, activeBin, exitIsSol);
       const vpAgeMinutes = vp.deployed_at
         ? Math.floor((Date.now() - new Date(vp.deployed_at).getTime()) / 60000)
         : 0;
       const closeRule = getVirtualCloseRule(posForRule, mgmtConfig, effectiveOorMinutes);
-      if (closeRule) {
+      const closeReason = closeRule?.reason || trailingCloseReason;
+      if (closeReason) {
         // Persist final state BEFORE closing (preserves snapshot, peak, OOR)
         updateVirtualPosition(vp.id, updates);
-
-        // Recompute PnL with a FRESH close-gas estimate (bypasses 60s cache)
-        const finalCloseGasSol = await getFreshCloseGasSol(cycleCloseGasSol, vp.id);
-        const finalPnl = computePositionPnl(vp, binResult.bins, solPrice, {
-          closeGasSolOverride: finalCloseGasSol,
-          activeBinId: activeBin,
-        });
-
-        const closed = closeVirtualPosition(vp.id, closeRule.reason, finalPnl.pnlPct, finalPnl.pnlUsd, {
-          close_pnl_sol_pct: finalPnl.pnlSolPct,
-          close_pnl_sol: finalPnl.netPnlSol,
-          close_il_sol: finalPnl.rawPnlSol,
-          close_fees_sol: finalPnl.feesSol,
-          close_cost_sol: finalPnl.totalCostSol,
-          close_il_usd: finalPnl.ilUsd,
-          close_fees_usd: finalPnl.feesUsd,
-          close_cost_usd: finalPnl.totalCostUsd,
-        });
-        if (!closed) {
-          log("vp", `VP ${vp.id} (${vp.pair}) close ABORTED — archive write failed, retrying next cycle`);
-          continue;
-        }
-        invalidatePositionsCache(); // drop stale positions cache (next /positions re-fetches)
-        recordVpDeployToPoolMemory(vp, finalPnl, closeRule.reason);
+        const finalPnl = await closeVpAndRecord(
+          vp, closeReason, binResult.bins, solPrice, activeBin, cycleCloseGasSol, effectiveOorMinutes
+        );
+        if (!finalPnl) continue;
         results.push({
-          id: vp.id, pair: vp.pair, action: "CLOSED", reason: closeRule.reason,
-          age_minutes: vpAgeMinutes,
-          pnl_pct: finalPnl.pnlPct, pnl_usd: finalPnl.pnlUsd,
-          pnl_sol_pct: finalPnl.pnlSolPct, pnl_sol: finalPnl.netPnlSol,
-          il_sol: finalPnl.rawPnlSol, unclaimed_fees_sol: finalPnl.feesSol,
-          cost_sol: finalPnl.totalCostSol, il_usd: finalPnl.ilUsd,
-          unclaimed_fees_usd: finalPnl.feesUsd, cost_usd: finalPnl.totalCostUsd,
+          id: vp.id, pair: vp.pair, action: "CLOSED", reason: closeReason,
+          ...buildCloseResult(finalPnl, vpAgeMinutes),
         });
-        log("vp", `VP ${vp.id} (${vp.pair}) CLOSED: ${closeRule.reason} PnL=${finalPnl.pnlPct.toFixed(2)}% (SOL: ${finalPnl.pnlSolPct.toFixed(2)}%) deployGas=${finalPnl.deployGasSol.toFixed(6)} closeGas=${finalPnl.closeGasSol.toFixed(6)}`);
         continue;
       }
 
-      // ── Trailing TP close (2-cycle confirmed) ──────────────────────
-      if (trailingCloseReason) {
-        updateVirtualPosition(vp.id, updates);
-
-        // Fresh re-estimate of close gas (same helper as rule-based close)
-        const trailingCloseGasSol = await getFreshCloseGasSol(cycleCloseGasSol, vp.id);
-        const trailingFinalPnl = computePositionPnl(vp, binResult.bins, solPrice, {
-          closeGasSolOverride: trailingCloseGasSol,
-          activeBinId: activeBin,
-        });
-
-        const closed = closeVirtualPosition(vp.id, trailingCloseReason, trailingFinalPnl.pnlPct, trailingFinalPnl.pnlUsd, {
-          close_pnl_sol_pct: trailingFinalPnl.pnlSolPct,
-          close_pnl_sol: trailingFinalPnl.netPnlSol,
-          close_il_sol: trailingFinalPnl.rawPnlSol,
-          close_fees_sol: trailingFinalPnl.feesSol,
-          close_cost_sol: trailingFinalPnl.totalCostSol,
-          close_il_usd: trailingFinalPnl.ilUsd,
-          close_fees_usd: trailingFinalPnl.feesUsd,
-          close_cost_usd: trailingFinalPnl.totalCostUsd,
-        });
-        if (!closed) {
-          log("vp", `VP ${vp.id} (${vp.pair}) close ABORTED — archive write failed, retrying next cycle`);
-          continue;
-        }
-        invalidatePositionsCache(); // drop stale positions cache (next /positions re-fetches)
-        recordVpDeployToPoolMemory(vp, trailingFinalPnl, trailingCloseReason);
-        results.push({
-          id: vp.id, pair: vp.pair, action: "CLOSED", reason: trailingCloseReason,
-          age_minutes: vpAgeMinutes,
-          pnl_pct: trailingFinalPnl.pnlPct, pnl_usd: trailingFinalPnl.pnlUsd,
-          pnl_sol_pct: trailingFinalPnl.pnlSolPct, pnl_sol: trailingFinalPnl.netPnlSol,
-          il_sol: trailingFinalPnl.rawPnlSol, unclaimed_fees_sol: trailingFinalPnl.feesSol,
-          cost_sol: trailingFinalPnl.totalCostSol, il_usd: trailingFinalPnl.ilUsd,
-          unclaimed_fees_usd: trailingFinalPnl.feesUsd, cost_usd: trailingFinalPnl.totalCostUsd,
-        });
-        log("vp", `VP ${vp.id} (${vp.pair}) CLOSED: ${trailingCloseReason}`);
-        continue;
-      }
-
+      // ── Stay ──────────────────────────────────────────────────────
       updateVirtualPosition(vp.id, updates);
 
       const oorLabel = isOOR ? `OOR ${effectiveOorMinutes}m` : "IN";
