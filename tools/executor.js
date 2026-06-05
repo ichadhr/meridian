@@ -250,7 +250,7 @@ const toolMap = {
   get_position_pnl: getPositionPnl,
   get_active_bin: getActiveBin,
   deploy_position: deployPosition,
-  get_my_positions: getMyPositions,
+  get_my_positions: () => getMyPositions({ force: true }),
   get_wallet_positions: getWalletPositions,
   search_pools: searchPools,
   get_token_info: getTokenInfo,
@@ -746,23 +746,12 @@ async function runSafetyChecks(name, args) {
       }
 
       // Check position count limit + duplicate pool guard — force fresh scan to avoid stale cache
+      // In DRY_RUN mode, getMyPositions already includes virtual positions, so
+      // totalPositions / occupiedPools / occupiedMints are the single source of truth.
       const positions = await getMyPositions({ force: true });
-      let totalPositions = positions.total_positions;
+      const totalPositions = positions.total_positions;
       const occupiedPools = new Set(positions.positions.map((p) => p.pool));
       const occupiedMints = new Set(positions.positions.map((p) => p.base_mint).filter(Boolean));
-
-      // In DRY_RUN mode, also count virtual positions toward limits
-      if (process.env.DRY_RUN === "true") {
-        try {
-          const { listVirtualPositions } = await import("./dry-run-state.js");
-          const vps = listVirtualPositions("open");
-          totalPositions += vps.length;
-          for (const vp of vps) {
-            occupiedPools.add(vp.pool);
-            if (vp.base_mint) occupiedMints.add(vp.base_mint);
-          }
-        } catch (e) { log("safety_block", `VP import failed: ${e.message}`); }
-      }
 
       if (totalPositions >= config.risk.maxPositions) {
         return {

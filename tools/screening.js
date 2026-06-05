@@ -547,22 +547,13 @@ export async function getTopCandidates({ limit = 10 } = {}) {
   const { pools } = discovery;
   const filteredOut = Array.isArray(discovery.filtered_examples) ? [...discovery.filtered_examples] : [];
 
-  // Exclude pools where the wallet already has an open position
+  // Exclude pools where the wallet already has an open position.
+  // In DRY_RUN mode, getMyPositions() already includes virtual positions, so
+  // occupiedPools / occupiedMints are the single source of truth.
   const { getMyPositions } = await import("./dlmm.js");
   const { positions } = await getMyPositions();
   const occupiedPools = new Set(positions.map((p) => p.pool));
   const occupiedMints = new Set(positions.map((p) => p.base_mint).filter(Boolean));
-
-  // In DRY_RUN mode, also exclude pools where wallet has a virtual position
-  if (process.env.DRY_RUN === "true") {
-    try {
-      const { listVirtualPositions } = await import("./dry-run-state.js");
-      for (const vp of listVirtualPositions("open")) {
-        occupiedPools.add(vp.pool);
-        if (vp.base_mint) occupiedMints.add(vp.base_mint);
-      }
-    } catch (e) { log("screening", `VP import failed: ${e.message}`); }
-  }
 
   const minTvl = Number(config.screening.minTvl ?? 0);
   const maxTvl = config.screening.maxTvl == null ? null : Number(config.screening.maxTvl);
