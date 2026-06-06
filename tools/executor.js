@@ -782,7 +782,6 @@ async function runSafetyChecks(name, args) {
 
       const deployAmountY = Number(args.amount_y ?? args.amount_sol ?? 0);
       const deployAmountX = Number(args.amount_x ?? 0);
-      const amountY = deployAmountY;
       if (Number.isFinite(deployAmountX) && deployAmountX > 0) {
         return {
           pass: false,
@@ -848,11 +847,11 @@ async function runSafetyChecks(name, args) {
         const balance = await getWalletBalances();
         const gasReserve = config.management.gasReserve ?? 0.2;
         const rentBuffer = config.management.rentBuffer ?? 0.15;
-        const minRequired = amountY + gasReserve + rentBuffer;
+        const minRequired = deployAmountY + gasReserve + rentBuffer;
         if (balance.sol < minRequired) {
           return {
             pass: false,
-            reason: `Insufficient SOL: have ${balance.sol.toFixed(2)} SOL, need ${minRequired.toFixed(2)} SOL (${amountY} deploy + ${gasReserve} gas + ${rentBuffer} position rent).`,
+            reason: `Insufficient SOL: have ${balance.sol.toFixed(2)} SOL, need ${minRequired.toFixed(2)} SOL (${deployAmountY} deploy + ${gasReserve} gas + ${rentBuffer} position rent).`,
           };
         }
       }
@@ -887,7 +886,7 @@ async function runSafetyChecks(name, args) {
       }
 
       // Check amount limits
-      if (!Number.isFinite(amountY) || amountY <= 0) {
+      if (!Number.isFinite(deployAmountY) || deployAmountY <= 0) {
         return {
           pass: false,
           reason: `Must provide a positive SOL amount (amount_y).`,
@@ -895,16 +894,16 @@ async function runSafetyChecks(name, args) {
       }
 
       const minDeploy = Math.max(0.1, config.management.deployAmountSol);
-      if (amountY < minDeploy) {
+      if (deployAmountY < minDeploy) {
         return {
           pass: false,
-          reason: `Amount ${amountY} SOL is below the minimum deploy amount (${minDeploy} SOL). Use at least ${minDeploy} SOL.`,
+          reason: `Amount ${deployAmountY} SOL is below the minimum deploy amount (${minDeploy} SOL). Use at least ${minDeploy} SOL.`,
         };
       }
-      if (amountY > config.risk.maxDeployAmount) {
+      if (deployAmountY > config.risk.maxDeployAmount) {
         return {
           pass: false,
-          reason: `SOL amount ${amountY} exceeds maximum allowed per position (${config.risk.maxDeployAmount}).`,
+          reason: `SOL amount ${deployAmountY} exceeds maximum allowed per position (${config.risk.maxDeployAmount}).`,
         };
       }
 
