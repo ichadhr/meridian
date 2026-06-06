@@ -23,6 +23,7 @@ import { addToBlacklist, removeFromBlacklist, listBlacklist } from "../token-bla
 import { blockDev, unblockDev, listBlockedDevs } from "../dev-blocklist.js";
 import { addSmartWallet, removeSmartWallet, listSmartWallets, checkSmartWalletsOnPool } from "../smart-wallets.js";
 import { getTokenInfo, getTokenHolders, getTokenNarrative } from "./token.js";
+import { getAdvancedInfo } from "./okx.js";
 import { config, reloadScreeningThresholds, MIN_SAFE_BINS_BELOW } from "../config.js";
 import { getRecentDecisions } from "../decision-log.js";
 import fs from "fs";
@@ -726,6 +727,48 @@ async function runSafetyChecks(name, args) {
     case "deploy_position": {
       const poolThresholds = await validateDeployPoolThresholds(args);
       if (!poolThresholds.pass) return poolThresholds;
+
+      // OKX dev-rug + honeypot check. Fail-open on OKX errors so an OKX
+      // outage doesn't block all deploys — operator sees the warning. Skipped
+      // in DRY_RUN to preserve OKX API quota on simulated deploys.
+      if (process.env.DRY_RUN === "true") {
+        log("okx_safety_skip", "DRY_RUN — OKX rug/honeypot check bypassed");
+      } else if (!args.base_mint) {
+        log("okx_safety_skip", "base_mint not provided — OKX rug/honeypot check bypassed");
+      } else {
+        let advanced;
+        try {
+          advanced = await getAdvancedInfo(args.base_mint);
+        } catch (err) {
+          if (config.screening.okxFailClosed) {
+            return {
+              pass: false,
+              reason: `OKX getAdvancedInfo failed for ${args.base_mint.slice(0, 8)}: ${err.message} — refusing deploy (fail-closed per config).`,
+            };
+          }
+          log("okx_safety_warn", `OKX getAdvancedInfo failed for ${args.base_mint.slice(0, 8)}: ${err.message} — proceeding without rug check`);
+        }
+        if (advanced) {
+          const maxRugCount = config.screening.maxDevRugCount ?? 2;
+          const rugCount = advanced.dev_rug_count ?? 0;
+          if (rugCount >= maxRugCount) {
+            log("okx_safety_block", `Token ${args.base_mint.slice(0, 8)} has ${rugCount} prior rugs (threshold: ${maxRugCount})`);
+            return {
+              pass: false,
+              reason: `Token ${args.base_mint.slice(0, 8)} has ${rugCount} prior rugs by the dev (OKX, threshold: ${maxRugCount}). Refusing deploy.`,
+            };
+          }
+          if (advanced.is_honeypot) {
+            log("okx_safety_block", `Token ${args.base_mint.slice(0, 8)} is flagged as honeypot (OKX)`);
+            return {
+              pass: false,
+              reason: `Token ${args.base_mint.slice(0, 8)} is flagged as honeypot (OKX). Refusing deploy.`,
+            };
+          }
+        } else {
+          log("okx_safety_skip", `OKX returned no data for ${args.base_mint.slice(0, 8)} — proceeding without rug check`);
+        }
+      }
 
       // Reject pools with bin_step out of configured range
       const minStep = config.screening.minBinStep;

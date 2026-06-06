@@ -88,6 +88,8 @@ export const config = {
     minTokenAgeHours:   u.minTokenAgeHours   ?? null, // null = no minimum
     maxTokenAgeHours:   u.maxTokenAgeHours   ?? null, // null = no maximum
     athFilterPct:       u.athFilterPct       ?? null, // e.g. -20 = only deploy if price is >= 20% below ATH
+    maxDevRugCount:     u.maxDevRugCount     ?? 2,    // refuse deploy if dev rugged >= N prior tokens (OKX)
+    okxFailClosed:      u.okxFailClosed      ?? false, // if true, OKX API failure blocks deploy; default fail-open
   },
 
   // ─── Position Management ────────────────
@@ -294,6 +296,8 @@ export function reloadScreeningThresholds() {
     if (fresh.blockPvpSymbols   !== undefined) s.blockPvpSymbols = fresh.blockPvpSymbols;
     if (fresh.maxBotHoldersPct  != null) s.maxBotHoldersPct = fresh.maxBotHoldersPct;
     if (fresh.allowedLaunchpads !== undefined) s.allowedLaunchpads = fresh.allowedLaunchpads;
+    if (fresh.maxDevRugCount    != null) s.maxDevRugCount    = fresh.maxDevRugCount;
+    if (fresh.okxFailClosed     !== undefined) s.okxFailClosed  = fresh.okxFailClosed;
     if (fresh.blockedLaunchpads !== undefined) s.blockedLaunchpads = fresh.blockedLaunchpads;
     const minBinsBelow = numericConfig(fresh.minBinsBelow) ?? config.strategy.minBinsBelow;
     const maxBinsBelow = numericConfig(fresh.maxBinsBelow) ?? numericConfig(fresh.binsBelow) ?? config.strategy.maxBinsBelow;
