@@ -113,6 +113,7 @@ export const config = {
     minSolToOpen:          u.minSolToOpen          ?? 0.55,
     deployAmountSol:       u.deployAmountSol       ?? 0.5,
     gasReserve:            u.gasReserve            ?? 0.2,
+    rentBuffer:            u.rentBuffer            ?? 0.15, // one-time SOL rent for new DLMM position account (~0.145 per dlmm.js)
     positionSizePct:       u.positionSizePct       ?? 0.35,
     // Trailing take-profit
     trailingTakeProfit:    u.trailingTakeProfit    ?? true,
@@ -250,11 +251,12 @@ if (u.vpSlippagePct !== undefined) {
  *   4.0 SOL wallet → 1.33 SOL deploy
  */
 export function computeDeployAmount(walletSol) {
-  const reserve  = config.management.gasReserve      ?? 0.2;
-  const pct      = config.management.positionSizePct ?? 0.35;
-  const floor    = config.management.deployAmountSol;
-  const ceil     = config.risk.maxDeployAmount;
-  const deployable = Math.max(0, walletSol - reserve);
+  const gasReserve = config.management.gasReserve      ?? 0.2;
+  const rentBuffer = config.management.rentBuffer      ?? 0.15;
+  const pct        = config.management.positionSizePct ?? 0.35;
+  const floor      = config.management.deployAmountSol;
+  const ceil       = config.risk.maxDeployAmount;
+  const deployable = Math.max(0, walletSol - gasReserve - rentBuffer);
   const dynamic    = deployable * pct;
   const result     = Math.min(ceil, Math.max(floor, dynamic));
   return parseFloat(result.toFixed(2));

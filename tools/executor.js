@@ -846,13 +846,13 @@ async function runSafetyChecks(name, args) {
       // Skipped in DRY_RUN since balance is irrelevant for simulated deploys.
       if (process.env.DRY_RUN !== "true") {
         const balance = await getWalletBalances();
-        const gasReserve = config.management.gasReserve;
-        const rentBuffer = 0.08;
+        const gasReserve = config.management.gasReserve ?? 0.2;
+        const rentBuffer = config.management.rentBuffer ?? 0.15;
         const minRequired = amountY + gasReserve + rentBuffer;
         if (balance.sol < minRequired) {
           return {
             pass: false,
-            reason: `Insufficient SOL: have ${balance.sol} SOL, need ${minRequired.toFixed(2)} SOL (${amountY} deploy + ${gasReserve} gas + ${rentBuffer} rent).`,
+            reason: `Insufficient SOL: have ${balance.sol.toFixed(2)} SOL, need ${minRequired.toFixed(2)} SOL (${amountY} deploy + ${gasReserve} gas + ${rentBuffer} position rent).`,
           };
         }
       }
