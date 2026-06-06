@@ -561,7 +561,13 @@ const toolMap = {
   },
 };
 
-// Tools that modify on-chain state (need extra safety checks)
+// Tools that modify on-chain state (need extra safety checks). Intentionally
+// limited to financial writes — local JSON mutations (set_position_note,
+// update_config, add_pool_note, add_lesson) are excluded because a failed
+// config save is recoverable by retry, while a failed on-chain write is a
+// lost deploy / lost SOL. The strict success check in executeTool() relies
+// on this distinction: write tools must return `success: true` or
+// `dry_run: true`; everything else uses the lenient check.
 const WRITE_TOOLS = new Set([
   "deploy_position",
   "claim_fees",
@@ -606,7 +612,13 @@ export async function executeTool(name, args) {
   try {
     const result = await fn(args);
     const duration = Date.now() - startTime;
-    const success = result?.success !== false && !result?.error;
+    // Strict success check for write tools: a deploy/claim/close/swap that
+    // forgets to return `success: true` (or `dry_run: true` in DRY_RUN mode)
+    // is a lost deploy, not a successful one. Lenient for read tools — a
+    // missing success flag from a read is usually benign.
+    const success = WRITE_TOOLS.has(name)
+      ? (result?.success === true || result?.dry_run === true)
+      : (result?.success !== false && !result?.error);
 
     logAction({
       tool: name,
