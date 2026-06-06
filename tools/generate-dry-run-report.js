@@ -65,9 +65,8 @@ function computeStats(days) {
     totalPnlSol += sol;
     for (const p of positions) {
       // Win/loss uses primary currency (SOL sign for SOL positions, USD otherwise).
-      // Values in (-0.005, 0.005) are treated as wins (rounding noise, not a real loss).
       const pnl = isSolPosition(p) ? (p.close_pnl_sol || 0) : (p.close_pnl_usd || 0);
-      if (isEffectiveZero(pnl) || pnl >= 0) wins++;
+      if (pnl >= 0) wins++;
       else losses++;
     }
     if (usd > bestDay.pnlUsd) bestDay = { date, pnlUsd: usd, pnlSol: sol };
@@ -90,9 +89,8 @@ function computeStats(days) {
 /** Build HTML for a single position list item. */
 function positionHtml(vp) {
   // Color tracks the primary currency: SOL sign for SOL positions, USD for USD.
-  // Effective-zero values display as positive (rounding noise should never read as a loss).
   const primaryPnl = isSolPosition(vp) ? (vp.close_pnl_sol || 0) : (vp.close_pnl_usd || 0);
-  const cls = isEffectiveZero(primaryPnl) || primaryPnl >= 0 ? "positive" : "negative";
+  const cls = primaryPnl >= 0 ? "positive" : "negative";
   const reason = (vp.close_reason || "").replace(/_/g, " ");
   const pair = vp.pair || vp.pool?.slice(0, 8) || "?";
 
@@ -109,7 +107,7 @@ function positionHtml(vp) {
 
   // PnL percentage (use close_pnl_sol_pct for SOL positions, close_pnl_pct for USD)
   const pnlPct = isSolPosition(vp) ? vp.close_pnl_sol_pct : vp.close_pnl_pct;
-  const pctStr = pnlPct != null ? ` (${(isEffectiveZero(pnlPct) || pnlPct >= 0) ? "+" : ""}${Math.abs(pnlPct).toFixed(2)}%)` : "";
+  const pctStr = pnlPct != null ? ` (${pnlPct >= 0 ? "+" : ""}${Math.abs(pnlPct).toFixed(2)}%)` : "";
 
   return `<div class="pos-item">
     <div>
@@ -130,13 +128,8 @@ function isSolPosition(vp) {
   return (vp?.sol_price_at_deploy ?? 0) > 0;
 }
 
-// Treat values in (-0.005, 0.005) as effectively zero — prevents display of
-// "-0.00 SOL" when the underlying value is rounding noise. Also used for
-// color class, win/loss, and pct string (so the visual matches the USD truth).
-const isEffectiveZero = (n) => Math.abs(n) < 0.005;
-
 // Module-level helpers (DRY: used by formatPnl, formatCurrencyTotal, buildMonths)
-const fmtSign = (n) => isEffectiveZero(n) ? "+" : n >= 0 ? "+" : "-";
+const fmtSign = (n) => n >= 0 ? "+" : "-";
 const fmtAbs = (n) => Math.abs(n).toFixed(2);
 
 /** Format a position's PnL for display, honoring its primary currency. */
@@ -317,8 +310,7 @@ export async function generateDryRunReport() {
 const DAYS = ${JSON.stringify(buildDayData(sortedDates, days))};
 
 // Shared formatting helpers (browser-side, no Node.js access here)
-const isEffectiveZero = (n) => Math.abs(n) < 0.005;
-const fmtSign = (n) => isEffectiveZero(n) ? '+' : n >= 0 ? '+' : '-';
+const fmtSign = (n) => n >= 0 ? '+' : '-';
 const fmtAbs = (n) => Math.abs(n).toFixed(2);
 
 let monthIdx = findCurrentMonth();
@@ -451,7 +443,7 @@ function buildMonths(sortedDates, days) {
           else intense = "ln";
         }
 
-        const cls = isEffectiveZero(dayPnl) || dayPnl >= 0 ? "pos" : "neg";
+        const cls = dayPnl >= 0 ? "pos" : "neg";
         const signUsd = fmtSign(dayPnl);
         const signSol = fmtSign(daySol);
         const absSol = fmtAbs(daySol);
