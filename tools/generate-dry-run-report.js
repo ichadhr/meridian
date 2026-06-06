@@ -64,11 +64,9 @@ function computeStats(days) {
     totalPnlUsd += usd;
     totalPnlSol += sol;
     for (const p of positions) {
-      // Win/loss uses USD (the "ground truth" PnL — captures actual gain/loss
-      // including IL and base token appreciation, not just SOL movement). SOL
-      // can be near-zero while USD is meaningfully negative (or vice versa).
-      // Values in (-0.005, 0.005) are treated as wins (rounding noise).
-      const pnl = p.close_pnl_usd || 0;
+      // Win/loss uses primary currency (SOL sign for SOL positions, USD otherwise).
+      // Values in (-0.005, 0.005) are treated as wins (rounding noise, not a real loss).
+      const pnl = isSolPosition(p) ? (p.close_pnl_sol || 0) : (p.close_pnl_usd || 0);
       if (isEffectiveZero(pnl) || pnl >= 0) wins++;
       else losses++;
     }
@@ -91,12 +89,10 @@ function computeStats(days) {
 
 /** Build HTML for a single position list item. */
 function positionHtml(vp) {
-  // Color tracks USD (the "ground truth" PnL). SOL is shown alongside in the
-  // PnL string for transparency, but the row color reflects the actual gain/loss
-  // in dollars — a position with +0.00 SOL but -$0.32 USD is a loss (red).
-  // Effective-zero values are treated as positive (rounding noise).
-  const usdPnl = vp.close_pnl_usd || 0;
-  const cls = isEffectiveZero(usdPnl) || usdPnl >= 0 ? "positive" : "negative";
+  // Color tracks the primary currency: SOL sign for SOL positions, USD for USD.
+  // Effective-zero values display as positive (rounding noise should never read as a loss).
+  const primaryPnl = isSolPosition(vp) ? (vp.close_pnl_sol || 0) : (vp.close_pnl_usd || 0);
+  const cls = isEffectiveZero(primaryPnl) || primaryPnl >= 0 ? "positive" : "negative";
   const reason = (vp.close_reason || "").replace(/_/g, " ");
   const pair = vp.pair || vp.pool?.slice(0, 8) || "?";
 
