@@ -25,7 +25,19 @@ async function loadAllClosedPositions() {
     log("dry_run_report", `Failed to read VP archives: ${e.message}`);
   }
 
-  return all;
+  // Deduplicate by vp.id — keep first occurrence. A crash between archive append
+  // and the splice in closeVirtualPosition can leave a VP archived twice (current
+  // production has 10 duplicate lines across 8 unique IDs). Proper fix tracked
+  // in meridian-XXX: state-canonical close flow + idempotent archive sweep.
+  const seen = new Set();
+  const deduped = [];
+  for (const r of all) {
+    if (!seen.has(r.id)) {
+      seen.add(r.id);
+      deduped.push(r);
+    }
+  }
+  return deduped;
 }
 
 /** Group positions by UTC date (YYYY-MM-DD) from closed_at. */
@@ -42,29 +54,39 @@ function groupByDay(positions) {
 
 /** Build a summary stats object from all daily groups. */
 function computeStats(days) {
-  let totalPnl = 0;
+  let totalPnlUsd = 0;
+  let totalPnlSol = 0;
   let wins = 0;
   let losses = 0;
-  let bestDay = { date: null, pnl: -Infinity };
-  let worstDay = { date: null, pnl: Infinity };
+  // Best/worst day ranked by USD (most familiar), but both currencies are returned.
+  // Best/worst day ranked by USD: USD is the more familiar concrete number for
+  // most users, and it's the only currency guaranteed for legacy USD-only positions.
+  // Both currencies are returned so the display can show them side-by-side.
+  let bestDay = { date: null, pnlUsd: -Infinity, pnlSol: 0 };
+  let worstDay = { date: null, pnlUsd: Infinity, pnlSol: 0 };
 
   for (const [date, positions] of days) {
-    const dayPnl = positions.reduce((s, p) => s + (p.close_pnl_usd || 0), 0);
-    totalPnl += dayPnl;
+    const { usd, sol } = sumPnlByCurrency(positions);
+    totalPnlUsd += usd;
+    totalPnlSol += sol;
     for (const p of positions) {
-      if ((p.close_pnl_usd || 0) >= 0) wins++;
+      // Win/loss uses primary currency (SOL sign for SOL positions, USD otherwise)
+      const pnl = isSolPosition(p) ? (p.close_pnl_sol || 0) : (p.close_pnl_usd || 0);
+      if (pnl >= 0) wins++;
       else losses++;
     }
-    if (dayPnl > bestDay.pnl) bestDay = { date, pnl: dayPnl };
-    if (dayPnl < worstDay.pnl) worstDay = { date, pnl: dayPnl };
+    if (usd > bestDay.pnlUsd) bestDay = { date, pnlUsd: usd, pnlSol: sol };
+    if (usd < worstDay.pnlUsd) worstDay = { date, pnlUsd: usd, pnlSol: sol };
   }
 
   const total = wins + losses;
   return {
-    totalPnl,
+    totalPnlUsd,
+    totalPnlSol,
     totalPositions: total,
     winRate: total > 0 ? Math.round((wins / total) * 100) : 0,
-    avgReturn: total > 0 ? totalPnl / total : 0,
+    // Avg return: USD as the default (most positions are USD, and SOL is shown separately)
+    avgReturnUsd: total > 0 ? totalPnlUsd / total : 0,
     bestDay,
     worstDay,
   };
@@ -72,10 +94,9 @@ function computeStats(days) {
 
 /** Build HTML for a single position list item. */
 function positionHtml(vp) {
-  const pnl = vp.close_pnl_usd || 0;
-  const cls = pnl >= 0 ? "positive" : "negative";
-  const sign = pnl >= 0 ? "+" : "-";
-  const absPnl = Math.abs(pnl);
+  // Color tracks the primary currency: SOL sign for SOL positions, USD for USD.
+  const primaryPnl = isSolPosition(vp) ? (vp.close_pnl_sol || 0) : (vp.close_pnl_usd || 0);
+  const cls = primaryPnl >= 0 ? "positive" : "negative";
   const reason = (vp.close_reason || "").replace(/_/g, " ");
   const pair = vp.pair || vp.pool?.slice(0, 8) || "?";
 
@@ -90,8 +111,8 @@ function positionHtml(vp) {
     }
   }
 
-  // PnL percentage
-  const pnlPct = vp.close_pnl_pct;
+  // PnL percentage (use close_pnl_sol_pct for SOL positions, close_pnl_pct for USD)
+  const pnlPct = isSolPosition(vp) ? vp.close_pnl_sol_pct : vp.close_pnl_pct;
   const pctStr = pnlPct != null ? ` (${pnlPct >= 0 ? "+" : ""}${Math.abs(pnlPct).toFixed(2)}%)` : "";
 
   return `<div class="pos-item">
@@ -99,13 +120,51 @@ function positionHtml(vp) {
       <div class="pos-name">${escapeHtml(pair)} <span class="pos-reason">${escapeHtml(reason)}</span></div>
       <div class="pos-meta">${duration} hold${pctStr}</div>
     </div>
-    <div class="pos-pnl ${cls}">${sign}$${absPnl.toFixed(2)}</div>
+    <div class="pos-pnl ${cls}">${formatPnl(vp)}</div>
   </div>`;
 }
 
 function escapeHtml(s) {
   if (typeof s !== "string") return String(s ?? "");
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+/** A position is SOL-denominated if it has a SOL price captured at deploy time. */
+function isSolPosition(vp) {
+  return (vp?.sol_price_at_deploy ?? 0) > 0;
+}
+
+// Module-level helpers (DRY: used by formatPnl, formatCurrencyTotal, buildMonths)
+const fmtSign = (n) => (n >= 0 ? "+" : "-");
+const fmtAbs = (n) => Math.abs(n).toFixed(2);
+
+/** Format a position's PnL for display, honoring its primary currency. */
+function formatPnl(vp) {
+  if (isSolPosition(vp)) {
+    const sol = vp.close_pnl_sol || 0;
+    const usd = vp.close_pnl_usd || 0;
+    return `${fmtSign(sol)}${fmtAbs(sol)} SOL (${fmtSign(usd)}$${fmtAbs(usd)})`;
+  }
+  const usd = vp.close_pnl_usd || 0;
+  return `${fmtSign(usd)}$${fmtAbs(usd)}`;
+}
+
+/** Sum PnL across an array of positions, separating by currency. */
+function sumPnlByCurrency(positions) {
+  let usd = 0;
+  let sol = 0;
+  for (const p of positions) {
+    usd += p.close_pnl_usd || 0;
+    if (isSolPosition(p)) sol += p.close_pnl_sol || 0;
+  }
+  return { usd, sol };
+}
+
+/** Format a {usd, sol} totals object for headers/modals/calendar cells. */
+function formatCurrencyTotal({ usd, sol }) {
+  const parts = [`${fmtSign(usd)}$${fmtAbs(usd)}`];
+  if (sol !== 0) parts.push(`${fmtSign(sol)}${fmtAbs(sol)} SOL`);
+  return parts.join(" / ");
 }
 
 /** Generate the full self-contained HTML report. */
@@ -124,18 +183,16 @@ export async function generateDryRunReport() {
   // Build calendar months
   const months = buildMonths(sortedDates, days);
 
-  const bestSign = stats.bestDay.pnl >= 0 ? "+" : "-";
-  const worstSign = stats.worstDay.pnl >= 0 ? "+" : "-";
-  const bestStr = stats.bestDay.date ? `${bestSign}$${Math.abs(stats.bestDay.pnl).toFixed(2)}` : "—";
-  const worstStr = stats.worstDay.date ? `${worstSign}$${Math.abs(stats.worstDay.pnl).toFixed(2)}` : "—";
-  const totalSign = stats.totalPnl >= 0 ? "+" : "-";
-  const avgSign = stats.avgReturn >= 0 ? "+" : "-";
-  const bestCls = stats.bestDay.pnl >= 0 ? "positive" : "negative";
-  const worstCls = stats.worstDay.pnl >= 0 ? "positive" : "negative";
+  const bestStr = stats.bestDay.date ? formatCurrencyTotal({ usd: stats.bestDay.pnlUsd, sol: stats.bestDay.pnlSol }) : "—";
+  const worstStr = stats.worstDay.date ? formatCurrencyTotal({ usd: stats.worstDay.pnlUsd, sol: stats.worstDay.pnlSol }) : "—";
+  const totalCls = stats.totalPnlUsd >= 0 ? "positive" : "negative";
+  const avgCls = stats.avgReturnUsd >= 0 ? "positive" : "negative";
+  const bestCls = stats.bestDay.pnlUsd >= 0 ? "positive" : "negative";
+  const worstCls = stats.worstDay.pnlUsd >= 0 ? "positive" : "negative";
   const statsHtml = `
-    <div class="stat"><div class="stat-lbl">Total PnL</div><div class="stat-val ${stats.totalPnl >= 0 ? "positive" : "negative"}">${totalSign}$${Math.abs(stats.totalPnl).toFixed(2)}</div></div>
+    <div class="stat"><div class="stat-lbl">Total PnL</div><div class="stat-val ${totalCls}" style="font-size:16px">${formatCurrencyTotal({ usd: stats.totalPnlUsd, sol: stats.totalPnlSol })}</div></div>
     <div class="stat"><div class="stat-lbl">Win Rate</div><div class="stat-val neutral">${stats.winRate}%</div></div>
-    <div class="stat"><div class="stat-lbl">Avg Return</div><div class="stat-val ${stats.avgReturn >= 0 ? "positive" : "negative"}">${avgSign}$${Math.abs(stats.avgReturn).toFixed(2)}</div></div>
+    <div class="stat"><div class="stat-lbl">Avg Return</div><div class="stat-val ${avgCls}" style="font-size:16px">${formatCurrencyTotal({ usd: stats.avgReturnUsd, sol: 0 })}</div></div>
     <div class="stat"><div class="stat-lbl">Best / Worst</div><div class="stat-val" style="font-size:16px"><span class="${bestCls}">${bestStr}</span> / <span class="${worstCls}">${worstStr}</span></div></div>
   `;
 
@@ -246,6 +303,10 @@ export async function generateDryRunReport() {
 <script>
 const DAYS = ${JSON.stringify(buildDayData(sortedDates, days))};
 
+// Shared formatting helpers (browser-side, no Node.js access here)
+const fmtSign = (n) => n >= 0 ? '+' : '-';
+const fmtAbs = (n) => Math.abs(n).toFixed(2);
+
 let monthIdx = findCurrentMonth();
 
 function findCurrentMonth() {
@@ -273,8 +334,13 @@ function openDay(dateStr) {
   if (!day) return;
   document.getElementById('modal').classList.add('active');
   document.getElementById('mt').textContent = formatDate(dateStr);
-  const sign = day.total >= 0 ? '+' : '-';
-  document.getElementById('md').textContent = 'Total PnL: ' + sign + '$' + Math.abs(day.total).toFixed(2) + ' (' + day.positions.length + ' position' + (day.positions.length !== 1 ? 's' : '') + ')';
+  // Day totals are stored as {usd, sol} to keep currencies separate
+  const usdPart = fmtSign(day.totalUsd) + '$' + fmtAbs(day.totalUsd);
+  let totalStr = usdPart;
+  if (day.totalSol !== 0) {
+    totalStr += ' / ' + fmtSign(day.totalSol) + fmtAbs(day.totalSol) + ' SOL';
+  }
+  document.getElementById('md').textContent = 'Total PnL: ' + totalStr + ' (' + day.positions.length + ' position' + (day.positions.length !== 1 ? 's' : '') + ')';
   document.getElementById('mc').innerHTML = day.positions.join('');
 }
 
@@ -298,9 +364,9 @@ function buildDayData(sortedDates, days) {
   const data = {};
   for (const date of sortedDates) {
     const positions = days.get(date) || [];
-    const total = positions.reduce((s, p) => s + (p.close_pnl_usd || 0), 0);
+    const { usd, sol } = sumPnlByCurrency(positions);
     const htmls = positions.map(p => positionHtml(p));
-    data[date] = { total, positions: htmls };
+    data[date] = { totalUsd: usd, totalSol: sol, positions: htmls };
   }
   return data;
 }
@@ -355,10 +421,10 @@ function buildMonths(sortedDates, days) {
       const dateStr = `${monthKey}-${String(d).padStart(2, "0")}`;
       if (dateSetLocal.has(dateStr)) {
         const dayPositions = days.get(dateStr) || [];
-        const dayPnl = dayPositions.reduce((s, p) => s + (p.close_pnl_usd || 0), 0);
+        const { usd: dayPnl, sol: daySol } = sumPnlByCurrency(dayPositions);
         const absPnl = Math.abs(dayPnl);
 
-        // Intensity class
+        // Intensity class — based on USD (the more familiar concrete number)
         let intense = "";
         if (dayPnl > 0) {
           if (absPnl >= 20) intense = "iv";
@@ -372,12 +438,19 @@ function buildMonths(sortedDates, days) {
         }
 
         const cls = dayPnl >= 0 ? "pos" : "neg";
-        const sign = dayPnl >= 0 ? "+" : "-";
+        const signUsd = fmtSign(dayPnl);
+        const signSol = fmtSign(daySol);
+        const absSol = fmtAbs(daySol);
         const safeDate = dateStr.replace(/'/g, "\\'");
+        // Subline: SOL total (if any) + position count. Count is always shown so
+        // users can see at a glance how many positions closed that day.
+        const subline = daySol !== 0
+          ? `${signSol}${absSol} SOL · ${dayPositions.length} pos`
+          : `${dayPositions.length} pos`;
         html += `<div class="day ${intense}" onclick="openDay('${safeDate}')">
           <span class="dn">${d}</span>
-          <span class="pnl ${cls}">${sign}$${Math.abs(dayPnl).toFixed(2)}</span>
-          <span class="ct">${dayPositions.length} pos</span>
+          <span class="pnl ${cls}">${signUsd}$${Math.abs(dayPnl).toFixed(2)}</span>
+          <span class="ct">${subline}</span>
         </div>`;
       } else {
         html += `<div class="day"><span class="dn">${d}</span></div>`;
