@@ -64,9 +64,10 @@ function computeStats(days) {
     totalPnlUsd += usd;
     totalPnlSol += sol;
     for (const p of positions) {
-      // Win/loss uses primary currency (SOL sign for SOL positions, USD otherwise)
+      // Win/loss uses primary currency (SOL sign for SOL positions, USD otherwise).
+      // Values in (-0.005, 0.005) are treated as wins (rounding noise, not a real loss).
       const pnl = isSolPosition(p) ? (p.close_pnl_sol || 0) : (p.close_pnl_usd || 0);
-      if (pnl >= 0) wins++;
+      if (isEffectiveZero(pnl) || pnl >= 0) wins++;
       else losses++;
     }
     if (usd > bestDay.pnlUsd) bestDay = { date, pnlUsd: usd, pnlSol: sol };
@@ -89,8 +90,9 @@ function computeStats(days) {
 /** Build HTML for a single position list item. */
 function positionHtml(vp) {
   // Color tracks the primary currency: SOL sign for SOL positions, USD for USD.
+  // Effective-zero values display as positive (rounding noise should never read as a loss).
   const primaryPnl = isSolPosition(vp) ? (vp.close_pnl_sol || 0) : (vp.close_pnl_usd || 0);
-  const cls = primaryPnl >= 0 ? "positive" : "negative";
+  const cls = isEffectiveZero(primaryPnl) || primaryPnl >= 0 ? "positive" : "negative";
   const reason = (vp.close_reason || "").replace(/_/g, " ");
   const pair = vp.pair || vp.pool?.slice(0, 8) || "?";
 
@@ -107,7 +109,7 @@ function positionHtml(vp) {
 
   // PnL percentage (use close_pnl_sol_pct for SOL positions, close_pnl_pct for USD)
   const pnlPct = isSolPosition(vp) ? vp.close_pnl_sol_pct : vp.close_pnl_pct;
-  const pctStr = pnlPct != null ? ` (${pnlPct >= 0 ? "+" : ""}${Math.abs(pnlPct).toFixed(2)}%)` : "";
+  const pctStr = pnlPct != null ? ` (${(isEffectiveZero(pnlPct) || pnlPct >= 0) ? "+" : ""}${Math.abs(pnlPct).toFixed(2)}%)` : "";
 
   return `<div class="pos-item">
     <div>
@@ -128,8 +130,13 @@ function isSolPosition(vp) {
   return (vp?.sol_price_at_deploy ?? 0) > 0;
 }
 
+// Treat values in (-0.005, 0.005) as effectively zero — prevents display of
+// "-0.00 SOL" when the underlying value is rounding noise. Also used for
+// color class, win/loss, and pct string (so the visual matches the USD truth).
+const isEffectiveZero = (n) => Math.abs(n) < 0.005;
+
 // Module-level helpers (DRY: used by formatPnl, formatCurrencyTotal, buildMonths)
-const fmtSign = (n) => (n >= 0 ? "+" : "-");
+const fmtSign = (n) => isEffectiveZero(n) ? "+" : n >= 0 ? "+" : "-";
 const fmtAbs = (n) => Math.abs(n).toFixed(2);
 
 /** Format a position's PnL for display, honoring its primary currency. */
@@ -187,7 +194,13 @@ export async function generateDryRunReport() {
     <div class="stat"><div class="stat-lbl">Total PnL</div><div class="stat-val ${totalCls}" style="font-size:16px">${formatCurrencyTotal({ usd: stats.totalPnlUsd, sol: stats.totalPnlSol })}</div></div>
     <div class="stat"><div class="stat-lbl">Win Rate</div><div class="stat-val neutral">${stats.winRate}%</div></div>
     <div class="stat"><div class="stat-lbl">Avg Return</div><div class="stat-val ${avgCls}" style="font-size:16px">${formatCurrencyTotal({ usd: stats.avgReturnUsd, sol: 0 })}</div></div>
-    <div class="stat"><div class="stat-lbl">Best / Worst</div><div class="stat-val" style="font-size:16px"><span class="${bestCls}">${bestStr}</span> / <span class="${worstCls}">${worstStr}</span></div></div>
+    <div class="stat">
+      <div class="stat-lbl">Best / Worst</div>
+      <div class="best-worst">
+        <div class="bw-row"><span class="bw-label">Best</span><span class="bw-val ${bestCls}">${bestStr}</span></div>
+        <div class="bw-row"><span class="bw-label">Worst</span><span class="bw-val ${worstCls}">${worstStr}</span></div>
+      </div>
+    </div>
   `;
 
   return `<!DOCTYPE html>
@@ -206,10 +219,15 @@ export async function generateDryRunReport() {
   .nav{display:flex;gap:8px}
   .nav button{background:#1a1a24;border:1px solid #2a2a35;color:#999;padding:6px 14px;border-radius:6px;cursor:pointer;font-size:13px}
   .nav button:hover{background:#252530;color:#fff}
-  .summary{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:28px}
-  .stat{background:#12121a;border:1px solid #1e1e2a;border-radius:10px;padding:16px}
-  .stat-lbl{font-size:11px;color:#666;text-transform:uppercase;letter-spacing:0.5px}
-  .stat-val{font-size:22px;font-weight:600;margin-top:4px}
+  .summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin-bottom:28px}
+  .stat{background:#12121a;border:1px solid #1e1e2a;border-radius:12px;padding:18px;transition:border-color .15s,transform .15s}
+  .stat:hover{border-color:#2a2a35;transform:translateY(-1px)}
+  .stat-lbl{font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.6px;font-weight:600}
+  .stat-val{font-size:24px;font-weight:700;margin-top:8px;line-height:1.15;letter-spacing:-0.3px}
+  .best-worst{display:flex;flex-direction:column;gap:6px;margin-top:8px}
+  .bw-row{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+  .bw-label{font-size:9px;color:#666;text-transform:uppercase;letter-spacing:0.5px;font-weight:600}
+  .bw-val{font-size:15px;font-weight:700;letter-spacing:-0.2px}
   .stat-val.positive{color:#4ade80}
   .stat-val.negative{color:#f87171}
   .stat-val.neutral{color:#e0e0e0}
@@ -217,15 +235,15 @@ export async function generateDryRunReport() {
   .stat-val .negative{color:#f87171}
   .month{margin-bottom:32px}
   .month-title{font-size:14px;font-weight:600;color:#777;margin-bottom:10px;text-transform:uppercase;letter-spacing:0.3px}
-  .cal{display:grid;grid-template-columns:repeat(7,1fr);gap:5px}
+  .cal{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:5px}
   .dh{text-align:center;font-size:10px;color:#444;text-transform:uppercase;padding:4px 0;letter-spacing:0.5px}
-  .day{background:#12121a;border:1px solid #1e1e2a;border-radius:8px;aspect-ratio:1;display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:pointer;transition:all .12s;position:relative;min-height:68px;padding:4px}
+  .day{background:#12121a;border:1px solid #1e1e2a;border-radius:8px;aspect-ratio:1;display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:pointer;transition:all .12s;position:relative;min-height:72px;min-width:72px;padding:5px}
   .day:hover{border-color:#3a3a4a;transform:translateY(-1px)}
-  .day .dn{font-size:9px;color:#444;position:absolute;top:4px;left:7px}
-  .day .pnl{font-size:12px;font-weight:600}
+  .day .dn{font-size:10px;color:#555;position:absolute;top:5px;left:7px;font-weight:500}
+  .day .pnl{font-size:13px;font-weight:600}
   .day .pnl.pos{color:#4ade80}
   .day .pnl.neg{color:#f87171}
-  .day .ct{font-size:8px;color:#555;margin-top:1px}
+  .day .ct{font-size:9px;color:#555;margin-top:2px}
   .day.empty{background:0 0;border:none;cursor:default}
   .day.empty:hover{transform:none}
   .day.iv{background:#1a2e1a;border-color:#2a5e2a}
@@ -257,7 +275,8 @@ export async function generateDryRunReport() {
   .pos-pnl.positive{color:#4ade80}
   .pos-pnl.negative{color:#f87171}
   .f{font-size:11px;color:#555;text-align:center;margin-top:24px}
-  @media(max-width:600px){body{padding:16px}.summary{grid-template-columns:repeat(2,1fr)}.stat-val{font-size:18px}.day{min-height:52px}}
+  @media(max-width:900px){.dash{max-width:100%}.summary{grid-template-columns:repeat(2,1fr)}.day{min-height:60px}}
+  @media(max-width:480px){body{padding:14px}.summary{grid-template-columns:1fr 1fr;gap:8px}.stat{padding:12px}.stat-val{font-size:18px}.bw-val{font-size:13px}.cal{gap:2px}.day{min-height:0;min-width:0;padding:2px}.day .pnl{font-size:10px}.day .ct{font-size:7px}.day .dn{font-size:8px;top:3px;left:4px}.dh{font-size:8px;padding:2px 0}.hdr{flex-direction:column;align-items:flex-start;gap:10px}.hdr h1{font-size:17px}.nav button{padding:5px 10px;font-size:12px}.pos-item{padding:8px 0}.pos-name{font-size:12px}.pos-meta{font-size:10px}.modal{padding:16px}.modal h2{font-size:14px}}
 </style>
 </head>
 <body>
@@ -298,7 +317,8 @@ export async function generateDryRunReport() {
 const DAYS = ${JSON.stringify(buildDayData(sortedDates, days))};
 
 // Shared formatting helpers (browser-side, no Node.js access here)
-const fmtSign = (n) => n >= 0 ? '+' : '-';
+const isEffectiveZero = (n) => Math.abs(n) < 0.005;
+const fmtSign = (n) => isEffectiveZero(n) ? '+' : n >= 0 ? '+' : '-';
 const fmtAbs = (n) => Math.abs(n).toFixed(2);
 
 let monthIdx = findCurrentMonth();
@@ -431,7 +451,7 @@ function buildMonths(sortedDates, days) {
           else intense = "ln";
         }
 
-        const cls = dayPnl >= 0 ? "pos" : "neg";
+        const cls = isEffectiveZero(dayPnl) || dayPnl >= 0 ? "pos" : "neg";
         const signUsd = fmtSign(dayPnl);
         const signSol = fmtSign(daySol);
         const absSol = fmtAbs(daySol);
