@@ -579,6 +579,14 @@ const PROTECTED_TOOLS = new Set([
   "self_update",
 ]);
 
+// ─── Deploy atomicity lock ───────────────────────────────────
+// Acquired synchronously in executeTool() BEFORE any await, so two concurrent
+// deploys (e.g., cron cycle + Telegram manual call) can't both pass safety
+// checks during an await yield and both execute. Released in the function-
+// level finally, gated by deployLockHeld so we only release a lock we
+// acquired (a blocked-by-lock return before acquisition must not touch it).
+let _deployInFlight = false;
+
 /**
  * Execute a tool call with safety checks and logging.
  */
@@ -596,20 +604,33 @@ export async function executeTool(name, args) {
     return { error };
   }
 
-  // ─── Pre-execution safety checks ──────────
-  if (PROTECTED_TOOLS.has(name)) {
-    const safetyCheck = await runSafetyChecks(name, args);
-    if (!safetyCheck.pass) {
-      log("safety_block", `${name} blocked: ${safetyCheck.reason}`);
-      return {
-        blocked: true,
-        reason: safetyCheck.reason,
-      };
+  // ─── Atomic lock for deploy_position ──────
+  // Acquired synchronously (no await above this point) so concurrent
+  // deploys can't both pass safety checks during an await yield.
+  let deployLockHeld = false;
+  if (name === "deploy_position") {
+    if (_deployInFlight) {
+      log("deploy_lock", `Deploy already in flight — blocking ${name} call`);
+      return { blocked: true, reason: "Another deploy is in flight" };
     }
+    _deployInFlight = true;
+    deployLockHeld = true;
   }
 
-  // ─── Execute ──────────────────────────────
   try {
+    // ─── Pre-execution safety checks ──────────
+    if (PROTECTED_TOOLS.has(name)) {
+      const safetyCheck = await runSafetyChecks(name, args);
+      if (!safetyCheck.pass) {
+        log("safety_block", `${name} blocked: ${safetyCheck.reason}`);
+        return {
+          blocked: true,
+          reason: safetyCheck.reason,
+        };
+      }
+    }
+
+    // ─── Execute ──────────────────────────────
     const result = await fn(args);
     const duration = Date.now() - startTime;
     // Strict success check for write tools: a deploy/claim/close/swap that
@@ -690,6 +711,10 @@ export async function executeTool(name, args) {
       error: error.message,
       tool: name,
     };
+  } finally {
+    if (deployLockHeld) {
+      _deployInFlight = false;
+    }
   }
 }
 
