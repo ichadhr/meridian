@@ -1143,6 +1143,7 @@ export async function deployPosition({
 
   const wallet = getWallet();
   const newPosition = Keypair.generate();
+  let txHashes = []; // declared at function scope so the catch block's recovery path can read it
 
   log("deploy", `Pool: ${pool_address}`);
   log("deploy", `Strategy: ${activeStrategy}, Bins: ${minBinId} to ${maxBinId} (${totalBins} bins${isWideRange ? " — WIDE RANGE" : ""})`);
@@ -1159,8 +1160,6 @@ export async function deployPosition({
   } catch { /* best-effort */ }
 
   try {
-    const txHashes = [];
-
     if (isWideRange) {
       // ── Wide Range Path (>69 bins) ─────────────────────────────────
       // Solana limits inner instruction realloc to 10240 bytes, so we can't create
@@ -1280,8 +1279,114 @@ export async function deployPosition({
       txs: txHashes,
     };
   } catch (error) {
-    log("deploy_error", error.message);
-    return { success: false, error: error.message };
+    // Normalize: SDK/network can throw non-Error values (strings, plain objects,
+    // null). Coerce safely so error.message access never masks the root cause.
+    const errMsg = error?.message ?? String(error);
+
+    log("deploy_error", errMsg);
+
+    // Recovery: the deploy tx may have landed on-chain despite the error
+    // (RPC timeout, blockhash race, or local network blip). Poll the position
+    // account with backoff. If a real DLMM position owned by the wallet exists,
+    // the deploy actually succeeded — track it and return success.
+    //
+    // Only applies to the direct SDK path; the Agent Meridian relay path
+    // (above, line 1138) owns its own position via LPAgent and returns early.
+    let recovered = null;
+    try {
+      if (typeof newPosition !== "undefined" && newPosition?.publicKey && pool) {
+        const recoveryDelays = [3000, 6000, 12000]; // total max 21s
+        for (const delayMs of recoveryDelays) {
+          await new Promise((r) => setTimeout(r, delayMs));
+          try {
+            const positionData = await pool.getPosition(newPosition.publicKey);
+            if (positionData) {
+              recovered = positionData;
+              log("deploy_recovery", `Found on-chain position after ${delayMs}ms wait despite tx error: ${errMsg.slice(0, 120)}`);
+              break;
+            }
+          } catch {
+            // Position account doesn't exist yet; keep polling
+          }
+        }
+      }
+    } catch (recoveryErr) {
+      const recoveryErrMsg = recoveryErr?.message ?? String(recoveryErr);
+      log("deploy_recovery_err", `Recovery poll failed: ${recoveryErrMsg}`);
+    }
+
+    if (recovered) {
+      const recoveredPositionKey = newPosition.publicKey.toString();
+      _positionsCacheAt = 0;
+      const signalSnapshot = config.darwin?.enabled
+        ? getAndClearStagedSignals(pool_address, baseMint)
+        : null;
+      trackPosition({
+        position: recoveredPositionKey,
+        pool: pool_address,
+        pool_name,
+        strategy: activeStrategy,
+        bin_range: { min: minBinId, max: maxBinId, bins_below: activeBinsBelow, bins_above: activeBinsAbove },
+        bin_step,
+        volatility: normalizedVolatility,
+        fee_tvl_ratio,
+        organic_score,
+        amount_sol: finalAmountY,
+        amount_x: finalAmountX,
+        active_bin: activeBin.binId,
+        initial_value_usd: solPrice > 0 ? solPrice * finalAmountY : null,
+        signal_snapshot: signalSnapshot,
+      });
+
+      appendDecision({
+        type: "deploy",
+        actor: "SCREENER",
+        pool: pool_address,
+        pool_name,
+        position: recoveredPositionKey,
+        summary: `Deployed ${finalAmountY} SOL with ${activeStrategy} (recovered)`,
+        reason: `Tx errored (${errMsg.slice(0, 80)}) but on-chain position found via recovery poll`,
+        risks: [
+          normalizedVolatility != null ? `volatility ${normalizedVolatility}` : null,
+          fee_tvl_ratio != null ? `fee/TVL ${fee_tvl_ratio}%` : null,
+        ].filter(Boolean),
+        metrics: {
+          amount_sol: finalAmountY,
+          strategy: activeStrategy,
+          active_bin: activeBin.binId,
+          min_bin: minBinId,
+          max_bin: maxBinId,
+          downside_pct: downside_pct ?? null,
+          upside_pct: upside_pct ?? null,
+        },
+      });
+
+      return {
+        success: true,
+        recovered: true,
+        recovery_note: "Created on-chain despite tx error — recovered",
+        position: recoveredPositionKey,
+        pool: pool_address,
+        pool_name,
+        bin_range: { min: minBinId, max: maxBinId, active: activeBin.binId },
+        price_range: { min: minPrice, max: maxPrice },
+        range_coverage: {
+          downside_pct: downsideCoveragePct,
+          upside_pct: upsideCoveragePct,
+          width_pct: totalWidthPct,
+          active_price: activePrice,
+        },
+        bin_step: actualBinStep,
+        base_fee: actualBaseFee,
+        strategy: activeStrategy,
+        wide_range: isWideRange,
+        amount_x: finalAmountX,
+        amount_y: finalAmountY,
+        txs: txHashes, // may be empty if errored before the send landed
+      };
+    }
+
+    return { success: false, error: errMsg };
   }
 }
 
