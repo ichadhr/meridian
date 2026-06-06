@@ -6,30 +6,15 @@
  *   const html = await generateDryRunReport();
  *   fs.writeFileSync("dry-run-report.html", html);
  */
-import fs from "fs";
-import path from "path";
 import { log } from "../logger.js";
 import { readArchive } from "./position-archive.js";
 
-const STATE_FILE = "./dry-run-state.json";
-
-/** Load all closed positions from the main state file and JSONL archives. */
+/** Load all closed positions from the JSONL archive. */
 async function loadAllClosedPositions() {
   const all = [];
 
-  // Main state file — open positions
-  if (fs.existsSync(STATE_FILE)) {
-    try {
-      const state = JSON.parse(fs.readFileSync(STATE_FILE, "utf8"));
-      for (const vp of (state.virtual_positions || [])) {
-        if (vp.status === "closed" && vp.closed_at) all.push(vp);
-      }
-    } catch (e) {
-      log("dry_run_report", `Failed to read state file: ${e.message}`);
-    }
-  }
-
-  // JSONL archive files — closed positions
+  // JSONL archive files — closed positions (dry-run-state.json only holds open VPs;
+  // closed VPs are moved to archive on close — see tools/dry-run-state.js:33-34, 222)
   try {
     const vpRecords = await readArchive({ source: "paper", hours: 720, limit: 5000 });
     for (const r of vpRecords) {
