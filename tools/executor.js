@@ -702,6 +702,7 @@ async function runSafetyChecks(name, args) {
 
       const deployAmountY = Number(args.amount_y ?? args.amount_sol ?? 0);
       const deployAmountX = Number(args.amount_x ?? 0);
+      const amountY = deployAmountY;
       if (Number.isFinite(deployAmountX) && deployAmountX > 0) {
         return {
           pass: false,
@@ -766,11 +767,12 @@ async function runSafetyChecks(name, args) {
       if (process.env.DRY_RUN !== "true") {
         const balance = await getWalletBalances();
         const gasReserve = config.management.gasReserve;
-        const minRequired = amountY + gasReserve;
+        const rentBuffer = 0.08;
+        const minRequired = amountY + gasReserve + rentBuffer;
         if (balance.sol < minRequired) {
           return {
             pass: false,
-            reason: `Insufficient SOL: have ${balance.sol} SOL, need ${minRequired} SOL (${amountY} deploy + ${gasReserve} gas reserve).`,
+            reason: `Insufficient SOL: have ${balance.sol} SOL, need ${minRequired.toFixed(2)} SOL (${amountY} deploy + ${gasReserve} gas + ${rentBuffer} rent).`,
           };
         }
       }
@@ -805,7 +807,6 @@ async function runSafetyChecks(name, args) {
       }
 
       // Check amount limits
-      const amountY = deployAmountY;
       if (!Number.isFinite(amountY) || amountY <= 0) {
         return {
           pass: false,
