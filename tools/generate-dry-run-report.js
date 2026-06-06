@@ -137,7 +137,7 @@ function formatPnl(vp) {
   if (isSolPosition(vp)) {
     const sol = vp.close_pnl_sol || 0;
     const usd = vp.close_pnl_usd || 0;
-    return `${fmtSign(sol)}${fmtAbs(sol)} SOL (${fmtSign(usd)}$${fmtAbs(usd)})`;
+    return `${fmtSign(sol)}${fmtAbs(sol)} SOL <span class="pnl-usd">(${fmtSign(usd)}$${fmtAbs(usd)})</span>`;
   }
   const usd = vp.close_pnl_usd || 0;
   return `${fmtSign(usd)}$${fmtAbs(usd)}`;
@@ -218,7 +218,7 @@ export async function generateDryRunReport() {
   .stat-lbl{font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.6px;font-weight:600}
   .stat-val{font-size:24px;font-weight:700;margin-top:8px;line-height:1.15;letter-spacing:-0.3px}
   .best-worst{display:flex;flex-direction:column;gap:6px;margin-top:8px}
-  .bw-row{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+  .bw-row{display:flex;flex-direction:column;gap:2px}
   .bw-label{font-size:9px;color:#666;text-transform:uppercase;letter-spacing:0.5px;font-weight:600}
   .bw-val{font-size:15px;font-weight:700;letter-spacing:-0.2px}
   .stat-val.positive{color:#4ade80}
@@ -269,7 +269,7 @@ export async function generateDryRunReport() {
   .pos-pnl.negative{color:#f87171}
   .f{font-size:11px;color:#555;text-align:center;margin-top:24px}
   @media(max-width:900px){.dash{max-width:100%}.summary{grid-template-columns:repeat(2,1fr)}.day{min-height:60px}}
-  @media(max-width:480px){body{padding:14px}.summary{grid-template-columns:1fr 1fr;gap:8px}.stat{padding:12px}.stat-val{font-size:18px}.bw-val{font-size:13px}.cal{gap:2px}.day{min-height:0;min-width:0;padding:2px}.day .pnl{font-size:10px}.day .ct{font-size:7px}.day .dn{font-size:8px;top:3px;left:4px}.dh{font-size:8px;padding:2px 0}.hdr{flex-direction:column;align-items:flex-start;gap:10px}.hdr h1{font-size:17px}.nav button{padding:5px 10px;font-size:12px}.pos-item{padding:8px 0}.pos-name{font-size:12px}.pos-meta{font-size:10px}.modal{padding:16px}.modal h2{font-size:14px}}
+  @media(max-width:480px){body{padding:14px}.summary{grid-template-columns:1fr 1fr;gap:8px}.stat{padding:12px}.stat-val{font-size:18px}.bw-val{font-size:13px}.cal{gap:2px}.day{min-height:0;min-width:0;padding:2px}.day .pnl{font-size:10px}.day .ct{font-size:7px}.day .dn{font-size:8px;top:3px;left:4px}.dh{font-size:8px;padding:2px 0}.hdr{flex-direction:column;align-items:flex-start;gap:10px}.hdr h1{font-size:17px}.nav button{padding:5px 10px;font-size:12px}.pos-item{padding:8px 0}.pos-name{font-size:12px}.pos-meta{font-size:10px}.modal{padding:16px}.modal h2{font-size:14px}.pos-reason{display:block;margin-left:0;width:fit-content;margin-top:3px}.pos-pnl{display:flex;flex-direction:column;align-items:flex-end;gap:1px}.pnl-usd{font-size:11px;opacity:.7}}
 </style>
 </head>
 <body>
