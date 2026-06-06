@@ -436,7 +436,7 @@ All fields are optional — defaults shown. Edit `user-config.json`.
 | `timeframe` | `5m` | Candle timeframe for screening |
 | `category` | `trending` | Pool category filter |
 | `minTokenFeesSol` | `30` | Minimum all-time fees in SOL |
-| `maxBundlersPct` | `30` | Maximum bundler % in top 100 holders |
+| `maxBundlePct` | `30` | Maximum bundler % in top 100 holders |
 | `maxTop10Pct` | `60` | Maximum top-10 holder concentration |
 | `blockedLaunchpads` | `[]` | Launchpad names to never deploy into |
 
