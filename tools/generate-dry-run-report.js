@@ -221,6 +221,8 @@ export async function generateDryRunReport() {
   .bw-row{display:flex;flex-direction:column;gap:2px}
   .bw-label{font-size:9px;color:#666;text-transform:uppercase;letter-spacing:0.5px;font-weight:600}
   .bw-val{font-size:15px;font-weight:700;letter-spacing:-0.2px}
+.bw-val.positive{color:#4ade80}
+.bw-val.negative{color:#f87171}
   .stat-val.positive{color:#4ade80}
   .stat-val.negative{color:#f87171}
   .stat-val.neutral{color:#e0e0e0}
