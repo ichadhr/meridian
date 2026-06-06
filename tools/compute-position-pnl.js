@@ -341,12 +341,23 @@ export function estimateSlippageLamports(perBin, binData, activeBinId, opts = {}
           // SDK's swapExactInQuoteAtBin uses amountX/amountY, not xAmount/yAmount
           amountX: new BN(bin.xAmount ?? "0"),
           amountY: new BN(bin.yAmount ?? "0"),
-          price: bin.price,
+          // SDK's `price` must be a Q64.64 BN — bn.js's `mul` does NOT coerce
+          // its argument and will throw "Cannot read properties of undefined
+          // (reading '0')" if passed a decimal string. Use priceQ64 (already
+          // normalized to Q64.64 integer string upstream) wrapped in BN.
+          // The guard above ensures priceQ64 is truthy before this point.
+          price: new BN(bin.priceQ64),
           priceQ64: bin.priceQ64,
         };
         const inAmount = new BN(remainingX.toString());
+        // swapForY=true: we're computing an X→Y swap (put X in, get Y out).
+        // Passing `false` would tell the SDK to compute a Y→X swap, which
+        // causes the walk to never consume remainingX (since bins below
+        // active hold Y, not X) and the function silently returns null
+        // (data insufficient) — triggering the unreliable-data safety
+        // premium for every VP.
         const { amountIn, amountOut } = swapFn(
-          sdkBin, binStep, sParameter, vParameter, inAmount, false,
+          sdkBin, binStep, sParameter, vParameter, inAmount, true,
         );
         totalYReceived += BigInt(amountOut.toString());
         remainingX -= BigInt(amountIn.toString());
