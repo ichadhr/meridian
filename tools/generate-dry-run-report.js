@@ -8,13 +8,20 @@
  */
 import { log } from "../logger.js";
 import { readArchive } from "./position-archive.js";
+import { archiveVirtualPositions } from "./dry-run-state.js";
 
 /** Load all closed positions from the JSONL archive. */
 async function loadAllClosedPositions() {
-  const all = [];
+  // Reconcile first: move any closed VPs still in dry-run-state.json to the
+  // archive, and dedupe the current-month archive. Both are idempotent.
+  // This guarantees a single source of truth (archive) and no duplicates.
+  try {
+    archiveVirtualPositions();
+  } catch (e) {
+    log("dry_run_report", `Reconcile sweep failed: ${e.message}`);
+  }
 
-  // JSONL archive files — closed positions (dry-run-state.json only holds open VPs;
-  // closed VPs are moved to archive on close — see tools/dry-run-state.js:33-34, 222)
+  const all = [];
   try {
     const vpRecords = await readArchive({ source: "paper", hours: 720, limit: 5000 });
     for (const r of vpRecords) {
@@ -24,20 +31,7 @@ async function loadAllClosedPositions() {
   } catch (e) {
     log("dry_run_report", `Failed to read VP archives: ${e.message}`);
   }
-
-  // Deduplicate by vp.id — keep first occurrence. A crash between archive append
-  // and the splice in closeVirtualPosition can leave a VP archived twice (current
-  // production has 10 duplicate lines across 8 unique IDs). Proper fix tracked
-  // in meridian-XXX: state-canonical close flow + idempotent archive sweep.
-  const seen = new Set();
-  const deduped = [];
-  for (const r of all) {
-    if (!seen.has(r.id)) {
-      seen.add(r.id);
-      deduped.push(r);
-    }
-  }
-  return deduped;
+  return all;
 }
 
 /** Group positions by UTC date (YYYY-MM-DD) from closed_at. */

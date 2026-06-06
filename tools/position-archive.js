@@ -17,6 +17,8 @@ import { log } from "../logger.js";
 // ── Paths ────────────────────────────────────────────────────────────────
 const ARCHIVE_DIR = "./archives";
 
+export { ARCHIVE_DIR };
+
 function ensureDir() {
   if (!fs.existsSync(ARCHIVE_DIR)) {
     fs.mkdirSync(ARCHIVE_DIR, { recursive: true });
@@ -30,6 +32,22 @@ function archivePath(source, month) {
 
 function currentMonth() {
   return new Date().toISOString().slice(0, 7); // "2026-06"
+}
+
+/**
+ * Derive the archive month (YYYY-MM) from a record's `closed_at` field.
+ * Falls back to currentMonth() if the timestamp is missing/malformed.
+ * Use this instead of currentMonth() in archive write paths to ensure
+ * a VP closes on Jan 31 lands in vp-archive-2026-01.jsonl, not the
+ * current month file (which would create cross-month duplicates on
+ * a late sweeper run at 00:00:15 Feb 1).
+ */
+function monthFromRecord(record) {
+  if (record && typeof record.closed_at === "string") {
+    const m = record.closed_at.match(/^(\d{4}-\d{2})/);
+    if (m) return m[1];
+  }
+  return currentMonth();
 }
 
 // ── Cache ────────────────────────────────────────────────────────────────
@@ -89,10 +107,12 @@ export function cleanRecord(raw) {
  *
  * @param {"paper"|"live"} source
  * @param {object} rawRecord  Will be cleaned via cleanRecord()
+ * @param {string} [month]  YYYY-MM target. Defaults to month from `rawRecord.closed_at`,
+ *                          or current month if the timestamp is missing.
  */
-export function appendArchiveRecord(source, rawRecord) {
+export function appendArchiveRecord(source, rawRecord, month) {
   ensureDir();
-  const file = archivePath(source, currentMonth());
+  const file = archivePath(source, month || monthFromRecord(rawRecord));
   const record = cleanRecord({ ...rawRecord, source });
   try {
     fs.appendFileSync(file, JSON.stringify(record) + "\n");
@@ -102,6 +122,116 @@ export function appendArchiveRecord(source, rawRecord) {
     log("position_archive", `Failed to append ${source} record: ${e.message}`);
     return false;
   }
+}
+
+/**
+ * Append a closed position record to the archive ONLY if its `id` doesn't
+ * already exist in the target file. Idempotent — safe to call multiple times
+ * for the same record (e.g., crash recovery, manual replay, sweeper).
+ *
+ * Bounded O(n) check where n is the number of records in the target-month
+ * archive file. Acceptable for our scale (typically <200 records/month).
+ *
+ * @param {"paper"|"live"} source
+ * @param {object} rawRecord  Must have `id`. Will be cleaned via cleanRecord()
+ * @param {string} [month]  YYYY-MM target. Defaults to month from `rawRecord.closed_at`,
+ *                          or current month if the timestamp is missing.
+ * @returns {boolean | null}  true = appended, false = already existed, null = error
+ */
+export function appendArchiveRecordIfNew(source, rawRecord, month) {
+  if (!rawRecord || rawRecord.id == null) return null;
+  ensureDir();
+  const targetMonth = month || monthFromRecord(rawRecord);
+  const file = archivePath(source, targetMonth);
+  const targetId = String(rawRecord.id);
+  try {
+    if (fs.existsSync(file)) {
+      const content = fs.readFileSync(file, "utf8");
+      for (const line of content.split("\n")) {
+        if (!line) continue;
+        try {
+          const r = JSON.parse(line);
+          if (r && r.id != null && String(r.id) === targetId) return false;
+        } catch { /* skip malformed line */ }
+      }
+    }
+    const record = cleanRecord({ ...rawRecord, source });
+    fs.appendFileSync(file, JSON.stringify(record) + "\n");
+    invalidateCache();
+    return true;
+  } catch (e) {
+    log("position_archive", `Failed to append ${source} record (id=${targetId}, month=${targetMonth}): ${e.message}`);
+    return null;
+  }
+}
+
+/**
+ * Deduplicate a single archive file (one month) by `id` (keep first occurrence).
+ * Atomic write via unique temp file + rename. Invalidates the read cache on change.
+ *
+ * @param {"paper"|"live"} source
+ * @param {string} [month]  YYYY-MM target. Defaults to current month.
+ * @returns {number}  count of duplicate lines removed
+ */
+export function dedupeArchive(source, month) {
+  ensureDir();
+  const file = archivePath(source, month || currentMonth());
+  if (!fs.existsSync(file)) return 0;
+  try {
+    const content = fs.readFileSync(file, "utf8");
+    const lines = content.split("\n");
+    const seen = new Set();
+    const deduped = [];
+    let removed = 0;
+    for (const line of lines) {
+      if (!line) { deduped.push(line); continue; }
+      try {
+        const r = JSON.parse(line);
+        if (r && r.id != null) {
+          const id = String(r.id);
+          if (seen.has(id)) { removed++; continue; }
+          seen.add(id);
+        }
+        deduped.push(line);
+      } catch {
+        // Malformed line — keep as-is to avoid silent data loss
+        deduped.push(line);
+      }
+    }
+    if (removed > 0) {
+      // Unique temp suffix to avoid clobbering concurrent dedupes
+      const tmp = `${file}.tmp.${process.pid}.${Date.now()}`;
+      fs.writeFileSync(tmp, deduped.join("\n"));
+      fs.renameSync(tmp, file);
+      invalidateCache();
+      log("position_archive", `Removed ${removed} duplicate(s) from ${file}`);
+    }
+    return removed;
+  } catch (e) {
+    log("position_archive", `Failed to dedupe ${file}: ${e.message}`);
+    return 0;
+  }
+}
+
+/**
+ * Deduplicate ALL archive files for a source (paper or live). Returns total
+ * duplicates removed across all months. Used by the sweeper to clean up
+ * legacy duplicates from the pre-state-canonical era.
+ *
+ * @param {"paper"|"live"} source
+ * @returns {number}  total duplicate lines removed
+ */
+export function dedupeAllArchives(source) {
+  ensureDir();
+  const prefix = source === "paper" ? "vp" : "live";
+  const files = fs.readdirSync(ARCHIVE_DIR)
+    .filter((f) => new RegExp(`^${prefix}-archive-(\\d{4}-\\d{2})\\.jsonl$`).test(f));
+  let total = 0;
+  for (const f of files) {
+    const month = f.match(/-(\d{4}-\d{2})\.jsonl$/)?.[1];
+    if (month) total += dedupeArchive(source, month);
+  }
+  return total;
 }
 
 // ── Read ─────────────────────────────────────────────────────────────────

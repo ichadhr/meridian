@@ -1,6 +1,10 @@
 import fs from "fs";
 import { log } from "../logger.js";
-import { appendArchiveRecord } from "./position-archive.js";
+import {
+  appendArchiveRecordIfNew,
+  dedupeAllArchives,
+  ARCHIVE_DIR,
+} from "./position-archive.js";
 
 const STATE_FILE = "./dry-run-state.json";
 
@@ -16,12 +20,15 @@ function load() {
   }
 }
 
+/** Persist state. Returns true on success, false on error. */
 function save(data) {
   try {
     data.lastUpdated = new Date().toISOString();
     fs.writeFileSync(STATE_FILE, JSON.stringify(data, null, 2));
+    return true;
   } catch (err) {
     log("dry_run_state", `Failed to write: ${err.message}`);
+    return false;
   }
 }
 
@@ -214,31 +221,94 @@ export function closeVirtualPosition(id, reason, pnlPct, pnlUsd, extraFields = {
   for (const key of Object.keys(extraFields)) {
     if (CLOSE_EXTRA_ALLOWED.has(key)) vp[key] = extraFields[key];
   }
-  // Move closed position to JSONL archive and remove from active state
-  if (!appendArchiveRecord("paper", vp)) {
-    log("dry_run_state", `Virtual ${id} close ABORTED — archive write failed`);
+  // State-canonical close: save dry-run-state.json FIRST so the close is durable
+  // even if the archive write fails. The archive is a derived view; the sweeper
+  // will retry on the next call. Old order (archive → splice → save) lost the
+  // close on archive failure and duplicated on crash between archive and save.
+  if (!save(state)) {
+    log("dry_run_state", `Virtual ${id} close FAILED — dry-run-state.json write failed`);
     return false;
   }
-  state.virtual_positions.splice(idx, 1);
-  save(state);
+
+  // Now attempt idempotent archive move. Returns true (appended), false
+  // (already existed — replay/crash recovery), or null (write error).
+  // Pass the month derived from closed_at so a close at 23:59:31 Jan 31
+  // lands in vp-archive-2026-01.jsonl, not the current month file
+  // (which would create cross-month duplicates on a late sweeper run).
+  const archiveResult = appendArchiveRecordIfNew("paper", vp, vp.closed_at.slice(0, 7));
+  if (archiveResult === null) {
+    // Archive write failed but the close is durable in dry-run-state.json.
+    // Leave the closed VP in state — next sweep will retry the archive move.
+    log("dry_run_state", `Virtual ${id} archive FAILED — durable in state, sweep will retry`);
+  } else {
+    // Archive succeeded (new or already-existed): splice from state.
+    const newIdx = state.virtual_positions.findIndex((p) => p.id === id);
+    if (newIdx !== -1) {
+      state.virtual_positions.splice(newIdx, 1);
+      if (!save(state)) {
+        // Splice save failed — VP is durable in archive but lingers in state.
+        // Next sweep will re-archive (idempotent skip) and retry the splice.
+        // Don't return false: the close IS durable, just untidy.
+        log("dry_run_state", `Virtual ${id} splice save FAILED — VP lingers in state, sweep will retry`);
+      }
+    }
+  }
   log("dry_run_state", `Virtual ${id} CLOSED: ${reason} PnL=${pnlPct}%`);
   return true;
 }
 
+/**
+ * Reconcile dry-run-state.json with the JSONL archive:
+ *   1. Move any status="closed" VPs from state to archive (idempotent append)
+ *   2. Deduplicate the current-month archive (removes legacy duplicates from
+ *      the pre-state-canonical era — see meridian-9jf for context)
+ *
+ * Safe to call on every report generation. Returns counts for logging.
+ */
 export function archiveVirtualPositions() {
   const state = load();
-  if (state.virtual_positions.length === 0) return;
-  const remaining = [];
-  let archived = 0;
-  for (const vp of state.virtual_positions) {
-    if (vp.status === "closed" && vp.closed_at) {
-      appendArchiveRecord("paper", vp);
-      archived++;
-    } else {
-      remaining.push(vp);
+  if (state.virtual_positions.length === 0 && !fs.existsSync(ARCHIVE_DIR)) {
+    return { swept: 0, failed: 0, duplicatesRemoved: 0 };
+  }
+
+  let swept = 0;
+  let failed = 0;
+  if (state.virtual_positions.length > 0) {
+    const remaining = [];
+    for (const vp of state.virtual_positions) {
+      if (vp.status === "closed" && vp.closed_at) {
+        // Use closed_at month so cross-month closes (23:59:31 Jan 31 etc.)
+        // write to the correct archive file.
+        const month = vp.closed_at.slice(0, 7);
+        const result = appendArchiveRecordIfNew("paper", vp, month);
+        if (result === null) {
+          // Error — keep for next sweep
+          remaining.push(vp);
+          failed++;
+        } else {
+          swept++;
+          // Either appended or already existed — safe to splice
+        }
+      } else {
+        remaining.push(vp);
+      }
+    }
+    if (swept > 0 || failed > 0) {
+      state.virtual_positions = remaining;
+      if (!save(state)) {
+        // Sweep save failed — VPs are durable in archive but linger in state.
+        // Next sweep will re-archive (idempotent skip) and retry the splice.
+        log("dry_run_state", `Reconcile save FAILED — ${remaining.length} VPs linger in state, sweep will retry`);
+      }
     }
   }
-  state.virtual_positions = remaining;
-  save(state);
-  log("dry_run_state", `Archived ${archived} virtual positions, kept ${remaining.length} open`);
+
+  // Deduplicate ALL archive months for paper source (legacy cleanup from
+  // pre-state-canonical era; cheap at our scale).
+  const duplicatesRemoved = dedupeAllArchives("paper");
+
+  if (swept > 0 || failed > 0 || duplicatesRemoved > 0) {
+    log("dry_run_state", `Reconcile: swept=${swept} failed=${failed} duplicatesRemoved=${duplicatesRemoved}`);
+  }
+  return { swept, failed, duplicatesRemoved };
 }
