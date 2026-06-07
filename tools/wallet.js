@@ -7,7 +7,7 @@ import {
 } from "@solana/web3.js";
 import bs58 from "bs58";
 import { log } from "../utils/logger.js";
-import { config } from "../config.js";
+import { config } from "../config/index.js";
 
 let _connection = null;
 let _wallet = null;

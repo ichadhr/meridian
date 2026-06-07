@@ -1,4 +1,4 @@
-import { config } from "../config.js";
+import { config } from "../config/index.js";
 import { log } from "../utils/logger.js";
 import { agentMeridianJson, getAgentMeridianHeaders } from "./agent-meridian.js";
 import { safeNumber } from "../utils/number.js";

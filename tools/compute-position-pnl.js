@@ -12,7 +12,7 @@
  */
 
 import BN from "bn.js";
-import { config } from "../config.js";
+import { config } from "../config/index.js";
 
 // Q64.64 scale factor and swap function from SDK.
 // Pre-loaded at module init (dlmm.js always imports the SDK before any

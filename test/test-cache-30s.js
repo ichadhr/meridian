@@ -20,7 +20,7 @@ import {
   fetchSolPrice,
   _resetSolPriceCacheForTesting,
 } from "../tools/wallet.js";
-import { config } from "../config.js";
+import { config } from "../config/index.js";
 
 let pass = 0;
 let fail = 0;

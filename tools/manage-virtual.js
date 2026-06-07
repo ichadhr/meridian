@@ -8,7 +8,7 @@ import {
 } from "./dry-run-state.js";
 import { fetchSolPrice } from "./wallet.js";
 import { recordPoolDeploy } from "../pool-memory.js";
-import { config } from "../config.js";
+import { config } from "../config/index.js";
 import { log } from "../utils/logger.js";
 import { estimateCloseGasSol, samplePriorityFee } from "./gas-estimator.js";
 import { getVirtualCloseRule } from "./virtual-close-rule.js";

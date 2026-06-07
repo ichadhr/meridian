@@ -9,7 +9,7 @@
  * @param {Object} perfSummary - Performance summary
  * @returns {string} - Complete system prompt
  */
-import { config } from "./config.js";
+import { config } from "./config/index.js";
 
 export function buildSystemPrompt(agentType, portfolio, positions, stateSummary = null, lessons = null, perfSummary = null, weightsSummary = null, decisionSummary = null, virtualDigest = null) {
   const s = config.screening;

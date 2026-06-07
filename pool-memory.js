@@ -7,7 +7,7 @@
 
 import fs from "fs";
 import { log } from "./utils/logger.js";
-import { config } from "./config.js";
+import { config } from "./config/index.js";
 
 const POOL_MEMORY_FILE = "./pool-memory.json";
 const MAX_NOTE_LENGTH = 280;

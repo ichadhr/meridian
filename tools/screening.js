@@ -1,4 +1,4 @@
-import { config } from "../config.js";
+import { config } from "../config/index.js";
 import { isBlacklisted } from "../core/token-blacklist.js";
 import { isDevBlocked, getBlockedDevs } from "../core/token-blacklist.js";
 import { log } from "../utils/logger.js";
