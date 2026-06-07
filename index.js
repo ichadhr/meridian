@@ -26,7 +26,7 @@ import {
   isEnabled as telegramEnabled,
   createLiveMessage,
 } from "./telegram.js";
-import { generateBriefing } from "./briefing.js";
+import { generateBriefing } from "./core/briefing.js";
 import { getLastBriefingDate, setLastBriefingDate, getTrackedPosition, getTrackedPositions, setPositionInstruction, updatePnlAndCheckExits, queuePeakConfirmation, resolvePendingPeak, queueTrailingDropConfirmation, resolvePendingTrailingDrop } from "./state.js";
 import { getActiveStrategy } from "./strategy-library.js";
 import { recordPositionSnapshot, recallForPool, addPoolNote } from "./pool-memory.js";
