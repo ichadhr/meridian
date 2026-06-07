@@ -4,7 +4,7 @@
  * Direct tool invocation with JSON output. Agent-native.
  */
 
-import { loadEnv } from "./envcrypt.js";
+import { loadEnv } from "./utils/secure-env.js";
 import { parseArgs } from "util";
 import os from "os";
 import fs from "fs";
