@@ -89,7 +89,7 @@ import { log } from "./utils/logger.js";
 import { config } from "./config.js";
 import { getStateSummary } from "./state.js";
 import { getLessonsForPrompt, getPerformanceSummary } from "./lessons.js";
-import { getDecisionSummary } from "./decision-log.js";
+import { getDecisionSummary } from "./core/decision-log.js";
 
 // Supports OpenRouter (default) or any OpenAI-compatible local server (e.g. LM Studio)
 // To use LM Studio: set LLM_BASE_URL=http://localhost:1234/v1 and LLM_API_KEY=lm-studio in .env

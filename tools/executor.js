@@ -25,7 +25,7 @@ import { addSmartWallet, removeSmartWallet, listSmartWallets, checkSmartWalletsO
 import { getTokenInfo, getTokenHolders, getTokenNarrative } from "./token.js";
 import { getAdvancedInfo } from "./okx.js";
 import { config, reloadScreeningThresholds, MIN_SAFE_BINS_BELOW } from "../config.js";
-import { getRecentDecisions } from "../decision-log.js";
+import { getRecentDecisions } from "../core/decision-log.js";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";

@@ -35,7 +35,7 @@ import { getTokenNarrative, getTokenInfo } from "./tools/token.js";
 import { stageSignals } from "./signal-tracker.js";
 import { getWeightsSummary } from "./signal-weights.js";
 import { bootstrapHiveMind, ensureAgentId, getHiveMindPullMode, isHiveMindEnabled, pullHiveMindLessons, pullHiveMindPresets, registerHiveMindAgent, startHiveMindBackgroundSync } from "./hivemind.js";
-import { appendDecision } from "./decision-log.js";
+import { appendDecision } from "./core/decision-log.js";
 import { runVirtualManagementCycle } from "./tools/manage-virtual.js";
 import { parseVirtualPositionAddress } from "./tools/dry-run-state.js";
 import { closeVpManual } from "./tools/manage-virtual.js";

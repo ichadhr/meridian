@@ -28,7 +28,7 @@ import { trackVirtualPosition } from "./dry-run-state.js";
 import { recordPerformance } from "../lessons.js";
 import { isBaseMintOnCooldown, isPoolOnCooldown } from "../pool-memory.js";
 import { getWalletBalances, normalizeMint, fetchSolPrice } from "./wallet.js";
-import { appendDecision } from "../decision-log.js";
+import { appendDecision } from "../core/decision-log.js";
 import { estimateDeployGasSol, estimateCloseGasSol, samplePriorityFee } from "./gas-estimator.js";
 import { agentMeridianJson, getAgentIdForRequests, getAgentMeridianHeaders } from "./agent-meridian.js";
 import { getAndClearStagedSignals } from "../signal-tracker.js";
