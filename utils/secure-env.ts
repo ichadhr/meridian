@@ -2,7 +2,7 @@
 import fs from "fs";
 import path from "path";
 import dotenv from "dotenv";
-import type { EnvcryptOptions, EncryptEnvOptions } from "../types/index.js";
+import type { SecureEnvOptions, EncryptRawOptions } from "../types/index.js";
 
 const DEFAULT_ENV_PATH = path.join(process.cwd(), ".env");
 const DEFAULT_KEY_PATH = path.join(process.cwd(), ".envrypt");
@@ -33,7 +33,7 @@ function parseEncryptedKeys(filePath: string): Set<string> {
   return encrypted;
 }
 
-function getEnvcryptKey(keyPath: string = DEFAULT_KEY_PATH): string | null {
+function getEncryptionKey(keyPath: string = DEFAULT_KEY_PATH): string | null {
   const key =
     process.env.ENVRYPT_KEY ||
     process.env.ENVCRYPT_KEY ||
@@ -68,13 +68,13 @@ export function envryptDecrypt(value: string, key: string): string {
   ).join("");
 }
 
-export function loadEnv({ envPath = DEFAULT_ENV_PATH, keyPath = DEFAULT_KEY_PATH, override = false }: EnvcryptOptions = {}): { encryptedKeys: string[] } {
+export function loadEnv({ envPath = DEFAULT_ENV_PATH, keyPath = DEFAULT_KEY_PATH, override = false }: SecureEnvOptions = {}): { encryptedKeys: string[] } {
   dotenv.config({ path: envPath, override, quiet: true });
 
   const encryptedKeys = parseEncryptedKeys(envPath);
   if (encryptedKeys.size === 0) return { encryptedKeys: [] };
 
-  const key = getEnvcryptKey(keyPath);
+  const key = getEncryptionKey(keyPath);
   if (!key) {
     throw new Error(
       `Encrypted env values found in ${envPath}, but no encryption key was provided. ` +
@@ -95,12 +95,12 @@ export function encryptEnvRaw({
   rawPath = path.join(process.cwd(), ".env.raw"),
   outPath = DEFAULT_ENV_PATH,
   keyPath = DEFAULT_KEY_PATH,
-}: EncryptEnvOptions = {}): { rawPath: string; outPath: string } {
+}: EncryptRawOptions = {}): { rawPath: string; outPath: string } {
   if (!fs.existsSync(rawPath)) {
     throw new Error(`No ${rawPath} file found.`);
   }
 
-  const key = getEnvcryptKey(keyPath);
+  const key = getEncryptionKey(keyPath);
   if (!key) {
     throw new Error("Encryption key required. Create a .envrypt key file or set the ENVRYPT_KEY / ENVCRYPT_KEY environment variable.");
   }

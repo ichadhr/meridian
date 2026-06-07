@@ -4,7 +4,7 @@ import path from "path";
 import type { LogLevel, ToolAction } from "../types/index.js";
 
 const LOG_DIR = "./logs";
-const LOG_LEVEL: string = process.env.LOG_LEVEL || "info";
+const LOG_LEVEL = process.env.LOG_LEVEL || "info";
 
 const LEVELS: Record<LogLevel, number> = { debug: 0, info: 1, warn: 2, error: 3 };
 const currentLevel: number = LEVELS[LOG_LEVEL as LogLevel] ?? 1;

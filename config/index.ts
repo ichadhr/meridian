@@ -17,9 +17,49 @@ const u: Record<string, unknown> = fs.existsSync(USER_CONFIG_PATH)
 
 export const MIN_SAFE_BINS_BELOW = 35;
 
+// ─── Config Helpers ────────────────────────────────────────────
+
 function numericConfig(value: unknown): number | null {
   const n = Number(value);
   return Number.isFinite(n) ? n : null;
+}
+
+/** Read a number from user config with fallback default. */
+function num(key: string, def: number): number {
+  const v = Number(u[key]);
+  return Number.isFinite(v) ? v : def;
+}
+
+/** Read a string from user config with fallback default. */
+function str(key: string, def: string): string {
+  const v = u[key];
+  return typeof v === "string" && v.trim() ? v.trim() : def;
+}
+
+/** Read a boolean from user config with fallback default. */
+function bool(key: string, def: boolean): boolean {
+  const v = u[key];
+  return typeof v === "boolean" ? v : def;
+}
+
+/** Read a nullable number from user config (null = no minimum/maximum). */
+function optNum(key: string): number | null {
+  const v = u[key];
+  if (v === undefined || v === null) return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+/** Read a nullable boolean from user config. */
+function optBool(key: string): boolean | undefined {
+  const v = u[key];
+  return typeof v === "boolean" ? v : undefined;
+}
+
+/** Read a string array from user config with fallback default. */
+function strArray(key: string, def: string[]): string[] {
+  const v = u[key];
+  return Array.isArray(v) ? v : def;
 }
 
 const legacyBinsBelow = numericConfig(u.binsBelow);
@@ -44,8 +84,6 @@ if (u.dryRun !== undefined) process.env.DRY_RUN ||= String(u.dryRun);
 if (u.publicApiKey) process.env.PUBLIC_API_KEY ||= u.publicApiKey as string;
 if (u.agentMeridianApiUrl) process.env.AGENT_MERIDIAN_API_URL ||= u.agentMeridianApiUrl as string;
 
-const indicatorUserConfig = (u.chartIndicators ?? {}) as Record<string, unknown>;
-
 function nonEmptyString(...values: unknown[]): string | null {
   for (const value of values) {
     if (typeof value !== "string") continue;
@@ -58,80 +96,80 @@ function nonEmptyString(...values: unknown[]): string | null {
 export const config: Config = {
   // ─── Risk Limits ─────────────────────────
   risk: {
-    maxPositions:    (u.maxPositions as number)    ?? 3,
-    maxDeployAmount: (u.maxDeployAmount as number) ?? 50,
+    maxPositions:    num("maxPositions", 3),
+    maxDeployAmount: num("maxDeployAmount", 50),
   },
 
   // ─── Pool Screening Thresholds ───────────
   screening: {
-    excludeHighSupplyConcentration: (u.excludeHighSupplyConcentration as boolean) ?? true,
-    minFeeActiveTvlRatio: (u.minFeeActiveTvlRatio as number) ?? 0.05,
-    minTvl:            (u.minTvl as number)            ?? 10_000,
-    maxTvl:            u.maxTvl !== undefined ? (u.maxTvl as number) : 150_000,
-    minVolume:         (u.minVolume as number)         ?? 500,
-    minOrganic:        (u.minOrganic as number)        ?? 60,
-    minQuoteOrganic:   (u.minQuoteOrganic as number)   ?? 60,
-    minHolders:        (u.minHolders as number)        ?? 500,
-    minMcap:           (u.minMcap as number)           ?? 150_000,
-    maxMcap:           (u.maxMcap as number)           ?? 10_000_000,
-    minBinStep:        (u.minBinStep as number)        ?? 80,
-    maxBinStep:        (u.maxBinStep as number)        ?? 125,
-    timeframe:         (u.timeframe as string)         ?? "5m",
-    category:          (u.category as string)          ?? "trending",
-    minTokenFeesSol:   (u.minTokenFeesSol as number)   ?? 30,
-    useDiscordSignals: (u.useDiscordSignals as boolean) ?? false,
-    discordSignalMode: (u.discordSignalMode as "merge" | "only") ?? "merge",
-    avoidPvpSymbols:   (u.avoidPvpSymbols as boolean)   ?? true,
-    blockPvpSymbols:   (u.blockPvpSymbols as boolean)   ?? false,
-    maxBundlePct:      (u.maxBundlePct as number)      ?? 30,
-    maxBotHoldersPct:  (u.maxBotHoldersPct as number)  ?? 30,
-    maxTop10Pct:       (u.maxTop10Pct as number)       ?? 60,
-    allowedLaunchpads: (u.allowedLaunchpads as string[]) ?? [],
-    blockedLaunchpads:  (u.blockedLaunchpads as string[])  ?? [],
-    minTokenAgeHours:   (u.minTokenAgeHours as number)   ?? null,
-    maxTokenAgeHours:   (u.maxTokenAgeHours as number)   ?? null,
-    athFilterPct:       (u.athFilterPct as number)       ?? null,
-    maxDevRugCount:     (u.maxDevRugCount as number)     ?? 2,
-    okxFailClosed:      (u.okxFailClosed as boolean)      ?? false,
+    excludeHighSupplyConcentration: bool("excludeHighSupplyConcentration", true),
+    minFeeActiveTvlRatio: num("minFeeActiveTvlRatio", 0.05),
+    minTvl:            num("minTvl", 10_000),
+    maxTvl:            u.maxTvl !== undefined ? num("maxTvl", 150_000) : 150_000,
+    minVolume:         num("minVolume", 500),
+    minOrganic:        num("minOrganic", 60),
+    minQuoteOrganic:   num("minQuoteOrganic", 60),
+    minHolders:        num("minHolders", 500),
+    minMcap:           num("minMcap", 150_000),
+    maxMcap:           num("maxMcap", 10_000_000),
+    minBinStep:        num("minBinStep", 80),
+    maxBinStep:        num("maxBinStep", 125),
+    timeframe:         str("timeframe", "5m"),
+    category:          str("category", "trending"),
+    minTokenFeesSol:   num("minTokenFeesSol", 30),
+    useDiscordSignals: bool("useDiscordSignals", false),
+    discordSignalMode: (str("discordSignalMode", "merge") as "merge" | "only"),
+    avoidPvpSymbols:   bool("avoidPvpSymbols", true),
+    blockPvpSymbols:   bool("blockPvpSymbols", false),
+    maxBundlePct:      num("maxBundlePct", 30),
+    maxBotHoldersPct:  num("maxBotHoldersPct", 30),
+    maxTop10Pct:       num("maxTop10Pct", 60),
+    allowedLaunchpads: strArray("allowedLaunchpads", []),
+    blockedLaunchpads:  strArray("blockedLaunchpads", []),
+    minTokenAgeHours:   optNum("minTokenAgeHours"),
+    maxTokenAgeHours:   optNum("maxTokenAgeHours"),
+    athFilterPct:       optNum("athFilterPct"),
+    maxDevRugCount:     num("maxDevRugCount", 2),
+    okxFailClosed:      bool("okxFailClosed", false),
   },
 
   // ─── Position Management ────────────────
   management: {
-    minClaimAmount:        (u.minClaimAmount as number)        ?? 5,
-    autoSwapAfterClaim:    (u.autoSwapAfterClaim as boolean)    ?? false,
-    outOfRangeBinsToClose: (u.outOfRangeBinsToClose as number) ?? 10,
-    outOfRangeWaitMinutes: (u.outOfRangeWaitMinutes as number) ?? 30,
-    oorCooldownTriggerCount: (u.oorCooldownTriggerCount as number) ?? 3,
-    oorCooldownHours:       (u.oorCooldownHours as number)       ?? 12,
-    repeatDeployCooldownEnabled: (u.repeatDeployCooldownEnabled as boolean) ?? true,
-    repeatDeployCooldownTriggerCount: (u.repeatDeployCooldownTriggerCount as number) ?? 3,
-    repeatDeployCooldownHours: (u.repeatDeployCooldownHours as number) ?? 12,
-    repeatDeployCooldownScope: (u.repeatDeployCooldownScope as "pool" | "token" | "both") ?? "token",
-    repeatDeployCooldownMinFeeEarnedPct: (u.repeatDeployCooldownMinFeeEarnedPct as number) ?? (u.repeatDeployCooldownMinFeeYieldPct as number) ?? 0,
-    minVolumeToRebalance:  (u.minVolumeToRebalance as number)  ?? 1000,
-    stopLossPct:           (u.stopLossPct as number)           ?? (u.emergencyPriceDropPct as number) ?? -50,
-    takeProfitPct:         (u.takeProfitPct as number)         ?? (u.takeProfitFeePct as number) ?? 5,
-    minFeePerTvl24h:       (u.minFeePerTvl24h as number)       ?? 7,
-    minAgeBeforeYieldCheck: (u.minAgeBeforeYieldCheck as number) ?? 60,
-    minSolToOpen:          (u.minSolToOpen as number)          ?? 0.55,
-    deployAmountSol:       (u.deployAmountSol as number)       ?? 0.5,
-    gasReserve:            (u.gasReserve as number)            ?? 0.2,
-    rentBuffer:            (u.rentBuffer as number)            ?? 0.15,
-    positionSizePct:       (u.positionSizePct as number)       ?? 0.35,
-    trailingTakeProfit:    (u.trailingTakeProfit as boolean)    ?? true,
-    trailingTriggerPct:    (u.trailingTriggerPct as number)    ?? 3,
-    trailingDropPct:       (u.trailingDropPct as number)       ?? 1.5,
-    pnlSanityMaxDiffPct:   (u.pnlSanityMaxDiffPct as number)   ?? 5,
-    solMode:               (u.solMode as boolean)               ?? false,
-    vpGasCostSol:          (u.vpGasCostSol as number)          ?? 0.0002,
-    vpSlippagePct:         (u.vpSlippagePct as number)         ?? 0.3,
-    vpSlippagePctUnreliable: (u.vpSlippagePctUnreliable as number) ?? 2.0,
-    vpTrendExitCycles:     (u.vpTrendExitCycles as number)     ?? 3,
+    minClaimAmount:        num("minClaimAmount", 5),
+    autoSwapAfterClaim:    bool("autoSwapAfterClaim", false),
+    outOfRangeBinsToClose: num("outOfRangeBinsToClose", 10),
+    outOfRangeWaitMinutes: num("outOfRangeWaitMinutes", 30),
+    oorCooldownTriggerCount: num("oorCooldownTriggerCount", 3),
+    oorCooldownHours:       num("oorCooldownHours", 12),
+    repeatDeployCooldownEnabled: bool("repeatDeployCooldownEnabled", true),
+    repeatDeployCooldownTriggerCount: num("repeatDeployCooldownTriggerCount", 3),
+    repeatDeployCooldownHours: num("repeatDeployCooldownHours", 12),
+    repeatDeployCooldownScope: (str("repeatDeployCooldownScope", "token") as "pool" | "token" | "both"),
+    repeatDeployCooldownMinFeeEarnedPct: num("repeatDeployCooldownMinFeeEarnedPct", num("repeatDeployCooldownMinFeeYieldPct", 0)),
+    minVolumeToRebalance:  num("minVolumeToRebalance", 1000),
+    stopLossPct:           num("stopLossPct", num("emergencyPriceDropPct", -50)),
+    takeProfitPct:         num("takeProfitPct", num("takeProfitFeePct", 5)),
+    minFeePerTvl24h:       num("minFeePerTvl24h", 7),
+    minAgeBeforeYieldCheck: num("minAgeBeforeYieldCheck", 60),
+    minSolToOpen:          num("minSolToOpen", 0.55),
+    deployAmountSol:       num("deployAmountSol", 0.5),
+    gasReserve:            num("gasReserve", 0.2),
+    rentBuffer:            num("rentBuffer", 0.15),
+    positionSizePct:       num("positionSizePct", 0.35),
+    trailingTakeProfit:    bool("trailingTakeProfit", true),
+    trailingTriggerPct:    num("trailingTriggerPct", 3),
+    trailingDropPct:       num("trailingDropPct", 1.5),
+    pnlSanityMaxDiffPct:   num("pnlSanityMaxDiffPct", 5),
+    solMode:               bool("solMode", false),
+    vpGasCostSol:          num("vpGasCostSol", 0.0002),
+    vpSlippagePct:         num("vpSlippagePct", 0.3),
+    vpSlippagePctUnreliable: num("vpSlippagePctUnreliable", 2.0),
+    vpTrendExitCycles:     num("vpTrendExitCycles", 3),
   },
 
   // ─── Strategy Mapping ───────────────────
   strategy: {
-    strategy:     (u.strategy as string)     ?? "bid_ask",
+    strategy:     str("strategy", "bid_ask"),
     minBinsBelow: strategyMinBinsBelow,
     maxBinsBelow: strategyMaxBinsBelow,
     defaultBinsBelow: strategyDefaultBinsBelow,
@@ -139,34 +177,34 @@ export const config: Config = {
 
   // ─── Scheduling ─────────────────────────
   schedule: {
-    managementIntervalMin:  (u.managementIntervalMin as number)  ?? 10,
-    screeningIntervalMin:   (u.screeningIntervalMin as number)   ?? 30,
-    healthCheckIntervalMin: (u.healthCheckIntervalMin as number) ?? 60,
+    managementIntervalMin:  num("managementIntervalMin", 10),
+    screeningIntervalMin:   num("screeningIntervalMin", 30),
+    healthCheckIntervalMin: num("healthCheckIntervalMin", 60),
   },
 
   // ─── LLM Settings ──────────────────────
   llm: {
-    temperature: (u.temperature as number) ?? 0.373,
-    maxTokens:   (u.maxTokens as number)   ?? 4096,
-    maxSteps:    (u.maxSteps as number)    ?? 20,
-    managementModel: (u.managementModel as string) ?? process.env.LLM_MODEL ?? "openrouter/healer-alpha",
-    screeningModel:  (u.screeningModel as string)  ?? process.env.LLM_MODEL ?? "openrouter/hunter-alpha",
-    generalModel:    (u.generalModel as string)    ?? process.env.LLM_MODEL ?? "openrouter/healer-alpha",
-    thinkingManagement: (u.thinkingManagement as boolean) ?? false,
-    thinkingScreening:  (u.thinkingScreening as boolean)  ?? true,
-    thinkingGeneral:    (u.thinkingGeneral as boolean)    ?? false,
+    temperature: num("temperature", 0.373),
+    maxTokens:   num("maxTokens", 4096),
+    maxSteps:    num("maxSteps", 20),
+    managementModel: str("managementModel", process.env.LLM_MODEL ?? "openrouter/healer-alpha"),
+    screeningModel:  str("screeningModel", process.env.LLM_MODEL ?? "openrouter/hunter-alpha"),
+    generalModel:    str("generalModel", process.env.LLM_MODEL ?? "openrouter/healer-alpha"),
+    thinkingManagement: bool("thinkingManagement", false),
+    thinkingScreening:  bool("thinkingScreening", true),
+    thinkingGeneral:    bool("thinkingGeneral", false),
   },
 
   // ─── Darwinian Signal Weighting ───────
   darwin: {
-    enabled:        (u.darwinEnabled as boolean)     ?? true,
-    windowDays:     (u.darwinWindowDays as number)  ?? 60,
-    recalcEvery:    (u.darwinRecalcEvery as number) ?? 5,
-    boostFactor:    (u.darwinBoost as number)       ?? 1.05,
-    decayFactor:    (u.darwinDecay as number)       ?? 0.95,
-    weightFloor:    (u.darwinFloor as number)       ?? 0.3,
-    weightCeiling:  (u.darwinCeiling as number)     ?? 2.5,
-    minSamples:     (u.darwinMinSamples as number)  ?? 10,
+    enabled:        bool("darwinEnabled", true),
+    windowDays:     num("darwinWindowDays", 60),
+    recalcEvery:    num("darwinRecalcEvery", 5),
+    boostFactor:    num("darwinBoost", 1.05),
+    decayFactor:    num("darwinDecay", 0.95),
+    weightFloor:    num("darwinFloor", 0.3),
+    weightCeiling:  num("darwinCeiling", 2.5),
+    minSamples:     num("darwinMinSamples", 10),
   },
 
   // ─── Common Token Mints ────────────────
@@ -180,14 +218,14 @@ export const config: Config = {
   hiveMind: {
     url: nonEmptyString(u.hiveMindUrl, DEFAULT_HIVEMIND_URL) ?? DEFAULT_HIVEMIND_URL,
     apiKey: nonEmptyString(u.hiveMindApiKey, process.env.HIVEMIND_API_KEY, DEFAULT_HIVEMIND_API_KEY) ?? DEFAULT_HIVEMIND_API_KEY,
-    agentId: (u.agentId as string) ?? null,
-    pullMode: (u.hiveMindPullMode as string) ?? "auto",
+    agentId: str("agentId", ""),
+    pullMode: str("hiveMindPullMode", "auto"),
   },
 
   api: {
     url: nonEmptyString(u.agentMeridianApiUrl, process.env.AGENT_MERIDIAN_API_URL, DEFAULT_AGENT_MERIDIAN_API_URL) ?? DEFAULT_AGENT_MERIDIAN_API_URL,
     publicApiKey: nonEmptyString(u.publicApiKey, process.env.PUBLIC_API_KEY, DEFAULT_AGENT_MERIDIAN_PUBLIC_KEY) ?? DEFAULT_AGENT_MERIDIAN_PUBLIC_KEY,
-    lpAgentRelayEnabled: (u.lpAgentRelayEnabled as boolean) ?? false,
+    lpAgentRelayEnabled: bool("lpAgentRelayEnabled", false),
   },
 
   jupiter: {
@@ -200,19 +238,20 @@ export const config: Config = {
     ),
   },
 
-  indicators: {
-    enabled: (indicatorUserConfig.enabled as boolean) ?? false,
-    entryPreset: (indicatorUserConfig.entryPreset as string) ?? "supertrend_break",
-    exitPreset: (indicatorUserConfig.exitPreset as string) ?? "supertrend_break",
-    rsiLength: (indicatorUserConfig.rsiLength as number) ?? 2,
-    intervals: Array.isArray(indicatorUserConfig.intervals)
-      ? (indicatorUserConfig.intervals as string[])
-      : ["5_MINUTE"],
-    candles: (indicatorUserConfig.candles as number) ?? 298,
-    rsiOversold: (indicatorUserConfig.rsiOversold as number) ?? 30,
-    rsiOverbought: (indicatorUserConfig.rsiOverbought as number) ?? 80,
-    requireAllIntervals: (indicatorUserConfig.requireAllIntervals as boolean) ?? false,
-  },
+  indicators: (() => {
+    const ic = (u.chartIndicators ?? {}) as Record<string, unknown>;
+    return {
+      enabled: typeof ic.enabled === "boolean" ? ic.enabled : false,
+      entryPreset: typeof ic.entryPreset === "string" ? ic.entryPreset : "supertrend_break",
+      exitPreset: typeof ic.exitPreset === "string" ? ic.exitPreset : "supertrend_break",
+      rsiLength: typeof ic.rsiLength === "number" ? ic.rsiLength : 2,
+      intervals: Array.isArray(ic.intervals) ? (ic.intervals as string[]) : ["5_MINUTE"],
+      candles: typeof ic.candles === "number" ? ic.candles : 298,
+      rsiOversold: typeof ic.rsiOversold === "number" ? ic.rsiOversold : 30,
+      rsiOverbought: typeof ic.rsiOverbought === "number" ? ic.rsiOverbought : 80,
+      requireAllIntervals: typeof ic.requireAllIntervals === "boolean" ? ic.requireAllIntervals : false,
+    };
+  })(),
 };
 
 // Deprecation warning for legacy vpSlippagePct config key.
@@ -238,9 +277,9 @@ if (u.vpSlippagePct !== undefined) {
  *   4.0 SOL wallet → 1.33 SOL deploy
  */
 export function computeDeployAmount(walletSol: number): number {
-  const gasReserve = config.management.gasReserve      ?? 0.2;
-  const rentBuffer = config.management.rentBuffer      ?? 0.15;
-  const pct        = config.management.positionSizePct ?? 0.35;
+  const gasReserve = config.management.gasReserve;
+  const rentBuffer = config.management.rentBuffer;
+  const pct        = config.management.positionSizePct;
   const floor      = config.management.deployAmountSol;
   const ceil       = config.risk.maxDeployAmount;
   const deployable = Math.max(0, walletSol - gasReserve - rentBuffer);

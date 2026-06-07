@@ -6,32 +6,34 @@ import type { BlacklistEntry, BlocklistEntry } from "../types/index.js";
 const BLACKLIST_FILE = "./token-blacklist.json";
 const BLOCKLIST_FILE = "./dev-blocklist.json";
 
-// ─── Token Blacklist ───────────────────────────────────────────
+// ─── Shared Helpers ────────────────────────────────────────────
 
-function loadBlacklist(): Record<string, BlacklistEntry> {
-  if (!fs.existsSync(BLACKLIST_FILE)) return {};
+function loadJsonRecord<T>(file: string, label: string): Record<string, T> {
+  if (!fs.existsSync(file)) return {};
   try {
-    return JSON.parse(fs.readFileSync(BLACKLIST_FILE, "utf8"));
+    return JSON.parse(fs.readFileSync(file, "utf8"));
   } catch (error) {
-    log("blacklist_error", `Invalid ${BLACKLIST_FILE}: ${(error as Error).message}`);
-    throw new Error(`Safety blacklist is unreadable: ${BLACKLIST_FILE}`);
+    log("error", `Invalid ${file}: ${(error as Error).message}`);
+    throw new Error(`Safety ${label} is unreadable: ${file}`);
   }
 }
 
-function saveBlacklist(data: Record<string, BlacklistEntry>): void {
-  fs.writeFileSync(BLACKLIST_FILE, JSON.stringify(data, null, 2));
+function saveJsonRecord<T>(file: string, data: Record<string, T>): void {
+  fs.writeFileSync(file, JSON.stringify(data, null, 2));
 }
+
+// ─── Token Blacklist ───────────────────────────────────────────
 
 export function isBlacklisted(mint: string): boolean {
   if (!mint) return false;
-  const db = loadBlacklist();
+  const db = loadJsonRecord<BlacklistEntry>(BLACKLIST_FILE, "blacklist");
   return !!db[mint];
 }
 
 export function addToBlacklist({ mint, symbol, reason }: { mint: string; symbol?: string; reason?: string }): Record<string, unknown> {
   if (!mint) return { error: "mint required" };
 
-  const db = loadBlacklist();
+  const db = loadJsonRecord<BlacklistEntry>(BLACKLIST_FILE, "blacklist");
 
   if (db[mint]) {
     return {
@@ -49,7 +51,7 @@ export function addToBlacklist({ mint, symbol, reason }: { mint: string; symbol?
     added_by: "agent",
   };
 
-  saveBlacklist(db);
+  saveJsonRecord(BLACKLIST_FILE, db);
   log("blacklist", `Blacklisted ${symbol || mint}: ${reason}`);
   return { blacklisted: true, mint, symbol, reason };
 }
@@ -57,7 +59,7 @@ export function addToBlacklist({ mint, symbol, reason }: { mint: string; symbol?
 export function removeFromBlacklist({ mint }: { mint: string }): Record<string, unknown> {
   if (!mint) return { error: "mint required" };
 
-  const db = loadBlacklist();
+  const db = loadJsonRecord<BlacklistEntry>(BLACKLIST_FILE, "blacklist");
 
   if (!db[mint]) {
     return { error: `Mint ${mint} not found on blacklist` };
@@ -65,13 +67,13 @@ export function removeFromBlacklist({ mint }: { mint: string }): Record<string, 
 
   const entry = db[mint];
   delete db[mint];
-  saveBlacklist(db);
+  saveJsonRecord(BLACKLIST_FILE, db);
   log("blacklist", `Removed ${entry.symbol || mint} from blacklist`);
   return { removed: true, mint, was: entry };
 }
 
 export function listBlacklist(): { count: number; blacklist: Array<{ mint: string } & BlacklistEntry> } {
-  const db = loadBlacklist();
+  const db = loadJsonRecord<BlacklistEntry>(BLACKLIST_FILE, "blacklist");
   const entries = Object.entries(db).map(([mint, info]) => ({
     mint,
     ...info,
@@ -85,56 +87,42 @@ export function listBlacklist(): { count: number; blacklist: Array<{ mint: strin
 
 // ─── Dev Blocklist ─────────────────────────────────────────────
 
-function loadBlocklist(): Record<string, BlocklistEntry> {
-  if (!fs.existsSync(BLOCKLIST_FILE)) return {};
-  try {
-    return JSON.parse(fs.readFileSync(BLOCKLIST_FILE, "utf8"));
-  } catch (error) {
-    log("dev_blocklist_error", `Invalid ${BLOCKLIST_FILE}: ${(error as Error).message}`);
-    throw new Error(`Safety blocklist is unreadable: ${BLOCKLIST_FILE}`);
-  }
-}
-
-function saveBlocklist(data: Record<string, BlocklistEntry>): void {
-  fs.writeFileSync(BLOCKLIST_FILE, JSON.stringify(data, null, 2));
-}
-
 export function isDevBlocked(devWallet: string): boolean {
   if (!devWallet) return false;
-  return !!loadBlocklist()[devWallet];
+  return !!loadJsonRecord<BlocklistEntry>(BLOCKLIST_FILE, "blocklist")[devWallet];
 }
 
 export function getBlockedDevs(): Record<string, BlocklistEntry> {
-  return loadBlocklist();
+  return loadJsonRecord<BlocklistEntry>(BLOCKLIST_FILE, "blocklist");
 }
 
 export function blockDev({ wallet, reason, label }: { wallet: string; reason?: string; label?: string }): Record<string, unknown> {
   if (!wallet) return { error: "wallet required" };
-  const db = loadBlocklist();
+  const db = loadJsonRecord<BlocklistEntry>(BLOCKLIST_FILE, "blocklist");
   if (db[wallet]) return { already_blocked: true, wallet, label: db[wallet].label, reason: db[wallet].reason };
   db[wallet] = {
     label: label || "unknown",
     reason: reason || "no reason provided",
     added_at: new Date().toISOString(),
   };
-  saveBlocklist(db);
+  saveJsonRecord(BLOCKLIST_FILE, db);
   log("dev_blocklist", `Blocked deployer ${label || wallet}: ${reason}`);
   return { blocked: true, wallet, label, reason };
 }
 
 export function unblockDev({ wallet }: { wallet: string }): Record<string, unknown> {
   if (!wallet) return { error: "wallet required" };
-  const db = loadBlocklist();
+  const db = loadJsonRecord<BlocklistEntry>(BLOCKLIST_FILE, "blocklist");
   if (!db[wallet]) return { error: `Wallet ${wallet} not on dev blocklist` };
   const entry = db[wallet];
   delete db[wallet];
-  saveBlocklist(db);
+  saveJsonRecord(BLOCKLIST_FILE, db);
   log("dev_blocklist", `Removed deployer ${entry.label || wallet} from blocklist`);
   return { unblocked: true, wallet, was: entry };
 }
 
 export function listBlockedDevs(): { count: number; blocked_devs: Array<{ wallet: string } & BlocklistEntry> } {
-  const db = loadBlocklist();
+  const db = loadJsonRecord<BlocklistEntry>(BLOCKLIST_FILE, "blocklist");
   const entries = Object.entries(db).map(([wallet, info]) => ({ wallet, ...info }));
   return { count: entries.length, blocked_devs: entries };
 }

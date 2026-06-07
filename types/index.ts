@@ -251,15 +251,26 @@ export interface BlocklistEntry {
   added_at: string;
 }
 
-// ─── Envcrypt ──────────────────────────────────────────────────
+// ─── Performance ───────────────────────────────────────────────
 
-export interface EnvcryptOptions {
+export interface PerformanceSummary {
+  total_positions_closed: number;
+  total_pnl_usd: number;
+  avg_pnl_pct: number;
+  avg_range_efficiency_pct: number;
+  win_rate_pct: number;
+  total_lessons: number;
+}
+
+// ─── Secure Env ────────────────────────────────────────────────
+
+export interface SecureEnvOptions {
   envPath?: string;
   keyPath?: string;
   override?: boolean;
 }
 
-export interface EncryptEnvOptions {
+export interface EncryptRawOptions {
   rawPath?: string;
   outPath?: string;
   keyPath?: string;
