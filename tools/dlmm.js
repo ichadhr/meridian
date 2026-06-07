@@ -31,7 +31,7 @@ import { getWalletBalances, normalizeMint, fetchSolPrice } from "./wallet.js";
 import { appendDecision } from "../core/decision-log.js";
 import { estimateDeployGasSol, estimateCloseGasSol, samplePriorityFee } from "./gas-estimator.js";
 import { agentMeridianJson, getAgentIdForRequests, getAgentMeridianHeaders } from "./agent-meridian.js";
-import { getAndClearStagedSignals } from "../signal-tracker.js";
+import { getAndClearStagedSignals } from "../core/signal-tracker.js";
 
 // ─── Transaction reliability infrastructure ──────────────────
 // Priority fee + retry on transient RPC errors. Avoids lost deploys from
