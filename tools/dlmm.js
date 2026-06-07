@@ -13,7 +13,7 @@ import {
 import BN from "bn.js";
 import bs58 from "bs58";
 import { config, computeDeployAmount, MIN_SAFE_BINS_BELOW } from "../config.js";
-import { log } from "../logger.js";
+import { log } from "../utils/logger.js";
 import {
   trackPosition,
   markOutOfRange,
@@ -944,6 +944,12 @@ export async function deployPosition({
         volatility: normalizedVolatility ?? undefined,
         fee_tvl_ratio: fee_tvl_ratio != null ? Number(fee_tvl_ratio) : undefined,
         organic_score: organic_score != null ? Number(organic_score) : undefined,
+        // Mirrors the live deploy paths: pull staged screener signals (organic_score,
+        // fee_tvl_ratio, volume, mcap, smart_wallets_present, etc.) so dry-run
+        // positions have the same signal attribution as live ones.
+        signal_snapshot: config.darwin?.enabled
+          ? getAndClearStagedSignals(pool_address, baseMint)
+          : null,
         // New VPs: store deploy + close separately
         deploy_gas_sol: gasEstimate?.deployGasSol,
         close_gas_sol: gasEstimate?.closeGasSol,

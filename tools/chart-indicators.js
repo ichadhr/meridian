@@ -1,5 +1,5 @@
 import { config } from "../config.js";
-import { log } from "../logger.js";
+import { log } from "../utils/logger.js";
 import { agentMeridianJson, getAgentMeridianHeaders } from "./agent-meridian.js";
 import { safeNumber } from "../utils/number.js";
 

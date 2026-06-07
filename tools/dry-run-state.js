@@ -1,5 +1,5 @@
 import fs from "fs";
-import { log } from "../logger.js";
+import { log } from "../utils/logger.js";
 import {
   appendArchiveRecordIfNew,
   dedupeAllArchives,
@@ -61,7 +61,6 @@ export function trackVirtualPosition({
   amount_sol,
   initial_value_usd,
   sol_price_at_deploy,
-  deploy_rationale,
   base_mint,
   /**
    * @type {{ binId: number, shares: string, price: string|null, feeXPerTokenComplete: string|null, feeYPerTokenComplete: string|null, xAmount: string|null, yAmount: string|null }[]}
@@ -72,6 +71,12 @@ export function trackVirtualPosition({
    * - xAmount, yAmount: bin's total token amounts at deploy time (for debugging/verification)
    */
   bin_shares,
+  // Structured screener signals captured at deploy time. Mirrors the
+  // signal_snapshot field on live positions in state.json — numeric scores
+  // + booleans (organic_score, fee_tvl_ratio, volatility, etc.) used for
+  // retro-analysis and Darwin weight tuning. null if Darwin is disabled or
+  // no signals were staged for this pool/mint.
+  signal_snapshot,
   // Screening metadata — used by Virtual Digest for pattern analysis
   volatility,
   fee_tvl_ratio,
@@ -113,12 +118,12 @@ export function trackVirtualPosition({
     amount_sol,
     initial_value_usd,
     sol_price_at_deploy: sol_price_at_deploy ?? null,
-    deploy_rationale: deploy_rationale || null,
     bin_shares: Array.isArray(bin_shares) && bin_shares.length ? bin_shares : null,
     base_mint: base_mint || null,
     volatility: volatility != null ? Number(volatility) : null,
     fee_tvl_ratio: fee_tvl_ratio != null ? fee_tvl_ratio : null,
     organic_score: organic_score != null ? organic_score : null,
+    signal_snapshot: signal_snapshot && typeof signal_snapshot === "object" ? signal_snapshot : null,
     // Per-VP gas estimate (SOL) — deploy frozen at deploy time, close refreshed
     // on every PnL cycle. Falls back to config.management.vpGasCostSol.
     deploy_gas_sol: deploy_gas_sol != null ? Number(deploy_gas_sol) : null,

@@ -7,7 +7,7 @@
  */
 
 import fs from "fs";
-import { log } from "./logger.js";
+import { log } from "./utils/logger.js";
 
 const STRATEGY_FILE = "./strategy-library.json";
 

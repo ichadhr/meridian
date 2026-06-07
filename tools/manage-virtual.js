@@ -9,7 +9,7 @@ import {
 import { fetchSolPrice } from "./wallet.js";
 import { recordPoolDeploy } from "../pool-memory.js";
 import { config } from "../config.js";
-import { log } from "../logger.js";
+import { log } from "../utils/logger.js";
 import { estimateCloseGasSol, samplePriorityFee } from "./gas-estimator.js";
 import { getVirtualCloseRule } from "./virtual-close-rule.js";
 import { computePositionPnl, estimateSlippageLamports } from "./compute-position-pnl.js";

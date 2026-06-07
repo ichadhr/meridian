@@ -5,7 +5,7 @@ import readline from "readline";
 import path from "path";
 import { fileURLToPath } from "url";
 import { agentLoop } from "./agent.js";
-import { log } from "./logger.js";
+import { log } from "./utils/logger.js";
 import { getMyPositions, closePosition, getActiveBin, invalidatePositionsCache } from "./tools/dlmm.js";
 import { getWalletBalances } from "./tools/wallet.js";
 import { getTopCandidates } from "./tools/screening.js";

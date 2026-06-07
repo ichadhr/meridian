@@ -1,5 +1,5 @@
 import fs from "fs";
-import { log } from "./logger.js";
+import { log } from "./utils/logger.js";
 
 const DECISION_LOG_FILE = "./decision-log.json";
 const MAX_DECISIONS = 100;

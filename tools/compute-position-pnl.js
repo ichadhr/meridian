@@ -23,7 +23,7 @@ import("@meteora-ag/dlmm").then(mod => {
   _PRICE_SCALE = BigInt(mod.SCALE.toString());
   _swapExactInQuoteAtBin = mod.swapExactInQuoteAtBin;
 });
-import { log } from "../logger.js";
+import { log } from "../utils/logger.js";
 
 const ZERO = new BN(0);
 const LAMPORTS_PER_SOL = 1_000_000_000;

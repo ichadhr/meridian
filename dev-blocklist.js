@@ -7,7 +7,7 @@
  */
 
 import fs from "fs";
-import { log } from "./logger.js";
+import { log } from "./utils/logger.js";
 
 const BLOCKLIST_FILE = "./dev-blocklist.json";
 

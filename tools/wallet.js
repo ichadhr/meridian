@@ -6,7 +6,7 @@ import {
   Keypair,
 } from "@solana/web3.js";
 import bs58 from "bs58";
-import { log } from "../logger.js";
+import { log } from "../utils/logger.js";
 import { config } from "../config.js";
 
 let _connection = null;

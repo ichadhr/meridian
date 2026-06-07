@@ -6,7 +6,7 @@
  *   const html = await generateDryRunReport();
  *   fs.writeFileSync("dry-run-report.html", html);
  */
-import { log } from "../logger.js";
+import { log } from "../utils/logger.js";
 import { readArchive } from "./position-archive.js";
 import { archiveVirtualPositions } from "./dry-run-state.js";
 

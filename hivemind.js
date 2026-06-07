@@ -2,7 +2,7 @@ import fs from "fs";
 import path from "path";
 import crypto from "crypto";
 import { fileURLToPath } from "url";
-import { log } from "./logger.js";
+import { log } from "./utils/logger.js";
 import { config } from "./config.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));

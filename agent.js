@@ -85,7 +85,7 @@ function getToolsForRole(agentType, goal = "") {
 }
 import { getWalletBalances } from "./tools/wallet.js";
 import { getMyPositions } from "./tools/dlmm.js";
-import { log } from "./logger.js";
+import { log } from "./utils/logger.js";
 import { config } from "./config.js";
 import { getStateSummary } from "./state.js";
 import { getLessonsForPrompt, getPerformanceSummary } from "./lessons.js";

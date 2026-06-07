@@ -45,7 +45,7 @@ const TIMEFRAME_MINUTES = {
   "12h": 720,
   "24h": 1440,
 };
-import { log, logAction } from "../logger.js";
+import { log, logAction } from "../utils/logger.js";
 import { notifyDeploy, notifyClose, notifySwap } from "../telegram.js";
 
 function numberOrNull(value) {

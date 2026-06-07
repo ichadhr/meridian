@@ -10,7 +10,7 @@
  */
 
 import fs from "fs";
-import { log } from "./logger.js";
+import { log } from "./utils/logger.js";
 
 const WEIGHTS_FILE = "./signal-weights.json";
 

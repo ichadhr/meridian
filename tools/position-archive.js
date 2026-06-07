@@ -12,7 +12,7 @@
 
 import fs from "fs";
 import path from "path";
-import { log } from "../logger.js";
+import { log } from "../utils/logger.js";
 
 // ── Paths ────────────────────────────────────────────────────────────────
 const ARCHIVE_DIR = "./archives";
@@ -72,14 +72,13 @@ const KNOWN_FIELDS = [
   "close_pnl_sol_pct", "close_pnl_sol", "close_il_sol", "close_fees_sol",
   "close_cost_sol", "close_il_usd", "close_fees_usd", "close_cost_usd",
   "total_fees_earned_usd", "volatility", "fee_tvl_ratio", "organic_score",
-  "deploy_rationale", "signal_snapshot", "bin_shares", "tx_hashes", "relay",
+  "signal_snapshot", "bin_shares", "tx_hashes", "relay",
 ];
 
 /**
  * Extract only known schema fields from a raw record (e.g. a VP object with
  * internal fields like _oor_since, snapshots, current_value_usd).
  * Unknown fields are dropped. Missing fields default to null.
- * deploy_rationale is truncated to 200 chars.
  */
 export function cleanRecord(raw) {
   const r = {};
@@ -91,10 +90,6 @@ export function cleanRecord(raw) {
     r.minutes_held = Math.max(0, Math.round(
       (new Date(r.closed_at) - new Date(r.deployed_at)) / 60000,
     ));
-  }
-  // Truncate deploy_rationale
-  if (typeof r.deploy_rationale === "string" && r.deploy_rationale.length > 200) {
-    r.deploy_rationale = r.deploy_rationale.slice(0, 200) + "...";
   }
   return r;
 }

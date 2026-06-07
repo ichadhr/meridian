@@ -1,5 +1,5 @@
 import fs from "fs";
-import { log } from "./logger.js";
+import { log } from "./utils/logger.js";
 import { getPerformanceSummary } from "./lessons.js";
 
 const STATE_FILE = "./state.json";
