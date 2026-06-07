@@ -15,7 +15,10 @@
     "pm2:restart": "pm2 restart meridian --update-env",
     "pm2:logs": "pm2 logs meridian --lines 100",
     "dev": "DRY_RUN=true node index.js",
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
     "test": "npm run test:syntax",
+    "sync:serve": "node tools/serve-sync.js",
     "test:syntax": "find . -path ./node_modules -prune -o -name '*.js' -exec node --check {} \\;",
     "test:screen": "node test/test-screening.js",
     "test:agent": "DRY_RUN=true node test/test-agent.js",
@@ -38,5 +41,10 @@
   },
   "engines": {
     "node": ">=18.0.0"
+  },
+  "devDependencies": {
+    "@types/dotenv": "^6.1.1",
+    "@types/node": "^25.9.2",
+    "typescript": "^6.0.3"
   }
 }
