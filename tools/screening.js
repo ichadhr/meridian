@@ -1,6 +1,6 @@
 import { config } from "../config.js";
-import { isBlacklisted } from "../token-blacklist.js";
-import { isDevBlocked, getBlockedDevs } from "../dev-blocklist.js";
+import { isBlacklisted } from "../core/token-blacklist.js";
+import { isDevBlocked, getBlockedDevs } from "../core/token-blacklist.js";
 import { log } from "../utils/logger.js";
 import { isBaseMintOnCooldown, isPoolOnCooldown } from "../pool-memory.js";
 import { confirmIndicatorPreset } from "./chart-indicators.js";
