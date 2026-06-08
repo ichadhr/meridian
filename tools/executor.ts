@@ -31,8 +31,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { execSync, spawn } from "child_process";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const USER_CONFIG_PATH: string = path.join(__dirname, "../user-config.json");
+const USER_CONFIG_PATH: string = path.join(process.cwd(), "user-config.json");
 const POOL_DISCOVERY_BASE: string = "https://pool-discovery-api.datapi.meteora.ag";
 const MIN_VOLATILITY_TIMEFRAME: string = "30m";
 const TIMEFRAME_MINUTES: Record<string, number> = {

@@ -5,8 +5,7 @@ import { log } from "./utils/logger.js";
 import { loadJsonRecord, saveJsonRecord } from "./config/index.js";
 import type { SmartWallet, SmartWalletsDB } from "./types/index.js";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const WALLETS_PATH = path.join(__dirname, "smart-wallets.json");
+const WALLETS_PATH = path.join(process.cwd(), "smart-wallets.json");
 
 function loadWallets(): SmartWalletsDB {
   return loadJsonRecord<SmartWalletsDB>(WALLETS_PATH, { wallets: [] });

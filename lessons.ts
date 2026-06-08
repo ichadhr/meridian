@@ -14,8 +14,7 @@ import { getSharedLessonsForPrompt, pushHiveLesson, pushHivePerformanceEvent } f
 import { loadJsonRecord, saveJsonRecord } from "./config/index.js";
 import type { Config, Lesson, PerformanceRecord, PerformanceSummary, LessonsDB } from "./types/index.js";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const USER_CONFIG_PATH = path.join(__dirname, "user-config.json");
+const USER_CONFIG_PATH = path.join(process.cwd(), "user-config.json");
 
 const LESSONS_FILE = "./lessons.json";
 const MIN_EVOLVE_POSITIONS = 5;   // don't evolve until we have real data
