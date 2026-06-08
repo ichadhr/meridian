@@ -18,7 +18,6 @@
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "test": "npm run test:all",
-    "sync:serve": "node tools/serve-sync.js",
     "test:syntax": "find . -path ./node_modules -prune -o -name '*.js' -exec node --check {} \\;",
     "test:screen": "npx tsx test/test-screening.ts",
     "test:agent": "DRY_RUN=true npx tsx test/test-agent.ts",
