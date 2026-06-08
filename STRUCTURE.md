@@ -4,6 +4,72 @@ Autonomous DLMM liquidity provider agent for Meteora pools on Solana.
 
 > **Note:** The JavaScript to TypeScript conversion is complete. All active source files are now `.ts`. Original `.js` files are preserved as `*.js.legacy` backups. The folder restructuring (`external/`, `core/`, etc.) described below is the planned target architecture.
 
+## ⚠️ Migration Notes — Known Issues to Fix Before Restructuring
+
+Three dependency violations exist in the current codebase that must be resolved during migration. They are not runtime bugs today, but will become hard blockers once the new folder gates are enforced.
+
+### Blocker 1 — `executor.ts` imports `telegram.ts` directly
+
+**File**: `tools/executor.ts` line 48
+```ts
+// Current (wrong after migration):
+import { notifyDeploy, notifyClose, notifySwap } from "../telegram.js";
+
+// Fix — route via interfaces gate:
+import { notifyDeploy, notifyClose, notifySwap } from "../../interfaces/index.js";
+```
+**Rule violated**: `llm/` must never import from `interfaces/` directly — only via `interfaces/index.ts` gate.
+
+---
+
+### Blocker 2 — `dlmm.ts` imports `lessons.ts` (layer direction violation)
+
+**File**: `tools/dlmm.ts` line 28
+```ts
+// Current (wrong — external calling core):
+import { recordPerformance } from "../lessons.js";
+```
+**Rule violated**: `external/` must never import from `core/`. It is the lowest I/O layer.
+
+**Fix — move `recordPerformance()` UP to the caller**:
+```
+external/meteora/index.ts → closePosition() returns { pnlUsd, pnlPct, fees, ... }
+core/live/state.ts        → receives result → calls recordPerformance(result)  ✅
+```
+The SDK wrapper only does the SDK operation and returns data. Recording performance is business logic that belongs in `core/`, not inside an SDK wrapper.
+
+> [!NOTE]
+> A `core/shared/` subfolder does NOT solve this. `pnl.ts` and `close-rules.ts` at the root of `core/` already serve as the shared layer between `core/live/` and `core/vp/`. The direction violation must be fixed by moving the call up, not by adding a shared folder.
+
+---
+
+### Blocker 3 — `index.ts` has 20+ direct ungated imports
+
+**File**: `index.ts` lines 1–43 — imports directly from `telegram.js`, `tools/dlmm.js`, `tools/screening.js`, `lessons.js`, `state.js`, `pool-memory.js`, etc.
+
+**Fix**: This resolves automatically once all gate files are created. Update `index.ts` last in the migration sequence:
+```ts
+// After migration, index.ts imports only from gates:
+import { notifyDeploy, sendMessage }  from "./interfaces/index.js";
+import { getMyPositions, closePosition } from "./external/sdk.js";
+import { recordPerformance, openPosition } from "./core/index.js";
+```
+
+### Safe Migration Order
+```
+1. Create gate files (empty barrels): core/index.ts, external/sdk.ts,
+   interfaces/index.ts, llm/tools/index.ts
+2. Move utils/ (no deps)
+3. Move config/ (depends only on utils/)
+4. Move external/ providers → fix Blocker 2 at this step
+5. Move core/ files → populate core/index.ts barrel
+6. Move llm/ files → split definitions.ts + executor.ts into group files
+7. Move interfaces/ → fix Blocker 1 at this step → create interfaces/index.ts
+8. Update index.ts last → fix Blocker 3, swap all imports to gates
+```
+
+---
+
 ## Directory Contracts
 
 | Directory | Responsibility |
@@ -110,7 +176,9 @@ meridian/
     └── test-vp-pnl.ts
 ```
 
-## Root
+## [Root](file:///Users/ichadhr/Develop/node/meridian/docs/structures/1.ROOT_FOLDER.md)
+
+Detailed specifications for the root folder are documented in [1.ROOT_FOLDER.md](file:///Users/ichadhr/Develop/node/meridian/docs/structures/1.ROOT_FOLDER.md).
 
 | File | Role |
 |------|------|
@@ -122,6 +190,8 @@ meridian/
 
 ## config
 
+Detailed specifications for the config folder are documented in [2.CONFIG_FOLDER.md](file:///Users/ichadhr/Develop/node/meridian/docs/structures/2.CONFIG_FOLDER.md).
+
 Runtime configuration and static config files.
 
 | File | Role |
@@ -132,10 +202,13 @@ Runtime configuration and static config files.
 
 ## core
 
+Detailed specifications for the core folder are documented in [3.CORE_FOLDER.md](file:///Users/ichadhr/Develop/node/meridian/docs/structures/3.CORE_FOLDER.md).
+
 Pure business logic. No direct API or RPC calls; imports from `external/` for I/O.
 
 | File | Role |
 |------|------|
+| `index.ts` | **Public gate** — barrel re-export of all core public functions (only file imported from outside `core/`) |
 | `archive.ts` | Position archive (JSONL, dedup, monthly rolls) |
 | `briefing.ts` | Daily briefing generation |
 | `close-rules.ts` | Shared close-rule engine for both live and virtual positions |
@@ -168,6 +241,8 @@ Pure business logic. No direct API or RPC calls; imports from `external/` for I/
 
 ## external
 
+Detailed specifications for the external folder are documented in [4.EXTERNAL_FOLDER.md](file:///Users/ichadhr/Develop/node/meridian/docs/structures/4.EXTERNAL_FOLDER.md).
+
 External I/O adapters. Pure API wrappers; no business logic.
 
 | File | Role |
@@ -187,16 +262,21 @@ External I/O adapters. Pure API wrappers; no business logic.
 
 ## interfaces
 
+Detailed specifications for the interfaces folder are documented in [5.INTERFACES_FOLDER.md](file:///Users/ichadhr/Develop/node/meridian/docs/structures/5.INTERFACES_FOLDER.md).
+
 Platform communication interfaces.
 
 | File | Role |
 |------|------|
-| `discord/index.ts` | Discord listener (address processing, signal ingestion) |
+| `index.ts` | **Outbound gate** — unified `notifyDeploy`, `notifyClose`, `notifySwap`, `notifyOutOfRange`, `sendMessage`, `sendHTML`, `createLiveMessage`, `sendDocument` |
+| `discord/index.ts` | Discord listener (address processing, signal ingestion — inbound only, no gate) |
 | `discord/pre-checks.ts` | Discord pre-checks (dedup, blacklist, rug check, deployer check, fees check) |
-| `telegram/index.ts` | Telegram bot (send/edit/poll/live message/buttons/notifications) |
+| `telegram/index.ts` | Telegram adapter — `sendMessageTelegram`, `notifyDeployTelegram`, etc. (called only by `interfaces/index.ts`) |
 | `telegram/report.html` | HTML report template sent via Telegram |
 
 ## llm
+
+Detailed specifications for the llm folder are documented in [6.LLM_FOLDER.md](file:///Users/ichadhr/Develop/node/meridian/docs/structures/6.LLM_FOLDER.md).
 
 Agent harness and LLM communication layer.
 
@@ -207,12 +287,25 @@ Agent harness and LLM communication layer.
 
 ### tools
 
+Tool files are co-located — each file owns both the schema (what the LLM sees) and the handler (what actually runs) for a logical group. `index.ts` is the only file imported from outside.
+
 | File | Role |
 |------|------|
-| `tools/definitions.ts` | OpenAI-format tool schemas (30+ tools) |
-| `tools/executor.ts` | Tool dispatch with safety checks (screening threshold validation, type coercion, config normalization) |
+| `tools/index.ts` | Gate — merges all schemas into `tools[]`, routes `executeTool()` |
+| `tools/screening.ts` | Schema + handler: discover_pools, get_top_candidates, get_pool_detail, search_pools |
+| `tools/deployment.ts` | Schema + handler: deploy_position, get_active_bin |
+| `tools/management.ts` | Schema + handler: close_position, claim_fees, get_my_positions, get_position_pnl, get_wallet_positions |
+| `tools/cmd/wallet.ts` | Schema + handler: get_wallet_balance, swap_token |
+| `tools/cmd/token.ts` | Schema + handler: get_token_info, get_token_holders, get_token_narrative |
+| `tools/cmd/smart-wallets.ts` | Schema + handler: add/remove/list/check_smart_wallets, get_top_lpers, study_top_lpers |
+| `tools/cmd/lessons.ts` | Schema + handler: add_lesson, pin/unpin_lesson, list_lessons, clear_lessons, self_update, get_recent_decisions |
+| `tools/cmd/strategy.ts` | Schema + handler: add/list/get/set_active/remove_strategy |
+| `tools/cmd/memory.ts` | Schema + handler: get_pool_memory, add_pool_note, get_performance_history, set_position_note |
+| `tools/cmd/blacklist.ts` | Schema + handler: add/remove/list_blacklist, block/unblock/list_blocked_deployers |
 
 ## utils
+
+Detailed specifications for the utils folder are documented in [7.UTILS_FOLDER.md](file:///Users/ichadhr/Develop/node/meridian/docs/structures/7.UTILS_FOLDER.md).
 
 Shared utilities and helpers.
 
