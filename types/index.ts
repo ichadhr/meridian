@@ -276,6 +276,26 @@ export interface EncryptRawOptions {
   keyPath?: string;
 }
 
+// ─── Virtual Position ──────────────────────────────────────────
+
+export interface VirtualPosition {
+  id: string;
+  pool: string;
+  pair?: string;
+  pool_name?: string;
+  base_mint?: string;
+  lower_bin?: number;
+  upper_bin?: number;
+  deployed_at?: string;
+  [key: string]: unknown;
+}
+
+export interface VpSnapshot {
+  pnl_pct?: number;
+  pnl_sol_pct?: number;
+  [key: string]: unknown;
+}
+
 // ─── Strategy Library ──────────────────────────────────────────
 
 export interface StrategyEntry {

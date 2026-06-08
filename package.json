@@ -43,6 +43,7 @@
     "node": ">=18.0.0"
   },
   "devDependencies": {
+    "@types/bn.js": "^5.2.0",
     "@types/dotenv": "^6.1.1",
     "@types/node": "^25.9.2",
     "typescript": "^6.0.3"
