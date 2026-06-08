@@ -202,7 +202,7 @@ export interface ToolAction {
   success: boolean;
   duration_ms?: number;
   args?: Record<string, unknown>;
-  result?: Record<string, unknown>;
+  result?: unknown;
   [key: string]: unknown;
 }
 
