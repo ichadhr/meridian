@@ -1,0 +1,127 @@
+// serve-sync.js — Atomic sim+real capture for dry-run-compare-viz.html
+//
+// Why this exists: the HTML previously compared the sim's most recent snapshot
+// (which could be hours old) to a real-time datapi price. For volatile tokens
+// that produces large bin gaps that reflect TIME ELAPSED, not model inaccuracy.
+//
+// This server reads dry-run-state.json, then for each open VP fetches the
+// current on-chain active bin via the same dlmm.getActiveBin() the management
+// cycle uses, returning both the sim snapshot and the real bin captured at
+// the same moment. The HTML button calls /sync and renders the result.
+//
+// Usage: SYNC_PORT=8765 node tools/serve-sync.js
+//   or:  node tools/serve-sync.js   (defaults to 8765)
+// Stop:  Ctrl-C
+//
+// Dev-only. Not part of production deployment.
+
+import http from "http";
+import { readFile } from "fs/promises";
+import { fileURLToPath } from "url";
+import path from "path";
+
+// Load env FIRST so dlmm.getConnection() picks up RPC_URL.
+import "../envcrypt.js";
+import { getActiveBin } from "./dlmm.js";
+import { log } from "../utils/logger.js";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const STATE_FILE = path.join(__dirname, "..", "dry-run-state.json");
+const PORT = parseInt(process.env.SYNC_PORT || "8765", 10);
+
+const CORS = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "GET, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type",
+};
+
+function setCors(res) {
+  for (const [k, v] of Object.entries(CORS)) res.setHeader(k, v);
+}
+
+function json(res, status, body) {
+  res.writeHead(status, { "Content-Type": "application/json" });
+  res.end(JSON.stringify(body));
+}
+
+async function loadOpenVPs() {
+  const text = await readFile(STATE_FILE, "utf8");
+  const state = JSON.parse(text);
+  return (state.virtual_positions || []).filter((v) => v.status === "open");
+}
+
+async function captureOne(vp) {
+  const snaps = Array.isArray(vp.snapshots) ? vp.snapshots : [];
+  const last = snaps.length > 0 ? snaps[snaps.length - 1] : null;
+  const simActiveBin = last?.active_bin ?? vp.active_bin_at_deploy ?? null;
+  const simSnapshotAt = last?.at ?? vp.deployed_at ?? null;
+
+  try {
+    const real = await getActiveBin({ pool_address: vp.pool });
+    return {
+      pool: vp.pool,
+      pool_name: vp.pool_name,
+      sim_active_bin: simActiveBin,
+      sim_snapshot_at: simSnapshotAt,
+      real_active_bin: real.binId,
+      real_price: real.price,
+      ok: true,
+    };
+  } catch (e) {
+    return {
+      pool: vp.pool,
+      pool_name: vp.pool_name,
+      sim_active_bin: simActiveBin,
+      sim_snapshot_at: simSnapshotAt,
+      ok: false,
+      error: e?.message || String(e),
+    };
+  }
+}
+
+async function handleSync() {
+  const vps = await loadOpenVPs();
+  // Run sequentially to keep RPC rate low; parallelism is rarely worth the noise.
+  const results = [];
+  for (const vp of vps) {
+    results.push(await captureOne(vp));
+  }
+  return {
+    captured_at: new Date().toISOString(),
+    count: results.length,
+    results,
+  };
+}
+
+const server = http.createServer(async (req, res) => {
+  setCors(res);
+  if (req.method === "OPTIONS") {
+    res.writeHead(204);
+    res.end();
+    return;
+  }
+
+  if (req.url === "/health") {
+    return json(res, 200, { ok: true, ts: new Date().toISOString() });
+  }
+
+  if (req.url === "/sync" && req.method === "GET") {
+    try {
+      const result = await handleSync();
+      log("sync_ok", `count=${result.count} captured_at=${result.captured_at}`);
+      return json(res, 200, { ok: true, ...result });
+    } catch (e) {
+      log("sync_err", e?.message || String(e));
+      return json(res, 500, { ok: false, error: e?.message || String(e) });
+    }
+  }
+
+  return json(res, 404, { ok: false, error: "not_found" });
+});
+
+server.listen(PORT, () => {
+  console.log(`[serve-sync] listening on http://localhost:${PORT}`);
+  console.log(`  GET /sync   capture sim+real for all open VPs`);
+  console.log(`  GET /health liveness check`);
+  console.log(`  state file: ${STATE_FILE}`);
+});
