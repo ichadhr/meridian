@@ -17,11 +17,12 @@
     "dev": "DRY_RUN=true node index.js",
     "build": "tsc",
     "typecheck": "tsc --noEmit",
-    "test": "npm run test:syntax",
+    "test": "npm run test:all",
     "sync:serve": "node tools/serve-sync.js",
     "test:syntax": "find . -path ./node_modules -prune -o -name '*.js' -exec node --check {} \\;",
-    "test:screen": "node test/test-screening.js",
-    "test:agent": "DRY_RUN=true node test/test-agent.js",
+    "test:screen": "npx tsx test/test-screening.ts",
+    "test:agent": "DRY_RUN=true npx tsx test/test-agent.ts",
+    "test:all": "npx tsx test/test-agent.ts && npx tsx test/test-cache-30s.ts && npx tsx test/test-close-vp-manual.ts && npx tsx test/test-compute-position-pnl.ts && npx tsx test/test-dry-run-cache.ts && npx tsx test/test-screening.ts && npx tsx test/test-state-mismatch.ts && npx tsx test/test-vp-pnl.ts && npx tsx test/test-lessons.ts && npx tsx test/test-signal-weights.ts && npx tsx test/test-chart-indicators.ts && npx tsx test/test-smart-wallets.ts && npx tsx test/test-secure-env.ts && npx tsx test/test-blacklist.ts",
     "postinstall": "npx tsx scripts/patch-anchor.ts && npm rebuild bigint-buffer"
   },
   "knip": {
