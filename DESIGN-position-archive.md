@@ -78,8 +78,7 @@ interface ArchiveRecord {
   volatility: number | null;
   fee_tvl_ratio: number | null;
   organic_score: number | null;
-  deploy_rationale: string | null;       // truncated to 200 chars
-  signal_snapshot: object | null;        // live only — full screening context
+  signal_snapshot: object | null;        // structured screener signals (live + dry-run)
 
   // ── Type-specific ──
   bin_shares: object[] | null;           // VP only

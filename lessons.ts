@@ -175,7 +175,7 @@ export async function recordPerformance(perf: PerformanceRecord): Promise<void> 
 
   void pushHivePerformanceEvent({
     ...entry,
-    base_mint: perf.base_mint || null,
+    base_mint: perf.base_mint || undefined,
     fees_earned_sol: perf.fees_earned_sol || 0,
     eventId: `close:${perf.position}:${entry.recorded_at}`,
   });
