@@ -17,6 +17,23 @@ const u: Record<string, unknown> = fs.existsSync(USER_CONFIG_PATH)
 
 export const MIN_SAFE_BINS_BELOW = 35;
 
+// ─── JSON File Helpers ─────────────────────────────────────────
+
+/** Load a JSON file with a fallback default. */
+export function loadJsonRecord<T>(filePath: string, fallback: T): T {
+  if (!fs.existsSync(filePath)) return fallback;
+  try {
+    return JSON.parse(fs.readFileSync(filePath, "utf8")) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+/** Save a value as JSON to a file. */
+export function saveJsonRecord(filePath: string, value: unknown): void {
+  fs.writeFileSync(filePath, JSON.stringify(value, null, 2));
+}
+
 // ─── Config Helpers ────────────────────────────────────────────
 
 function numericConfig(value: unknown): number | null {

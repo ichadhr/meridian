@@ -275,3 +275,176 @@ export interface EncryptRawOptions {
   outPath?: string;
   keyPath?: string;
 }
+
+// ─── Strategy Library ──────────────────────────────────────────
+
+export interface StrategyEntry {
+  id: string;
+  name: string;
+  author: string;
+  lp_strategy: string;
+  token_criteria: Record<string, unknown>;
+  entry: Record<string, unknown>;
+  range: Record<string, unknown>;
+  exit: Record<string, unknown>;
+  best_for: string;
+  raw?: string;
+  added_at?: string;
+  updated_at?: string;
+}
+
+export interface StrategyDB {
+  active: string | null;
+  strategies: Record<string, StrategyEntry>;
+}
+
+// ─── Signal Weights ────────────────────────────────────────────
+
+export interface SignalWeightChange {
+  signal: string;
+  from: number;
+  to: number;
+  lift: number;
+  action: string;
+}
+
+export interface SignalWeightHistoryEntry {
+  timestamp: string;
+  changes: SignalWeightChange[];
+  window_size: number;
+  win_count: number;
+  loss_count: number;
+}
+
+export interface SignalWeightsDB {
+  weights: Record<string, number>;
+  last_recalc: string | null;
+  recalc_count: number;
+  history: SignalWeightHistoryEntry[];
+}
+
+// ─── Smart Wallets ─────────────────────────────────────────────
+
+export interface SmartWallet {
+  name: string;
+  address: string;
+  category: string;
+  type: string;
+  addedAt?: string;
+}
+
+export interface SmartWalletsDB {
+  wallets: SmartWallet[];
+}
+
+// ─── Pool Memory ───────────────────────────────────────────────
+
+export interface PoolDeploy {
+  deployed_at: string | null;
+  closed_at: string;
+  pnl_pct: number | null;
+  pnl_usd: number | null;
+  fees_earned_usd: number | null;
+  fees_earned_sol: number | null;
+  fee_earned_pct: number | null;
+  range_efficiency: number | null;
+  minutes_held: number | null;
+  close_reason: string | null;
+  strategy: string | null;
+  volatility_at_deploy: number | null;
+}
+
+export interface PoolSnapshot {
+  ts: string;
+  position: string;
+  pnl_pct: number | null;
+  pnl_usd: number | null;
+  in_range: boolean | null;
+  unclaimed_fees_usd: number | null;
+  minutes_out_of_range: number | null;
+  age_minutes: number | null;
+}
+
+export interface PoolNote {
+  note: string;
+  added_at: string;
+}
+
+export interface PoolMemoryEntry {
+  name: string;
+  base_mint: string | null;
+  deploys: PoolDeploy[];
+  total_deploys: number;
+  avg_pnl_pct: number;
+  win_rate: number;
+  adjusted_win_rate: number;
+  adjusted_win_rate_sample_count: number;
+  last_deployed_at: string | null;
+  last_outcome: string | null;
+  notes: PoolNote[];
+  snapshots?: PoolSnapshot[];
+  cooldown_until?: string;
+  cooldown_reason?: string;
+  base_mint_cooldown_until?: string;
+  base_mint_cooldown_reason?: string;
+}
+
+// ─── Lessons ───────────────────────────────────────────────────
+
+export interface Lesson {
+  id: number;
+  rule: string;
+  tags: string[];
+  outcome: string;
+  sourceType?: string;
+  pinned?: boolean;
+  role?: string | null;
+  confidence?: number;
+  context?: string;
+  pnl_pct?: number;
+  fees_earned_usd?: number;
+  initial_value_usd?: number;
+  range_efficiency?: number;
+  close_reason?: string;
+  pool?: string;
+  created_at?: string;
+}
+
+export interface PerformanceRecord {
+  position?: string;
+  pool?: string;
+  pool_name?: string;
+  strategy?: string;
+  bin_range?: number | Record<string, unknown>;
+  bin_step?: number;
+  volatility?: number;
+  fee_tvl_ratio?: number;
+  organic_score?: number;
+  amount_sol?: number;
+  fees_earned_usd?: number;
+  fees_earned_sol?: number;
+  final_value_usd?: number;
+  initial_value_usd?: number;
+  minutes_in_range?: number;
+  minutes_held?: number;
+  close_reason?: string;
+  base_mint?: string;
+  deployed_at?: string;
+  signal_snapshot?: Record<string, unknown>;
+  pnl_usd?: number;
+  pnl_pct?: number;
+  range_efficiency?: number;
+  recorded_at?: string;
+  [key: string]: unknown;
+}
+
+export interface LessonsDB {
+  lessons: Lesson[];
+  performance: PerformanceRecord[];
+}
+
+// ─── Pool Candidate Filter ─────────────────────────────────────
+
+export interface PoolCandidateFilter {
+  pool_address: string;
+}
