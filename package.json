@@ -9,7 +9,7 @@
   },
   "scripts": {
     "setup": "node setup.js",
-    "env:encrypt": "node scripts/envrypt.js encrypt",
+    "env:encrypt": "npx tsx scripts/envrypt.ts encrypt",
     "start": "node index.js",
     "pm2:start": "pm2 start ecosystem.config.cjs",
     "pm2:restart": "pm2 restart meridian --update-env",
@@ -22,7 +22,7 @@
     "test:syntax": "find . -path ./node_modules -prune -o -name '*.js' -exec node --check {} \\;",
     "test:screen": "node test/test-screening.js",
     "test:agent": "DRY_RUN=true node test/test-agent.js",
-    "postinstall": "node scripts/patch-anchor.js && npm rebuild bigint-buffer"
+    "postinstall": "npx tsx scripts/patch-anchor.ts && npm rebuild bigint-buffer"
   },
   "knip": {
     "ignore": [
@@ -47,6 +47,7 @@
     "@types/dotenv": "^6.1.1",
     "@types/node": "^25.9.2",
     "@types/node-cron": "^3.0.11",
+    "tsx": "^4.22.4",
     "typescript": "^6.0.3"
   }
 }
