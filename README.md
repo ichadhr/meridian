@@ -235,7 +235,7 @@ meridian <command> [flags]
 Or run without installing:
 
 ```bash
-node cli.js <command> [flags]
+npx tsx cli.ts <command> [flags]
 ```
 
 **Positions & PnL**
@@ -358,7 +358,7 @@ cd discord-listener
 npm start
 ```
 
-Or run it in a separate terminal alongside the main agent. Signals are written to `discord-signals.json` and picked up automatically by `/screen` and `node cli.js screen`.
+Or run it in a separate terminal alongside the main agent. Signals are written to `discord-signals.json` and picked up automatically by `/screen` and `npx tsx cli.ts screen`.
 
 ### Signal pipeline
 
@@ -467,7 +467,7 @@ All fields are optional — defaults shown. Edit `user-config.json`.
 | `screeningModel` | `openai/gpt-oss-20b:free` | LLM for screening cycles |
 | `generalModel` | `openai/gpt-oss-20b:free` | LLM for REPL / chat |
 
-> Override model at runtime: `node cli.js config set screeningModel anthropic/claude-opus-4-5`
+> Override model at runtime: `npx tsx cli.ts config set screeningModel anthropic/claude-opus-4-5`
 
 ---
 
@@ -511,14 +511,14 @@ After every closed position the agent runs `studyTopLPers` on candidate pools, a
 
 Add a lesson manually:
 ```bash
-node cli.js lessons add "Never deploy into pump.fun tokens under 2h old"
+npx tsx cli.ts lessons add "Never deploy into pump.fun tokens under 2h old"
 ```
 
 ### Threshold evolution
 
 After 5+ positions have been closed, run:
 ```bash
-node cli.js evolve
+npx tsx cli.ts evolve
 ```
 
 This analyzes closed position performance (win rate, avg PnL, fee yields) and automatically adjusts screening thresholds in `user-config.json`. Changes take effect immediately.
@@ -582,29 +582,29 @@ Any OpenAI-compatible endpoint works.
 ## Architecture
 
 ```
-index.js            Main entry: REPL + cron orchestration + Telegram bot polling
-agent.js            ReAct loop: LLM → tool call → repeat
-config.js           Runtime config from user-config.json + .env
-prompt.js           System prompt builder (SCREENER / MANAGER / GENERAL roles)
-state.js            Position registry (state.json)
-decision-log.js     Structured decision log for deploy, close, skip, and no-deploy rationale
-lessons.js          Learning engine: records performance, derives lessons, evolves thresholds
-pool-memory.js      Per-pool deploy history + snapshots
-strategy-library.js Saved LP strategies
-telegram.js         Telegram bot: polling + notifications
-hivemind.js         Agent Meridian HiveMind sync
-smart-wallets.js    KOL/alpha wallet tracker
-token-blacklist.js  Permanent token blacklist
-cli.js              Direct CLI — every tool as a subcommand with JSON output
+index.ts            Main entry: REPL + cron orchestration + Telegram bot polling
+agent.ts            ReAct loop: LLM → tool call → repeat
+config/index.ts     Runtime config from user-config.json + .env
+prompt.ts           System prompt builder (SCREENER / MANAGER / GENERAL roles)
+state.ts            Position registry (state.json)
+decision-log.ts     Structured decision log for deploy, close, skip, and no-deploy rationale
+lessons.ts          Learning engine: records performance, derives lessons, evolves thresholds
+pool-memory.ts      Per-pool deploy history + snapshots
+strategy-library.ts Saved LP strategies
+telegram.ts         Telegram bot: polling + notifications
+hivemind.ts         Agent Meridian HiveMind sync
+smart-wallets.ts    KOL/alpha wallet tracker
+core/token-blacklist.ts Permanent token blacklist
+cli.ts              Direct CLI — every tool as a subcommand with JSON output
 
 tools/
-  definitions.js    Tool schemas (OpenAI format)
-  executor.js       Tool dispatch + safety checks
-  dlmm.js           Meteora DLMM SDK wrapper
-  screening.js      Pool discovery
-  wallet.js         SOL/token balances + Jupiter swap
-  token.js          Token info, holders, narrative
-  study.js          Top LPer study via LPAgent API
+  definitions.ts    Tool schemas (OpenAI format)
+  executor.ts       Tool dispatch + safety checks
+  dlmm.ts           Meteora DLMM SDK wrapper
+  screening.ts      Pool discovery
+  wallet.ts         SOL/token balances + Jupiter swap
+  token.ts          Token info, holders, narrative
+  study.ts          Top LPer study via LPAgent API
 
 discord-listener/
   index.js          Selfbot Discord listener

@@ -2,7 +2,7 @@
 
 Autonomous DLMM liquidity provider agent for Meteora pools on Solana.
 
-> **Note:** The current migration is converting JavaScript to TypeScript, renaming files in place. Original `.js` files are preserved as `.js.legacy` backups. Folder restructuring (`external/`, `core/`, etc.) will happen after the TS conversion is complete.
+> **Note:** The JavaScript to TypeScript conversion is complete. All active source files are now `.ts`. Original `.js` files are preserved as `*.js.legacy` backups. The folder restructuring (`external/`, `core/`, etc.) described below is the planned target architecture.
 
 ## Directory Contracts
 
@@ -94,15 +94,20 @@ meridian/
 │   └── patch-anchor.ts         # Anchor patching utility
 │
 └── test/                       # Unit tests (mirrors source tree)
-    ├── pnl.test.ts
-    ├── screening.test.ts
-    ├── test-agent.js
-    ├── test-cache-30s.js
-    ├── test-close-vp-manual.js
-    ├── test-compute-position-pnl.js
-    ├── test-dry-run-cache.js
-    ├── test-state-mismatch.js
-    └── vp.test.ts
+    ├── test-agent.ts
+    ├── test-blacklist.ts
+    ├── test-cache-30s.ts
+    ├── test-chart-indicators.ts
+    ├── test-close-vp-manual.ts
+    ├── test-compute-position-pnl.ts
+    ├── test-dry-run-cache.ts
+    ├── test-lessons.ts
+    ├── test-screening.ts
+    ├── test-secure-env.ts
+    ├── test-signal-weights.ts
+    ├── test-smart-wallets.ts
+    ├── test-state-mismatch.ts
+    └── test-vp-pnl.ts
 ```
 
 ## Root
@@ -237,14 +242,20 @@ Tests (mirrors source tree).
 
 | File | Role |
 |------|------|
-| `test-agent.js` | Agent integration |
-| `test-cache-30s.js` | Cache TTL |
-| `test-close-vp-manual.js` | Manual VP close |
-| `test-compute-position-pnl.js` | PnL computation |
-| `test-dry-run-cache.js` | Dry-run cache |
-| `test-screening.js` | Screening |
-| `test-state-mismatch.js` | State sync |
-| `test-vp-pnl.js` | VP PnL |
+| `test-agent.ts` | Agent integration |
+| `test-blacklist.ts` | Token blacklist CRUD & checks |
+| `test-cache-30s.ts` | Cache TTL |
+| `test-chart-indicators.ts` | Chart indicator calculations |
+| `test-close-vp-manual.ts` | Manual VP close |
+| `test-compute-position-pnl.ts` | PnL computation |
+| `test-dry-run-cache.ts` | Dry-run cache |
+| `test-lessons.ts` | Lessons logic |
+| `test-screening.ts` | Candidate pool screening |
+| `test-secure-env.ts` | Environment encryption/decryption validation |
+| `test-signal-weights.ts` | Signal weights matrix logic |
+| `test-smart-wallets.ts` | Smart wallets CRUD & tracking validation |
+| `test-state-mismatch.ts` | State sync |
+| `test-vp-pnl.ts` | VP PnL |
 
 ## Data and Runtime
 

@@ -7,29 +7,30 @@ Autonomous DLMM liquidity provider agent for Meteora pools on Solana.
 ## Architecture Overview
 
 ```
-index.js            Main entry: REPL + cron orchestration + Telegram bot polling
-agent.js            ReAct loop (OpenRouter/OpenAI-compatible): LLM → tool call → repeat
-config.js           Runtime config from user-config.json + .env; exposes config object
-prompt.js           Builds system prompt per agent role (SCREENER / MANAGER / GENERAL)
-state.js            Position registry (state.json): tracks bin ranges, OOR timestamps, notes
-lessons.js          Learning engine: records closed-position perf, derives lessons, evolves thresholds
-pool-memory.js      Per-pool deploy history + snapshots (pool-memory.json)
-strategy-library.js Saved LP strategies (strategy-library.json)
-briefing.js         Daily Telegram briefing (HTML)
-telegram.js         Telegram bot: polling, notifications (deploy/close/swap/OOR)
-hivemind.js         Agent Meridian HiveMind sync
-smart-wallets.js    KOL/alpha wallet tracker (smart-wallets.json)
-token-blacklist.js  Permanent token blacklist (token-blacklist.json)
-logger.js           Daily-rotating log files + action audit trail
+index.ts            Main entry: REPL + cron orchestration + Telegram bot polling
+agent.ts            ReAct loop (OpenRouter/OpenAI-compatible): LLM → tool call → repeat
+config/index.ts     Runtime config from user-config.json + .env; exposes config object
+prompt.ts           Builds system prompt per agent role (SCREENER / MANAGER / GENERAL)
+state.ts            Position registry (state.json): tracks bin ranges, OOR timestamps, notes
+lessons.ts          Learning engine: records closed-position perf, derives lessons, evolves thresholds
+pool-memory.ts      Per-pool deploy history + snapshots (pool-memory.json)
+strategy-library.ts Saved LP strategies (strategy-library.json)
+core/briefing.ts    Daily Telegram briefing (HTML)
+telegram.ts         Telegram bot: polling, notifications (deploy/close/swap/OOR)
+hivemind.ts         Agent Meridian HiveMind sync
+smart-wallets.ts    KOL/alpha wallet tracker (smart-wallets.json)
+core/token-blacklist.ts Permanent token blacklist (token-blacklist.json)
+utils/logger.ts     Daily-rotating log files + action audit trail
 
 tools/
-  definitions.js    Tool schemas in OpenAI format (what LLM sees)
-  executor.js       Tool dispatch: name → fn, safety checks, pre/post hooks
-  dlmm.js           Meteora DLMM SDK wrapper (deploy, close, claim, positions, PnL)
-  screening.js      Pool discovery from Meteora API
-  wallet.js         SOL/token balances (Helius) + Jupiter swap
-  token.js          Token info/holders/narrative (Jupiter API)
-  study.js          Top LPer study via LPAgent API
+  definitions.ts    Tool schemas in OpenAI format (what LLM sees)
+  executor.ts       Tool dispatch: name → fn, safety checks, pre/post hooks
+  dlmm.ts           Meteora DLMM SDK wrapper (deploy, close, claim, positions, PnL)
+  screening.ts      Pool discovery from Meteora API
+  wallet.ts         SOL/token balances (Helius) + Jupiter swap
+  token.ts          Token info/holders/narrative (Jupiter API)
+  study.ts          Top LPer study via LPAgent API
+
 ```
 
 ---
@@ -44,22 +45,22 @@ Three agent roles filter which tools the LLM can call:
 | `MANAGER` | Manage open positions | close_position, claim_fees, swap_token, get_position_pnl, set_position_note |
 | `GENERAL` | Chat / manual commands | All tools |
 
-Sets defined in `agent.js:6-7`. If you add a tool, also add it to the relevant set(s).
+Sets defined in `agent.ts:6-7`. If you add a tool, also add it to the relevant set(s).
 
 ---
 
 ## Adding a New Tool
 
-1. **`tools/definitions.js`** — Add OpenAI-format schema object to the `tools` array
-2. **`tools/executor.js`** — Add `tool_name: functionImpl` to `toolMap`
-3. **`agent.js`** — Add tool name to `MANAGER_TOOLS` and/or `SCREENER_TOOLS` if role-restricted
-4. If the tool writes on-chain state, add it to `WRITE_TOOLS` in executor.js for safety checks
+1. **`tools/definitions.ts`** — Add OpenAI-format schema object to the `tools` array
+2. **`tools/executor.ts`** — Add `tool_name: functionImpl` to `toolMap`
+3. **`agent.ts`** — Add tool name to `MANAGER_TOOLS` and/or `SCREENER_TOOLS` if role-restricted
+4. If the tool writes on-chain state, add it to `WRITE_TOOLS` in executor.ts for safety checks
 
 ---
 
 ## Config System
 
-`config.js` loads `user-config.json` at startup. Runtime mutations go through `update_config` tool (executor.js) which:
+`config/index.ts` loads `user-config.json` at startup. Runtime mutations go through `update_config` tool (executor.ts) which:
 - Updates the live `config` object immediately
 - Persists to `user-config.json`
 - Restarts cron jobs if intervals changed
@@ -98,14 +99,14 @@ Sets defined in `agent.js:6-7`. If you add a tool, also add it to the relevant s
 
 ## Position Lifecycle
 
-1. **Deploy**: `deploy_position` → executor safety checks → `trackPosition()` in state.js → Telegram notify
+1. **Deploy**: `deploy_position` → executor safety checks → `trackPosition()` in state.ts → Telegram notify
 2. **Monitor**: management cron → `getMyPositions()` → `getPositionPnl()` → OOR detection → pool-memory snapshots
-3. **Close**: `close_position` → `recordPerformance()` in lessons.js → auto-swap base token to SOL → Telegram notify
+3. **Close**: `close_position` → `recordPerformance()` in lessons.ts → auto-swap base token to SOL → Telegram notify
 4. **Learn**: `evolveThresholds()` runs on performance data → updates config.screening → persists to user-config.json
 
 ---
 
-## Screener Safety Checks (executor.js)
+## Screener Safety Checks (executor.ts)
 
 Before `deploy_position` executes:
 - `bin_step` must be within `[minBinStep, maxBinStep]`
@@ -122,7 +123,7 @@ Before `deploy_position` executes:
 
 ## bins_below Calculation (SCREENER)
 
-Linear formula based on positive pool volatility (set in screener prompt, `index.js`):
+Linear formula based on positive pool volatility (set in screener prompt, `index.ts`):
 
 ```
 bins_below = round(minBinsBelow + (volatility / 5) * (maxBinsBelow - minBinsBelow)), clamped to [minBinsBelow, maxBinsBelow]
@@ -137,7 +138,7 @@ bins_below = round(minBinsBelow + (volatility / 5) * (maxBinsBelow - minBinsBelo
 
 ## Telegram Commands
 
-Handled directly in `index.js` (bypass LLM):
+Handled directly in `index.ts` (bypass LLM):
 
 | Command | Action |
 |---------|--------|
@@ -151,11 +152,11 @@ Progress bar format: `[████████░░░░░░░░░░░
 
 ## Race Condition: Double Deploy
 
-`_screeningLastTriggered` in index.js prevents concurrent screener invocations. Management cycle sets this before triggering screener. Also, `deploy_position` safety check uses `force: true` on `getMyPositions()` for a fresh count.
+`_screeningLastTriggered` in index.ts prevents concurrent screener invocations. Management cycle sets this before triggering screener. Also, `deploy_position` safety check uses `force: true` on `getMyPositions()` for a fresh count.
 
 ---
 
-## Bundler Detection (token.js)
+## Bundler Detection (token.ts)
 
 Two signals used in `getTokenHolders()`:
 - `common_funder` — multiple wallets funded by same source
@@ -166,7 +167,7 @@ Jupiter audit API: `botHoldersPercentage` (5–25% is normal for legitimate toke
 
 ---
 
-## Base Fee Calculation (dlmm.js)
+## Base Fee Calculation (dlmm.ts)
 
 Read from pool object at deploy time:
 ```js
@@ -190,16 +191,16 @@ const actualBaseFee = baseFactor > 0
 
 ## Lessons System
 
-`lessons.js` records closed position performance and auto-derives lessons. Key points:
+`lessons.ts` records closed position performance and auto-derives lessons. Key points:
 - `getLessonsForPrompt({ agentType })` — injects relevant lessons into system prompt
 - `evolveThresholds()` — adjusts screening thresholds based on winners vs losers (operates on `minFeeActiveTvlRatio`, `minOrganic`, etc.)
-- Performance recorded via `recordPerformance()` called from executor.js after `close_position`
+- Performance recorded via `recordPerformance()` called from executor.ts after `close_position`
 
 ---
 
 ## HiveMind
 
-Agent Meridian HiveMind sync is handled by `hivemind.js`. It uses built-in Agent Meridian defaults unless overridden by config or env.
+Agent Meridian HiveMind sync is handled by `hivemind.ts`. It uses built-in Agent Meridian defaults unless overridden by config or env.
 
 ---
 
@@ -223,4 +224,4 @@ Agent Meridian HiveMind sync is handled by `hivemind.js`. It uses built-in Agent
 
 ## Known Issues / Tech Debt
 
-- `get_wallet_positions` tool (dlmm.js) is in definitions.js but not in MANAGER_TOOLS or SCREENER_TOOLS — only available in GENERAL role.
+- `get_wallet_positions` tool (dlmm.ts) is in definitions.ts but not in MANAGER_TOOLS or SCREENER_TOOLS — only available in GENERAL role.
