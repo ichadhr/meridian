@@ -526,7 +526,7 @@ switch (subcommand) {
   // ── config ───────────────────────────────────────────────────────
   case "config": {
     if (sub2 === "get" || !sub2) {
-      const { config } = await import("./config.js");
+      const { config } = await import("./config/index.js");
       out(config);
     } else if (sub2 === "set") {
       const key = argv.filter(a => !a.startsWith("-"))[2];
@@ -585,7 +585,7 @@ switch (subcommand) {
 
   // ── evolve ───────────────────────────────────────────────────────
   case "evolve": {
-    const { config } = await import("./config.js");
+    const { config } = await import("./config/index.js");
     const { evolveThresholds } = await import("./lessons.js");
     const fs2 = await import("fs");
     const lessonsFile = "./lessons.json";

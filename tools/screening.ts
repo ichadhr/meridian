@@ -774,7 +774,7 @@ export async function discoverPools({
 export async function getTopCandidates({ limit = 10 }: {
   limit?: number;
 } = {}): Promise<GetTopCandidatesResult> {
-  const { config } = await import("../config.js");
+  const { config } = await import("../config/index.js");
   const discovery = await discoverPools({ page_size: 50 });
   const { pools } = discovery;
   const filteredOut: FilteredExample[] = Array.isArray(discovery.filtered_examples) ? [...discovery.filtered_examples] : [];

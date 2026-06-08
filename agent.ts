@@ -183,7 +183,7 @@ export async function agentLoop(
   if (agentType === "SCREENER") {
     try {
       const { getWeightsSummary } = await import("./signal-weights.js");
-      const { config } = await import("./config.js");
+      const { config } = await import("./config/index.js");
       if ((config as any).darwin?.enabled) weightsSummary = (getWeightsSummary as any)();
     } catch { /* signal-weights not critical */ }
     try {
