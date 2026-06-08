@@ -36,7 +36,8 @@ logs/
 context.md
 CONTEXT.md
 dev-blocklist.json
-docs/
+docs/*
+!docs/structures/
 DESIGN.md
 design/
 
@@ -53,3 +54,4 @@ discord-signals.json
 
 # Claude Code runtime lock
 .claude/scheduled_tasks.lock
+dist

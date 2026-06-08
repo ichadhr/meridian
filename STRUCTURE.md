@@ -4,6 +4,30 @@ Autonomous DLMM liquidity provider agent for Meteora pools on Solana.
 
 > **Note:** The JavaScript to TypeScript conversion is complete. All active source files are now `.ts`. Original `.js` files are preserved as `*.js.legacy` backups. The folder restructuring (`external/`, `core/`, etc.) described below is the planned target architecture.
 
+## Current State (ts-migration branch)
+
+All source files are `.ts`. The folder restructuring has **not yet begun** — files are still in the original flat layout.
+
+```
+meridian/
+├── index.ts, agent.ts, cli.ts, setup.ts       # Root entry points (13 .ts files)
+├── config/index.ts                             # Config singleton (migrated)
+├── core/                                       # 4 files migrated
+│   ├── briefing.ts
+│   ├── decision-log.ts
+│   ├── signal-tracker.ts
+│   └── token-blacklist.ts
+├── tools/                                      # 19 .ts files (old flat layout)
+│   ├── definitions.ts, executor.ts             # Agent bridge
+│   ├── dlmm.ts, screening.ts, wallet.ts, ...   # API adapters + business logic mixed
+│   └── *.js.legacy                             # Original JS backups
+├── utils/
+│   ├── logger.ts, number.ts, secure-env.ts
+├── types/index.ts                              # Shared type definitions
+├── scripts/                                    # .ts + .js混合
+└── test/                                       # 14 test files (.ts)
+```
+
 ## ⚠️ Migration Notes — Known Issues to Fix Before Restructuring
 
 Three dependency violations exist in the current codebase that must be resolved during migration. They are not runtime bugs today, but will become hard blockers once the new folder gates are enforced.
@@ -155,9 +179,9 @@ meridian/
 │       └── executor.ts         # Tool dispatch with safety checks
 │
 ├── utils/
-│   ├── envrypt.ts              # Encryption utility
 │   ├── logger.ts               # Shared logger
-│   └── patch-anchor.ts         # Anchor patching utility
+│   ├── number.ts               # Number formatting
+│   └── secure-env.ts           # Encryption utility
 │
 └── test/                       # Unit tests (mirrors source tree)
     ├── test-agent.ts
@@ -180,6 +204,8 @@ meridian/
 
 Detailed specifications for the root folder are documented in [1.ROOT_FOLDER.md](file:///Users/ichadhr/Develop/node/meridian/docs/structures/1.ROOT_FOLDER.md).
 
+**Target state (after restructuring):**
+
 | File | Role |
 |------|------|
 | `cli.ts` | 28 CLI subcommands (deploy, claim, screen, vp, config, etc.) |
@@ -188,17 +214,39 @@ Detailed specifications for the root folder are documented in [1.ROOT_FOLDER.md]
 | `setup.ts` | Setup wizard (degen / moderate / safe presets) |
 | `tsconfig.json` | TypeScript config |
 
+**Currently in root (to be moved during restructuring):**
+
+| File | Moves to |
+|------|----------|
+| `agent.ts` | `llm/agent.ts` |
+| `prompt.ts` | `llm/prompt.ts` |
+| `telegram.ts` | `interfaces/telegram/index.ts` |
+| `hivemind.ts` | `external/hivemind/index.ts` |
+| `lessons.ts` | `core/lessons.ts` |
+| `pool-memory.ts` | `core/pool-memory.ts` |
+| `signal-weights.ts` | `core/signal-weights.ts` |
+| `smart-wallets.ts` | `core/smart-wallets.ts` |
+| `state.ts` | `core/state.ts` |
+| `strategy-library.ts` | `core/strategy-library.ts` |
+
 ## config
 
 Detailed specifications for the config folder are documented in [2.CONFIG_FOLDER.md](file:///Users/ichadhr/Develop/node/meridian/docs/structures/2.CONFIG_FOLDER.md).
 
 Runtime configuration and static config files.
 
+**Already migrated:**
+
 | File | Role |
 |------|------|
-| `deployer-blacklist.json` | Deployer blacklist |
 | `index.ts` | Config singleton (55+ fields across risk, screening, management, strategy, schedule, llm, tokens, hiveMind, api, jupiter, indicators) + `computeDeployAmount`, `reloadScreeningThresholds` |
-| `user-config.example.json` | Config template |
+
+**Target state (remaining files to migrate from root):**
+
+| File | Role |
+|------|------|
+| `deployer-blacklist.json` | Deployer blacklist (currently at root) |
+| `user-config.example.json` | Config template (currently at root) |
 
 ## core
 
@@ -206,22 +254,29 @@ Detailed specifications for the core folder are documented in [3.CORE_FOLDER.md]
 
 Pure business logic. No direct API or RPC calls; imports from `external/` for I/O.
 
+**Already migrated (4 files):**
+
+| File | Role |
+|------|------|
+| `briefing.ts` | Daily briefing generation |
+| `decision-log.ts` | Decision audit trail |
+| `signal-tracker.ts` | Signal tracker |
+| `token-blacklist.ts` | Token and deployer blocklists |
+
+**Target state (remaining files to migrate):**
+
 | File | Role |
 |------|------|
 | `index.ts` | **Public gate** — barrel re-export of all core public functions (only file imported from outside `core/`) |
 | `archive.ts` | Position archive (JSONL, dedup, monthly rolls) |
-| `briefing.ts` | Daily briefing generation |
 | `close-rules.ts` | Shared close-rule engine for both live and virtual positions |
-| `decision-log.ts` | Decision audit trail |
 | `lessons.ts` | Learning engine (pull/push shared lessons) |
 | `pool-memory.ts` | Pool history cache (cooldowns, snapshots, notes) |
 | `pnl.ts` | Shared PnL computation for both live and virtual positions |
-| `signal-tracker.ts` | Signal tracker |
 | `signal-weights.ts` | Signal weight management |
 | `smart-wallets.ts` | KOL tracker (add/remove/list/check on pool) |
 | `state.ts` | Position registry — dispatches to `live/state.ts` or `vp/state.ts` |
 | `strategy-library.ts` | Trading strategies (CRUD and active selection) |
-| `token-blacklist.ts` | Token and deployer blocklists |
 
 ### live
 
@@ -243,7 +298,7 @@ Pure business logic. No direct API or RPC calls; imports from `external/` for I/
 
 Detailed specifications for the external folder are documented in [4.EXTERNAL_FOLDER.md](file:///Users/ichadhr/Develop/node/meridian/docs/structures/4.EXTERNAL_FOLDER.md).
 
-External I/O adapters. Pure API wrappers; no business logic.
+External I/O adapters. Pure API wrappers; no business logic. **Not yet created.**
 
 | File | Role |
 |------|------|
@@ -264,7 +319,7 @@ External I/O adapters. Pure API wrappers; no business logic.
 
 Detailed specifications for the interfaces folder are documented in [5.INTERFACES_FOLDER.md](file:///Users/ichadhr/Develop/node/meridian/docs/structures/5.INTERFACES_FOLDER.md).
 
-Platform communication interfaces.
+Platform communication interfaces. **Not yet created.**
 
 | File | Role |
 |------|------|
@@ -278,7 +333,7 @@ Platform communication interfaces.
 
 Detailed specifications for the llm folder are documented in [6.LLM_FOLDER.md](file:///Users/ichadhr/Develop/node/meridian/docs/structures/6.LLM_FOLDER.md).
 
-Agent harness and LLM communication layer.
+Agent harness and LLM communication layer. **Not yet created** (only empty `llm/tools/` dir exists).
 
 | File | Role |
 |------|------|
@@ -311,9 +366,9 @@ Shared utilities and helpers.
 
 | File | Role |
 |------|------|
-| `envrypt.ts` | Env encrypt/decrypt utilities |
 | `logger.ts` | Shared logger (`log`, `logAction`) |
-| `patch-anchor.ts` | Anchor BN type patching |
+| `number.ts` | Number formatting helpers |
+| `secure-env.ts` | Env encrypt/decrypt utilities |
 
 ## scripts
 
@@ -322,9 +377,10 @@ One-off scripts and validators.
 | File | Role |
 |------|------|
 | `backfill-vp-archive.js` | Backfill VP archive from legacy state |
-| `envrypt.js` | Env encrypt/decrypt CLI |
+| `secure-env.ts` | Env encrypt/decrypt CLI |
 | `measure-gas.js` | Gas measurement |
-| `patch-anchor.js` | Patch Anchor BN types |
+| `patch-anchor.ts` | Patch Anchor BN types |
+| `secure-env.ts` | Env encryption/decryption (TS rewrite of envrypt) |
 | `validate-slippage.js` | Slippage validation |
 | `validate-vp-archive.cjs` | VP archive validation runner |
 | `lib/vp-validators.cjs` | Shared VP archive validation library (math + Meteora cross-check) |

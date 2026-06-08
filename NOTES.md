@@ -25,4 +25,4 @@ Switching from `recordPoolDeploy` to `recordPerformance` later is a one-line cha
 
 ## `deployed_at` Gap in Real Positions
 
-Both close paths in `dlmm.js` (relay ~L1784, legacy ~L2071) pass `recordPerformance` but omit `deployed_at`. The data exists in `tracked.deployed_at` from `state.js` — it's just not forwarded. Two-line fix needed when we pick this up.
+Both close paths in `dlmm.ts` (relay ~L1784, legacy ~L2071) pass `recordPerformance` but omit `deployed_at`. The data exists in `tracked.deployed_at` from `state.ts` — it's just not forwarded. Two-line fix needed when we pick this up.

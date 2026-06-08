@@ -4,7 +4,7 @@
   "llmBaseUrl": "",
   "llmApiKey": "",
   "llmModel": "minimax/minimax-m2.7",
-  "dryRun": true,
+  "dryRun": false,
 
   "deployAmountSol": 0.5,
   "maxPositions": 3,

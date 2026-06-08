@@ -3,8 +3,8 @@ import { encryptEnvRaw, envryptDecrypt } from "../utils/secure-env.js";
 
 function usage(): void {
   console.log(`Usage:
-  node scripts/envrypt.ts encrypt [rawPath] [outPath]
-  node scripts/envrypt.ts decrypt KEY VALUE
+  node scripts/secure-env.ts encrypt [rawPath] [outPath]
+  node scripts/secure-env.ts decrypt KEY VALUE
 
 Envrypt key is read from .envrypt, ENVRYPT_KEY, or ENVCRYPT_KEY.`);
 }
