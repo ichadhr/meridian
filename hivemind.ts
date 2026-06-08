@@ -1,14 +1,12 @@
 import fs from "fs";
 import path from "path";
-import { randomBytes } from "crypto";
-import { fileURLToPath } from "url";
+import { randomBytes, randomUUID } from "crypto";
 import { log } from "./utils/logger.js";
 import { config } from "./config/index.js";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const USER_CONFIG_PATH = path.join(__dirname, "user-config.json");
-const CACHE_PATH = path.join(__dirname, "hivemind-cache.json");
-const PACKAGE_JSON_PATH = path.join(__dirname, "package.json");
+const USER_CONFIG_PATH = path.join(process.cwd(), "user-config.json");
+const CACHE_PATH = path.join(process.cwd(), "hivemind-cache.json");
+const PACKAGE_JSON_PATH = path.join(process.cwd(), "package.json");
 const HEARTBEAT_INTERVAL_MS = 15 * 60 * 1000;
 
 let _heartbeatTimer: ReturnType<typeof setInterval> | null = null;
@@ -332,7 +330,7 @@ function buildLessonEvent(lesson: SharedLesson): LessonEvent | null {
   if (!rule) return null;
   const sourceType = sanitizeText(lesson.sourceType || inferLessonSourceType(lesson), 24) || "manual";
   return {
-    eventId: `lesson:${getAgentId()}:${lesson.id || crypto.randomUUID()}`,
+    eventId: `lesson:${getAgentId()}:${lesson.id || randomUUID()}`,
     agentId: getAgentId(),
     version: AGENT_VERSION,
     timestamp: lesson.created_at || new Date().toISOString(),
