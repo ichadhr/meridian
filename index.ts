@@ -27,6 +27,7 @@ import {
   createLiveMessage,
 } from "./telegram.js";
 import { generateBriefing } from "./core/briefing.js";
+import { getCloseRule } from "./core/index.js";
 import { getLastBriefingDate, setLastBriefingDate, getTrackedPosition, getTrackedPositions, setPositionInstruction, updatePnlAndCheckExits, queuePeakConfirmation, resolvePendingPeak, queueTrailingDropConfirmation, resolvePendingTrailingDrop } from "./core/state.js";
 import { getActiveStrategy } from "./core/strategy-library.js";
 import { recordPositionSnapshot, recallForPool, addPoolNote } from "./core/pool-memory.js";
@@ -380,7 +381,7 @@ export async function runManagementCycle({ silent = false }: { silent?: boolean 
         continue;
       }
 
-      const closeRule: AnyObj | null = getDeterministicCloseRule(p, config.management);
+      const closeRule: AnyObj | null = getCloseRule(p, config.management, p.minutes_out_of_range ?? 0, p.fee_per_tvl_24h);
       if (closeRule) {
         actionMap.set(p.position, closeRule);
         continue;
@@ -992,7 +993,7 @@ Summarize the current portfolio health, total fees earned, and performance of al
           }
           break;
         }
-        const closeRule: AnyObj | null = getDeterministicCloseRule(p, config.management);
+        const closeRule: AnyObj | null = getCloseRule(p, config.management, p.minutes_out_of_range ?? 0, p.fee_per_tvl_24h);
         if (closeRule) {
           const cooldownMs: number = config.schedule.managementIntervalMin * 60 * 1000;
           const sinceLastTrigger: number = Date.now() - _pollTriggeredAt;
@@ -1083,49 +1084,6 @@ function formatCandidates(candidates: any[]): string {
     "  " + "─".repeat(68),
     ...lines,
   ].join("\n");
-}
-
-function getDeterministicCloseRule(position: Position, managementConfig: any): AnyObj | null {
-  const tracked: any = getTrackedPosition(position.position);
-  const pnlSuspect: boolean = (() => {
-    if (position.pnl_pct == null) return false;
-    if (position.pnl_pct > -90) return false;
-    if (tracked?.amount_sol && (position.total_value_usd ?? 0) > 0.01) {
-      log("cron_warn", `Suspect PnL for ${position.pair}: ${position.pnl_pct}% but position still has value — skipping PnL rules`);
-      return true;
-    }
-    return false;
-  })();
-
-  if (!pnlSuspect && position.pnl_pct != null && position.pnl_pct <= managementConfig.stopLossPct) {
-    return { action: "CLOSE", rule: 1, reason: "stop loss" };
-  }
-  if (!pnlSuspect && position.pnl_pct != null && position.pnl_pct >= managementConfig.takeProfitPct) {
-    return { action: "CLOSE", rule: 2, reason: "take profit" };
-  }
-  if (
-    position.active_bin != null &&
-    position.upper_bin != null &&
-    position.active_bin > position.upper_bin + managementConfig.outOfRangeBinsToClose
-  ) {
-    return { action: "CLOSE", rule: 3, reason: "pumped far above range" };
-  }
-  if (
-    position.active_bin != null &&
-    position.upper_bin != null &&
-    position.active_bin > position.upper_bin &&
-    (position.minutes_out_of_range ?? 0) >= managementConfig.outOfRangeWaitMinutes
-  ) {
-    return { action: "CLOSE", rule: 4, reason: "OOR" };
-  }
-  if (
-    position.fee_per_tvl_24h != null &&
-    position.fee_per_tvl_24h < managementConfig.minFeePerTvl24h &&
-    (position.age_minutes ?? 0) >= managementConfig.minAgeBeforeYieldCheck
-  ) {
-    return { action: "CLOSE", rule: 5, reason: "low yield" };
-  }
-  return null;
 }
 
 // ═══════════════════════════════════════════

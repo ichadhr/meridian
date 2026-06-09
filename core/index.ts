@@ -84,7 +84,7 @@ export { appendDecision, getRecentDecisions } from "./decision-log.js";
 export { stageSignals, getAndClearStagedSignals, getStagedPools } from "./signal-tracker.js";
 
 // Close rules
-export { getVirtualCloseRule } from "./close-rules.js";
+export { getCloseRule, getVirtualCloseRule } from "./close-rules.js";
 
 // PnL computation
 export { computePositionPnl, estimateSlippageLamports } from "./pnl.js";

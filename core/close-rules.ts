@@ -1,32 +1,32 @@
 /**
- * getVirtualCloseRule — pure function that decides whether a VP should close.
+ * getCloseRule — pure function that decides whether a position should close.
  *
- * Extracted from tools/manage-virtual.js to make it testable without pulling
- * in the full runtime (RPC, wallet, gas estimator, envcrypt). Mirrors the
- * signature shape of the live getDeterministicCloseRule in index.js:992.
+ * Shared by both live and VP positions. Same rules, same logic.
  *
  * Rules (in order, first match wins):
  *   1. Stop loss     — pnl_pct <= stopLossPct
  *   2. Take profit   — pnl_pct >= takeProfitPct
  *   3. Pumped above  — active_bin > upper_bin + outOfRangeBinsToClose
  *   4. OOR too long  — active_bin > upper_bin AND effectiveOorMinutes >= outOfRangeWaitMinutes
- *   5. Low yield     — synthetic 24h fee/TVL ratio < minFeePerTvl24h
- *   6. Trend exit    — vpTrendExitCycles consecutive down snapshots
+ *   5. Low yield     — fee/TVL 24h ratio < minFeePerTvl24h
+ *   6. Trend exit    — vpTrendExitCycles consecutive down snapshots (VP only)
+ *
+ * Rule 5 behavior:
+ *   - If fee_per_tvl_24h is provided (live positions from SDK), uses it directly.
+ *   - Otherwise (VP), computes synthetic yield from unclaimed_fees_usd / total_value_usd.
  *
  * Polymorphic unit contract for Rules 1-5: position.pnl_pct,
  * position.total_value_usd, and position.unclaimed_fees_usd are
  * polymorphic — SOL values when solMode=true, USD when solMode=false.
- * The caller (runVirtualManagementCycle) is responsible for selecting
- * the unit based on config.management.solMode.
  */
 
 export interface CloseRulePosition {
-  upper_bin?: number;
-  active_bin?: number;
-  pnl_pct?: number;
-  total_value_usd?: number;
-  unclaimed_fees_usd?: number;
-  deployed_at?: string;
+  upper_bin?: number | null;
+  active_bin?: number | null;
+  pnl_pct?: number | null;
+  total_value_usd?: number | null;
+  unclaimed_fees_usd?: number | null;
+  deployed_at?: string | null;
   snapshots?: Array<Record<string, unknown>>;
   [key: string]: unknown;
 }
@@ -40,7 +40,6 @@ export interface CloseRuleConfig {
   minAgeBeforeYieldCheck?: number;
   vpTrendExitCycles?: number;
   solMode?: boolean;
-  [key: string]: unknown;
 }
 
 export interface CloseRuleResult {
@@ -49,10 +48,11 @@ export interface CloseRuleResult {
   reason: string;
 }
 
-export function getVirtualCloseRule(
+export function getCloseRule(
   position: CloseRulePosition,
   managementConfig: CloseRuleConfig,
-  effectiveOorMinutes = 0
+  effectiveOorMinutes = 0,
+  fee_per_tvl_24h?: number | null,
 ): CloseRuleResult | null {
   const stopLossPct = managementConfig.stopLossPct ?? -50;
   const takeProfitPct = managementConfig.takeProfitPct;
@@ -88,7 +88,7 @@ export function getVirtualCloseRule(
     return { action: "CLOSE", rule: 4, reason: "OOR" };
   }
 
-  // Low yield — synthetic approximation of live Rule 5.
+  // Low yield — fee/TVL 24h ratio < minFeePerTvl24h
   const minFeePerTvl24h = managementConfig.minFeePerTvl24h ?? 7;
   const minAgeForYieldCheck = managementConfig.minAgeBeforeYieldCheck ?? 60;
   const ageMinutes = position.deployed_at
@@ -96,10 +96,14 @@ export function getVirtualCloseRule(
     : 0;
 
   if (ageMinutes >= minAgeForYieldCheck && (position.total_value_usd ?? 0) > 0) {
-    const totalValue = position.total_value_usd ?? 0;
-    const currentFees = position.unclaimed_fees_usd || 0;
-    const syntheticFeeYield = (currentFees / totalValue) * (1440 / ageMinutes) * 100;
-    if (syntheticFeeYield < minFeePerTvl24h) {
+    // Use SDK fee_per_tvl_24h if provided (live), otherwise compute synthetic (VP)
+    let effectiveFeePerTvl: number | null = fee_per_tvl_24h ?? null;
+    if (effectiveFeePerTvl == null) {
+      const totalValue = position.total_value_usd ?? 0;
+      const currentFees = position.unclaimed_fees_usd || 0;
+      effectiveFeePerTvl = (currentFees / totalValue) * (1440 / ageMinutes) * 100;
+    }
+    if (effectiveFeePerTvl < minFeePerTvl24h) {
       return { action: "CLOSE", rule: 5, reason: "low yield" };
     }
   }
@@ -132,3 +136,6 @@ export function getVirtualCloseRule(
 
   return null;
 }
+
+/** Backward-compatible alias for existing VP callers. */
+export const getVirtualCloseRule = getCloseRule;
