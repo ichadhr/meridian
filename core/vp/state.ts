@@ -11,7 +11,7 @@ const STATE_FILE = "./dry-run-state.json";
 
 // ─── Types ────────────────────────────────────────────────────────────────
 
-export interface DryRunState {
+export interface VpState {
   virtual_positions: VpPosition[];
   lastUpdated?: string;
 }
@@ -71,12 +71,12 @@ export interface TrackVirtualPositionParams {
 
 // ─── Internal helpers ─────────────────────────────────────────────────────
 
-function load(): DryRunState {
+function load(): VpState {
   if (!fs.existsSync(STATE_FILE)) {
     return { virtual_positions: [] };
   }
   try {
-    return JSON.parse(fs.readFileSync(STATE_FILE, "utf8")) as DryRunState;
+    return JSON.parse(fs.readFileSync(STATE_FILE, "utf8")) as VpState;
   } catch (err) {
     log("dry_run_state", `Failed to read: ${(err as Error).message}`);
     return { virtual_positions: [] };
@@ -84,7 +84,7 @@ function load(): DryRunState {
 }
 
 /** Persist state. Returns true on success, false on error. */
-function save(data: DryRunState): boolean {
+function save(data: VpState): boolean {
   try {
     data.lastUpdated = new Date().toISOString();
     fs.writeFileSync(STATE_FILE, JSON.stringify(data, null, 2));
@@ -105,7 +105,7 @@ function save(data: DryRunState): boolean {
  * and don't require a state scan. Old `vp_NNN` IDs from before this change
  * still work — `parseVirtualPositionAddress` is format-agnostic.
  */
-function nextId(_state: DryRunState): string {
+function nextId(_state: VpState): string {
   // new Date().toISOString() → "2026-06-05T07:31:41.234Z"
   // Strip dashes, colons, and milliseconds; keep "YYYYMMDDTHHMMSSZ".
   return "vp-" + new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d{3}/, "");

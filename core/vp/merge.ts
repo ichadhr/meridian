@@ -12,7 +12,7 @@
 
 import type { VirtualPosition } from "../../types/index.js";
 
-export interface MergedPosition {
+export interface VpMergedPosition {
   position: string;
   pool: string;
   pair: string;
@@ -31,7 +31,7 @@ export interface MergedPosition {
   [key: string]: unknown;
 }
 
-export interface MergeFreshPnl {
+export interface VpMergeFreshPnl {
   pnl?: {
     currentValueUsd: number;
     pnlUsd: number;
@@ -46,12 +46,12 @@ export interface MergeFreshPnl {
 }
 
 export function mergeVirtualPositions(
-  positions: MergedPosition[],
+  positions: VpMergedPosition[],
   vps: VirtualPosition[],
   solPrice = 0,
   now = Date.now(),
-  freshPnlMap: Map<string, MergeFreshPnl> | null = null
-): { positions: MergedPosition[]; total_positions: number } {
+  freshPnlMap: Map<string, VpMergeFreshPnl> | null = null
+): { positions: VpMergedPosition[]; total_positions: number } {
   if (!Array.isArray(vps) || vps.length === 0) {
     return { positions, total_positions: positions.length };
   }
