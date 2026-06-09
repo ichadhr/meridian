@@ -196,6 +196,30 @@ export interface PositionsResult {
   error?: string;
 }
 
+/** Simpler position shape for getWalletPositions() — lacks management-cycle fields */
+export interface WalletPosition {
+  position: string;
+  pool: string;
+  lower_bin: number | null;
+  upper_bin: number | null;
+  active_bin: number | null;
+  in_range: boolean | null;
+  unclaimed_fees_usd: number;
+  total_value_usd: number;
+  pnl_usd: number;
+  pnl_pct: number;
+  age_minutes: number | null;
+  [key: string]: any;
+}
+
+/** Return type for getWalletPositions() */
+export interface WalletPositionsResult {
+  wallet: string;
+  total_positions: number;
+  positions: WalletPosition[];
+  error?: string;
+}
+
 // ─── Pool / Screening ──────────────────────────────────────────
 
 export interface PoolCandidate {

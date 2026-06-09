@@ -13,7 +13,7 @@ import {
 import BN from "bn.js";
 import bs58 from "bs58";
 import { config, computeDeployAmount, MIN_SAFE_BINS_BELOW } from "../../config/index.js";
-import type { PositionsResult } from "../../types/index.js";
+import type { PositionsResult, WalletPositionsResult } from "../../types/index.js";
 import { log } from "../../utils/logger.js";
 import {
   trackPosition,
@@ -1969,7 +1969,7 @@ export async function getMyPositions({ force = false, silent = false, wallet_add
 }
 
 // ─── Get Positions for Any Wallet ─────────────────────────────
-export async function getWalletPositions({ wallet_address }: { wallet_address: string }): Promise<PositionsResult> {
+export async function getWalletPositions({ wallet_address }: { wallet_address: string }): Promise<WalletPositionsResult> {
   try {
     const DLMM_PROGRAM = new PublicKey("LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo");
 
@@ -2027,7 +2027,7 @@ export async function getWalletPositions({ wallet_address }: { wallet_address: s
       };
     });
 
-    return { wallet: wallet_address, total_positions: positions.length, positions: positions as any };
+    return { wallet: wallet_address, total_positions: positions.length, positions };
   } catch (error: any) {
     log("wallet_positions_error", error.message);
     return { wallet: wallet_address, total_positions: 0, positions: [], error: error.message };
