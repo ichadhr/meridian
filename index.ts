@@ -50,21 +50,6 @@ import type { LivePosition } from "./types/index.js";
 // ── Type helpers ──────────────────────────────────────────────
 type AnyObj = Record<string, any>;
 
-interface VPResult {
-  action: string;
-  reason?: string;
-  value_sol?: number;
-  value_usd?: number;
-  unclaimed_fees_sol?: number;
-  unclaimed_fees_usd?: number;
-  pnl_sol_pct?: number;
-  pnl_pct?: number;
-  oor?: string;
-  age_minutes?: number;
-  pair: string;
-  [key: string]: any;
-}
-
 interface TelegramMessage {
   text?: string;
   isCallback?: boolean;
