@@ -11,11 +11,8 @@ const STATE_FILE = "./dry-run-state.json";
 
 // ─── Types ────────────────────────────────────────────────────────────────
 
-/** @deprecated Use VpPosition from types/index.ts instead */
-export type DryRunVirtualPosition = VpPosition;
-
 export interface DryRunState {
-  virtual_positions: DryRunVirtualPosition[];
+  virtual_positions: VpPosition[];
   lastUpdated?: string;
 }
 
@@ -169,7 +166,7 @@ export function trackVirtualPosition({
   // TODO in tools/merge-virtual-positions.js.
 }: TrackVirtualPositionParams): string {
   const state = load();
-  const vp: DryRunVirtualPosition = {
+  const vp: VpPosition = {
     id: nextId(state),
     pool,
     pool_name: pool_name || null,
@@ -224,14 +221,14 @@ export function trackVirtualPosition({
   return vp.id;
 }
 
-export function listVirtualPositions(statusFilter?: string): DryRunVirtualPosition[] {
+export function listVirtualPositions(statusFilter?: string): VpPosition[] {
   const state = load();
   let list = state.virtual_positions;
   if (statusFilter) list = list.filter((p) => p.status === statusFilter);
   return list.map((p) => ({ ...p }));
 }
 
-export function getVirtualPosition(id: string): DryRunVirtualPosition | null {
+export function getVirtualPosition(id: string): VpPosition | null {
   const state = load();
   const pos = state.virtual_positions.find((p) => p.id === id);
   return pos ? { ...pos } : null;
@@ -353,7 +350,7 @@ export function archiveVirtualPositions(): { swept: number; failed: number; dupl
   let swept = 0;
   let failed = 0;
   if (state.virtual_positions.length > 0) {
-    const remaining: DryRunVirtualPosition[] = [];
+    const remaining: VpPosition[] = [];
     for (const vp of state.virtual_positions) {
       if (vp.status === "closed" && vp.closed_at) {
         // Use closed_at month so cross-month closes (23:59:31 Jan 31 etc.)
