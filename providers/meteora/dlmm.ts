@@ -1702,7 +1702,7 @@ async function fetchRawOpenPositionsFromMeridian({ walletAddress, agentId }: { w
 }
 
 // ─── Get My Positions ──────────────────────────────────────────
-export async function getMyPositions({ force = false, silent = false, wallet_address = null }: { force?: boolean; silent?: boolean; wallet_address?: string | null } = {}): Promise<any> {
+export async function getMyPositions({ force = false, silent = false, wallet_address = null }: { force?: boolean; silent?: boolean; wallet_address?: string | null } = {}): Promise<import("../../types/index.js").PositionsResult> {
   let walletOverride = null;
   try {
     walletOverride = wallet_address ? new PublicKey(wallet_address).toString() : null;

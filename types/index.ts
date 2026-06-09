@@ -172,8 +172,8 @@ export interface LivePosition {
   pair: string;
   pnl_pct: number | null;
   pnl_pct_suspicious?: boolean;
-  unclaimed_fees_usd: number;
-  total_value_usd: number;
+  unclaimed_fees_usd: number | null;
+  total_value_usd: number | null;
   fee_per_tvl_24h: number | null;
   lower_bin: number;
   upper_bin: number;
@@ -181,10 +181,19 @@ export interface LivePosition {
   minutes_out_of_range: number;
   in_range: boolean | null;
   age_minutes: number | null;
-  instruction?: string;
-  pnl_usd?: number;
+  instruction?: string | null;
+  pnl_usd?: number | null;
   recall?: any;
   [key: string]: any;
+}
+
+/** Return type for getMyPositions() */
+export interface PositionsResult {
+  wallet: string | null;
+  total_positions: number;
+  positions: LivePosition[];
+  request_id?: string | null;
+  error?: string;
 }
 
 // ─── Pool / Screening ──────────────────────────────────────────
@@ -224,7 +233,7 @@ export interface DecisionEntry {
   actor?: string;
   pool?: string;
   pool_name?: string;
-  position?: string;
+  position?: string | null;
   summary?: string;
   reason?: string;
   risks?: string[];
