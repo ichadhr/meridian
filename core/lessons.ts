@@ -723,7 +723,9 @@ export async function getPerformanceHistory({
           organic_score: r.organic_score,
         });
       }
-    } catch { /* VP archive not available */ }
+    } catch (e: any) {
+      log("warn", `VP archive read failed: ${e.message ?? e} — continuing with live data only`);
+    }
   }
 
   // ── Apply filters ──

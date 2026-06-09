@@ -214,6 +214,7 @@ export async function agentLoop(
   const tokenBudget = isThinking ? config.llm.maxTokens : (maxOutputTokens ?? config.llm.maxTokens);
 
   let emptyStreak = 0;
+  const MAX_EMPTY_STREAK = 3;
   for (let step = 0; step < maxSteps; step++) {
     log("agent", `Step ${step + 1}/${maxSteps}`);
 
@@ -301,12 +302,21 @@ export async function agentLoop(
 
       // If the model didn't call any tools, it's done
       if (!msg.tool_calls || msg.tool_calls.length === 0) {
-        // Hermes sometimes returns null content — pop the empty message and retry once
+        // Hermes sometimes returns null content — pop the empty message and retry
         if (!msg.content) {
           messages.pop(); // remove the empty assistant message
-          log("agent", "Empty response, retrying...");
+          emptyStreak++;
+          log("agent", `Empty response (${emptyStreak}/${MAX_EMPTY_STREAK})`);
+          if (emptyStreak >= MAX_EMPTY_STREAK) {
+            log("agent", "Too many consecutive empty responses — aborting loop");
+            return {
+              content: "Agent produced too many empty responses. Please retry.",
+              userMessage: goal,
+            };
+          }
           continue;
         }
+        emptyStreak = 0; // reset on valid content
         if (mustUseRealTool) {
           // For SCREENER: require deploy_position call or explicit NO DEPLOY text
           if (agentType === "SCREENER" && !sawDeployTool) {
@@ -353,6 +363,7 @@ export async function agentLoop(
         return { content: msg.content, userMessage: goal };
       }
       sawToolCall = true;
+      emptyStreak = 0; // reset on valid tool call
       // Track deploy_position for SCREENER must-use enforcement
       if (agentType === "SCREENER" && !sawDeployTool) {
         for (const tc of msg.tool_calls) {
