@@ -18,7 +18,7 @@ import { recordPoolDeploy } from "../pool-memory.js";
 import { config } from "../../config/index.js";
 import { log } from "../../utils/logger.js";
 import { estimateCloseGasSol, samplePriorityFee } from "../../providers/solana/gas-estimator.js";
-import { getVirtualCloseRule } from "../close-rules.js";
+import { getCloseRule } from "../close-rules.js";
 import { computePositionPnl, estimateSlippageLamports } from "../pnl.js";
 import type { PositionPnlResult, BinData } from "../pnl.js";
 import type { DryRunVirtualPosition } from "./state.js";
@@ -93,7 +93,7 @@ async function getFreshCloseGasSol(cycleCloseGasSol: number, vpId: string): Prom
  * Build the polymorphic position view for the close rule.
  * Caller selects unit (SOL when solMode, USD otherwise) once; the rule
  * reads pre-computed polymorphic values. Mirrors the live
- * getDeterministicCloseRule shape in index.js, which sees
+ * getCloseRule shape in core/close-rules.ts, which sees
  * position.pnl_pct from getMyPositions — already polymorphic via
  * mergeVirtualPositions. Without this branching the rule would always
  * check USD PnL while Telegram shows SOL PnL, so TP/SL/trailing-TP
@@ -435,7 +435,7 @@ export async function runVirtualManagementCycle(): Promise<VpCycleResult[]> {
       const vpAgeMinutes = vp.deployed_at
         ? Math.floor((Date.now() - new Date(vp.deployed_at).getTime()) / 60000)
         : 0;
-      const closeRule = getVirtualCloseRule(posForRule as any, mgmtConfig as any, effectiveOorMinutes);
+      const closeRule = getCloseRule(posForRule as any, mgmtConfig as any, effectiveOorMinutes);
       const closeReason = closeRule?.reason || trailingCloseReason;
       if (closeReason) {
         updateVirtualPosition(vp.id, updates);

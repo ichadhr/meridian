@@ -518,7 +518,12 @@ switch (subcommand) {
   // ── manage ───────────────────────────────────────────────────────
   case "manage": {
     const { runManagementCycle } = await import("./index.js");
-    const report = await runManagementCycle({ silent });
+    const report = await runManagementCycle({ silent }, {
+      shouldUsePnlRecheck: () => false,
+      schedulePeakConfirmation: () => {},
+      scheduleTrailingDropConfirmation: () => {},
+      tryStartScreening: () => false,
+    });
     out({ done: true, report: report || "No action taken" });
     break;
   }

@@ -80,11 +80,11 @@ export { addToBlacklist, removeFromBlacklist, isBlacklisted, listBlacklist, bloc
 
 // Briefing & decisions
 export { generateBriefing } from "./briefing.js";
-export { appendDecision, getRecentDecisions } from "./decision-log.js";
+export { appendDecision, getRecentDecisions, getDecisionSummary } from "./decision-log.js";
 export { stageSignals, getAndClearStagedSignals, getStagedPools } from "./signal-tracker.js";
 
 // Close rules
-export { getCloseRule, getVirtualCloseRule } from "./close-rules.js";
+export { getCloseRule } from "./close-rules.js";
 
 // PnL computation
 export { computePositionPnl, estimateSlippageLamports } from "./pnl.js";
@@ -96,3 +96,7 @@ export { parseVirtualPositionAddress, listVirtualPositions, trackVirtualPosition
 export { mergeVirtualPositions } from "./vp/merge.js";
 export { generateVirtualDigest } from "./vp/digest.js";
 export { generateDryRunReport } from "./vp/report.js";
+
+// Live cycle management
+export { runManagementCycle, type ManageDeps } from "./live/manage.js";
+export { runScreeningCycle, tryStartScreening, getLoneCandidateSkipReason } from "./live/screen.js";

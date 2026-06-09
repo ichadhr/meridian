@@ -1,4 +1,8 @@
 import "./utils/secure-env.js";
+
+// Re-export cycle functions for CLI and external callers
+export { runManagementCycle, runScreeningCycle, tryStartScreening } from "./core/index.js";
+
 import fs from "fs";
 import cron from "node-cron";
 import readline from "readline";
@@ -8,7 +12,7 @@ import { agentLoop } from "./agent.js";
 import { log } from "./utils/logger.js";
 import { getMyPositions, closePosition, getActiveBin, invalidatePositionsCache } from "./providers/meteora/index.js";
 import { getWalletBalances } from "./providers/solana/index.js";
-import { getTopCandidates } from "./providers/meteora/pool-discovery.js";
+import { getTopCandidates } from "./providers/meteora/index.js";
 import { config, reloadScreeningThresholds, computeDeployAmount } from "./config/index.js";
 import { evolveThresholds, getPerformanceSummary } from "./core/lessons.js";
 import { executeTool, registerCronRestarter, registerScreeningTrigger } from "./tools/executor.js";
@@ -26,22 +30,21 @@ import {
   isEnabled as telegramEnabled,
   createLiveMessage,
 } from "./telegram.js";
-import { generateBriefing } from "./core/briefing.js";
-import { getCloseRule } from "./core/index.js";
+import { generateBriefing, runManagementCycle, tryStartScreening, runScreeningCycle, getLoneCandidateSkipReason } from "./core/index.js";
+import { stripThink } from "./utils/text.js";
 import { getLastBriefingDate, setLastBriefingDate, getTrackedPosition, getTrackedPositions, setPositionInstruction, updatePnlAndCheckExits, queuePeakConfirmation, resolvePendingPeak, queueTrailingDropConfirmation, resolvePendingTrailingDrop } from "./core/state.js";
-import { getActiveStrategy } from "./core/strategy-library.js";
+import { getCloseRule } from "./core/index.js";
 import { recordPositionSnapshot, recallForPool, addPoolNote } from "./core/pool-memory.js";
 import { checkSmartWalletsOnPool } from "./core/smart-wallets.js";
-import { getTokenNarrative, getTokenInfo } from "./providers/jupiter/token.js";
-import { stageSignals } from "./core/signal-tracker.js";
-import { getWeightsSummary } from "./core/signal-weights.js";
+import { getTokenNarrative, getTokenInfo } from "./providers/jupiter/index.js";
+import { appendDecision } from "./core/index.js";
 import { bootstrapHiveMind, ensureAgentId, getHiveMindPullMode, isHiveMindEnabled, pullHiveMindLessons, pullHiveMindPresets, registerHiveMindAgent, startHiveMindBackgroundSync } from "./providers/hivemind/index.js";
-import { appendDecision } from "./core/decision-log.js";
 import { runVirtualManagementCycle } from "./core/vp/manage.js";
 import { parseVirtualPositionAddress } from "./core/vp/state.js";
 import { closeVpManual } from "./core/vp/manage.js";
 import { generateDryRunReport } from "./core/vp/report.js";
 import { readArchive, compileVpStats } from "./core/archive.js";
+import { managementBusy, setManagementBusy, screeningBusy, setScreeningBusy, timers, peakConfirmTimers, trailingDropConfirmTimers, TRAILING_PEAK_CONFIRM_DELAY_MS, TRAILING_PEAK_CONFIRM_TOLERANCE, TRAILING_DROP_CONFIRM_DELAY_MS, TRAILING_DROP_CONFIRM_TOLERANCE_PCT, pollTriggeredAt, setPollTriggeredAt } from "./core/live/cycle-state.js";
 
 // ── Type helpers ──────────────────────────────────────────────
 type AnyObj = Record<string, any>;
@@ -82,6 +85,15 @@ interface VPResult {
   [key: string]: any;
 }
 
+interface TelegramMessage {
+  text?: string;
+  isCallback?: boolean;
+  callbackData?: string;
+  callbackQueryId?: string;
+  messageId?: number;
+  [key: string]: any;
+}
+
 interface Candidate {
   pool: AnyObj;
   sw: any;
@@ -91,14 +103,8 @@ interface Candidate {
   [key: string]: any;
 }
 
-interface TelegramMessage {
-  text?: string;
-  isCallback?: boolean;
-  callbackData?: string;
-  callbackQueryId?: string;
-  messageId?: number;
-  [key: string]: any;
-}
+// ── ManageDeps wiring ─────────────────────────────────────────
+const manageDeps = { shouldUsePnlRecheck, schedulePeakConfirmation, scheduleTrailingDropConfirmation, tryStartScreening };
 
 const entrypointPath: string | undefined = process.env.pm_exec_path || process.argv[1];
 const isMain: boolean = entrypointPath
@@ -112,7 +118,6 @@ if (isMain) {
   ensureAgentId();
   bootstrapHiveMind().catch((error: Error) => log("hivemind_warn", `Bootstrap failed: ${error.message}`));
   startHiveMindBackgroundSync();
-  // One-time migration from old JSON archives to JSONL, then purge corrupted records
   import("./core/archive.js").then((m: any) => {
     m.migrateOldArchives();
     m.purgeCorruptedArchiveRecords();
@@ -121,14 +126,6 @@ if (isMain) {
 
 const TP_PCT: number = config.management.takeProfitPct;
 const DEPLOY: number = config.management.deployAmountSol;
-
-// ═══════════════════════════════════════════
-//  CYCLE TIMERS
-// ═══════════════════════════════════════════
-const timers: { managementLastRun: number | null; screeningLastRun: number | null } = {
-  managementLastRun: null,
-  screeningLastRun: null,
-};
 
 function nextRunIn(lastRun: number | null, intervalMin: number): number {
   if (!lastRun) return intervalMin * 60;
@@ -150,47 +147,18 @@ function buildPrompt(): string {
 }
 
 // ═══════════════════════════════════════════
-//  CRON DEFINITIONS
+//  CYCLE STATE (imported from core/live/cycle-state.ts)
 // ═══════════════════════════════════════════
-let _cronTasks: any = [];
-let _managementBusy: boolean = false; // prevents overlapping management cycles
-let _screeningBusy: boolean = false;  // prevents overlapping screening cycles
-let _screeningLastTriggered: number = 0; // epoch ms — prevents management from spamming screening
-const SCREENING_COOLDOWN_MS: number = 5 * 60 * 1000; // minimum gap between screening cycles
-let _pollTriggeredAt: number = 0; // epoch ms — cooldown for poller-triggered management
-const _peakConfirmTimers: Map<string, NodeJS.Timeout> = new Map();
-const _trailingDropConfirmTimers: Map<string, NodeJS.Timeout> = new Map();
-const TRAILING_PEAK_CONFIRM_DELAY_MS: number = 15_000;
-const TRAILING_PEAK_CONFIRM_TOLERANCE: number = 0.85;
-const TRAILING_DROP_CONFIRM_DELAY_MS: number = 15_000;
-const TRAILING_DROP_CONFIRM_TOLERANCE_PCT: number = 1.0;
-
-/** Strip <think>...</think> reasoning blocks that some models leak into output */
-function stripThink(text: string | null | undefined): string {
-  if (!text) return text || "";
-  return text.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
-}
-
-function sanitizeUntrustedPromptText(text: any, maxLen: number = 500): string | null {
-  if (!text) return null;
-  const cleaned = String(text)
-    .replace(/[\r\n\t]+/g, " ")
-    .replace(/\s+/g, " ")
-    .replace(/[<>`]/g, "")
-    .trim()
-    .slice(0, maxLen);
-  return cleaned ? JSON.stringify(cleaned) : null;
-}
 
 function shouldUsePnlRecheck(): boolean {
   return !config.api.lpAgentRelayEnabled;
 }
 
 function schedulePeakConfirmation(positionAddress: string): void {
-  if (!positionAddress || _peakConfirmTimers.has(positionAddress)) return;
+  if (!positionAddress || peakConfirmTimers.has(positionAddress)) return;
 
   const timer = setTimeout(async () => {
-    _peakConfirmTimers.delete(positionAddress);
+    peakConfirmTimers.delete(positionAddress);
     try {
       const result = await getMyPositions({ force: true, silent: true }).catch(() => null);
       const position = result?.positions?.find((p: Position) => p.position === positionAddress);
@@ -200,14 +168,14 @@ function schedulePeakConfirmation(positionAddress: string): void {
     }
   }, TRAILING_PEAK_CONFIRM_DELAY_MS);
 
-  _peakConfirmTimers.set(positionAddress, timer);
+  peakConfirmTimers.set(positionAddress, timer);
 }
 
 function scheduleTrailingDropConfirmation(positionAddress: string): void {
-  if (!positionAddress || _trailingDropConfirmTimers.has(positionAddress)) return;
+  if (!positionAddress || trailingDropConfirmTimers.has(positionAddress)) return;
 
   const timer = setTimeout(async () => {
-    _trailingDropConfirmTimers.delete(positionAddress);
+    trailingDropConfirmTimers.delete(positionAddress);
     try {
       const result = await getMyPositions({ force: true, silent: true }).catch(() => null);
       const position = result?.positions?.find((p: Position) => p.position === positionAddress);
@@ -219,14 +187,14 @@ function scheduleTrailingDropConfirmation(positionAddress: string): void {
       );
       if (resolved?.confirmed) {
         log("state", `[Trailing recheck] Confirmed trailing exit for ${positionAddress} — triggering management`);
-        runManagementCycle({ silent: true }).catch((e: Error) => log("cron_error", `Trailing recheck management failed: ${e.message}`));
+        runManagementCycle({ silent: true }, manageDeps).catch((e: Error) => log("cron_error", `Trailing recheck management failed: ${e.message}`));
       }
     } catch (error: any) {
       log("state_warn", `Trailing drop confirmation failed for ${positionAddress}: ${error.message}`);
     }
   }, TRAILING_DROP_CONFIRM_DELAY_MS);
 
-  _trailingDropConfirmTimers.set(positionAddress, timer);
+  trailingDropConfirmTimers.set(positionAddress, timer);
 }
 
 async function runBriefing(): Promise<void> {
@@ -242,24 +210,21 @@ async function runBriefing(): Promise<void> {
   }
 }
 
-/**
- * If the agent restarted after the 1:00 AM UTC cron window,
- * fire the briefing immediately on startup so it's never skipped.
- */
 async function maybeRunMissedBriefing(): Promise<void> {
   const todayUtc: string = new Date().toISOString().slice(0, 10);
   const lastSent: string | null = getLastBriefingDate();
-
-  if (lastSent === todayUtc) return; // already sent today
-
-  // Only fire if it's past the scheduled time (1:00 AM UTC)
+  if (lastSent === todayUtc) return;
   const nowUtc: Date = new Date();
   const briefingHourUtc: number = 1;
-  if (nowUtc.getUTCHours() < briefingHourUtc) return; // too early, cron will handle it
-
+  if (nowUtc.getUTCHours() < briefingHourUtc) return;
   log("cron", `Missed briefing detected (last sent: ${lastSent || "never"}) — sending now`);
   await runBriefing();
 }
+
+// ═══════════════════════════════════════════
+//  CRON TASKS
+// ═══════════════════════════════════════════
+let _cronTasks: any = [];
 
 function stopCronJobs(): void {
   for (const task of _cronTasks) task.stop();
@@ -267,663 +232,13 @@ function stopCronJobs(): void {
   _cronTasks = [];
 }
 
-export async function runManagementCycle({ silent = false }: { silent?: boolean } = {}): Promise<string | null> {
-  if (_managementBusy) return null;
-  _managementBusy = true;
-  timers.managementLastRun = Date.now();
-  log("cron", "Starting management cycle");
-  let mgmtReport: string | null = null;
-  let positions: Position[] = [];
-  let liveMessage: any = null;
-  try {
-    if (!silent && telegramEnabled()) {
-      liveMessage = await createLiveMessage("🔄 Management Cycle", "Evaluating positions...");
-    }
-    const livePositions: any = await getMyPositions({ force: true }).catch(() => null);
-    positions = livePositions?.positions || [];
-
-    if (positions.length === 0) {
-      // In dry-run mode, we may still have virtual positions to manage
-      const vpEarlyResults: VPResult[] = [];
-      if (process.env.DRY_RUN === "true") {
-        try {
-          const results: VPResult[] = await runVirtualManagementCycle();
-          vpEarlyResults.push(...results);
-          const vpClosed = results.filter((r: VPResult) => r.action === "CLOSED");
-          const vpStay = results.filter((r: VPResult) => r.action === "STAY");
-          if (results.length > 0) {
-            log("cron", `Virtual positions: ${vpStay.length} active, ${vpClosed.length} closed`);
-          }
-        } catch (e: any) {
-          log("cron_error", `Virtual position management failed: ${e.message}`);
-        }
-      }
-      let report: string = vpEarlyResults.length > 0 ? "" : "No open positions. Triggering screening cycle.";
-      if (vpEarlyResults.length > 0) {
-        const stayResults = vpEarlyResults.filter((r: VPResult) => r.action === "STAY");
-        const vpTotalVal: number = stayResults.reduce((s, r) => s + (r.value_sol ?? r.value_usd ?? 0), 0);
-        const vpTotalFees: number = stayResults.reduce((s, r) => s + (r.unclaimed_fees_sol ?? r.unclaimed_fees_usd ?? 0), 0);
-        const cur: string = config.management.solMode ? "◎" : "$";
-        const vpSummary: string = `💼 ${stayResults.length} VPs | ${cur} ${vpTotalVal.toFixed(4)} | fees: ${cur} ${vpTotalFees.toFixed(4)}`;
-
-        const vpLines: string = vpEarlyResults.map((r: VPResult) => {
-          const isSol: boolean = !!config.management.solMode;
-          const pnlVal: number = isSol ? (r.pnl_sol_pct ?? 0) : (r.pnl_pct ?? 0);
-          const isOor: boolean = typeof r.oor === "string" && r.oor !== "IN";
-          const rangeIcon: string = isOor ? "🔴" : "🟢";
-          const ageStr: string = r.age_minutes != null ? `Age: ${r.age_minutes}m | ` : "";
-
-          if (r.action === "CLOSED") {
-            return `**${r.pair}** | CLOSED: ${r.reason} | PnL: ${pnlVal.toFixed(2)}%`;
-          }
-
-          const val: string = isSol ? `◎ ${(r.value_sol ?? 0).toFixed(4)}` : `$ ${(r.value_usd ?? 0).toFixed(2)}`;
-          const fees: string = isSol ? `◎ ${(r.unclaimed_fees_sol ?? 0).toFixed(4)}` : `$ ${(r.unclaimed_fees_usd ?? 0).toFixed(2)}`;
-          const rAge: number = r.age_minutes ?? 0;
-          const yieldVal: string = rAge > 0 && (r.value_sol ?? r.value_usd ?? 0) > 0
-            ? (((isSol ? r.unclaimed_fees_sol : r.unclaimed_fees_usd) ?? 0) / (isSol ? (r.value_sol ?? 1) : (r.value_usd ?? 1)) * (1440 / rAge) * 100).toFixed(1)
-            : "?";
-          return `**${r.pair}** | ${ageStr}Val: ${val} | Unclaimed: ${fees} | Yield: ${yieldVal}% | PnL: ${pnlVal.toFixed(2)}% | ${rangeIcon} ${r.oor} | STAY`;
-        }).join("\n");
-        report += `\n\n---\n**Virtual Positions**\n\n${vpLines}\n\n${vpSummary}`;
-      }
-      mgmtReport = report;
-      tryStartScreening("mgmt-no-positions");
-      return mgmtReport;
-    }
-
-    // Snapshot + load pool memory.
-    // VPs are managed separately by runVirtualManagementCycle below —
-    // they get their own dedicated report section. Exclude them from the
-    // top-section logic (trailing TP, action map, LLM) which is designed
-    // for live positions.
-    const positionData: Position[] = positions.map((p: Position) => {
-      recordPositionSnapshot(p.pool, p as any);
-      return { ...p, recall: recallForPool(p.pool) };
-    });
-    const livePositionData: Position[] = positionData.filter((p: Position) => !p.position?.startsWith?.("vp:"));
-
-    // JS trailing TP check (live positions only)
-    const exitMap: Map<string, string> = new Map();
-    for (const p of livePositionData) {
-      if (
-        !p.pnl_pct_suspicious &&
-        queuePeakConfirmation(p.position, p.pnl_pct as number, { immediate: !shouldUsePnlRecheck() }) &&
-        shouldUsePnlRecheck()
-      ) {
-        schedulePeakConfirmation(p.position);
-      }
-      const exit: any = updatePnlAndCheckExits(p.position, p as any, config.management);
-      if (exit) {
-        if (exit.action === "TRAILING_TP" && exit.needs_confirmation && shouldUsePnlRecheck()) {
-          if (queueTrailingDropConfirmation(p.position, exit.peak_pnl_pct, exit.current_pnl_pct, config.management.trailingDropPct)) {
-            scheduleTrailingDropConfirmation(p.position);
-          }
-          continue;
-        }
-        exitMap.set(p.position, exit.reason);
-        log("state", `Exit alert for ${p.pair}: ${exit.reason}`);
-      }
-    }
-
-    // ── Deterministic rule checks (no LLM) ──────────────────────────
-    // action: CLOSE | CLAIM | STAY | INSTRUCTION (needs LLM)
-    const actionMap: Map<string, AnyObj> = new Map();
-    for (const p of livePositionData) {
-      // Hard exit — highest priority
-      if (exitMap.has(p.position)) {
-        actionMap.set(p.position, { action: "CLOSE", rule: "exit", reason: exitMap.get(p.position) });
-        continue;
-      }
-      // Instruction-set — pass to LLM, can't parse in JS
-      if (p.instruction) {
-        actionMap.set(p.position, { action: "INSTRUCTION" });
-        continue;
-      }
-
-      const closeRule: AnyObj | null = getCloseRule(p, config.management, p.minutes_out_of_range ?? 0, p.fee_per_tvl_24h);
-      if (closeRule) {
-        actionMap.set(p.position, closeRule);
-        continue;
-      }
-      // Claim rule
-      if ((p.unclaimed_fees_usd ?? 0) >= config.management.minClaimAmount) {
-        actionMap.set(p.position, { action: "CLAIM" });
-        continue;
-      }
-      actionMap.set(p.position, { action: "STAY" });
-    }
-
-    // ── Build JS report (live positions only — VPs in separate section below) ─
-    const totalValue: number = livePositionData.reduce((s, p) => s + (p.total_value_usd ?? 0), 0);
-    const totalUnclaimed: number = livePositionData.reduce((s, p) => s + (p.unclaimed_fees_usd ?? 0), 0);
-
-    const reportLines: string[] = livePositionData.map((p: Position) => {
-      const act: AnyObj = actionMap.get(p.position)!;
-      // Step 7 (meridian-wie): null in_range = "no fresh PnL" (RPC outage).
-      // True → 🟢 IN. False → 🔴 OOR <time>m. Null → ?? (unknown — no red bullet).
-      const inRange = p.in_range === true ? "🟢 IN" : p.in_range === false ? `🔴 OOR ${p.minutes_out_of_range ?? 0}m` : "??";
-      const val = config.management.solMode ? `◎ ${p.total_value_usd ?? "?"}` : `$ ${p.total_value_usd ?? "?"}`;
-      const unclaimed = config.management.solMode ? `◎ ${p.unclaimed_fees_usd ?? "?"}` : `$ ${p.unclaimed_fees_usd ?? "?"}`;
-      const statusLabel = act.action === "INSTRUCTION" ? "HOLD (instruction)" : act.action;
-      let line = `**${p.pair}** | Age: ${p.age_minutes ?? "?"}m | Val: ${val} | Unclaimed: ${unclaimed} | PnL: ${p.pnl_pct ?? "?"}% | Yield: ${p.fee_per_tvl_24h ?? "?"}% | ${inRange} | ${statusLabel}`;
-      if (p.instruction) line += `\nNote: "${p.instruction}"`;
-      if (act.action === "CLOSE" && act.rule === "exit") line += `\n⚡ Trailing TP: ${act.reason}`;
-      if (act.action === "CLOSE" && act.rule && act.rule !== "exit") line += `\nRule ${act.rule}: ${act.reason}`;
-      if (act.action === "CLAIM") line += `\n→ Claiming fees`;
-      return line;
-    });
-
-    const needsAction = [...actionMap.values()].filter((a: AnyObj) => a.action !== "STAY");
-    const actionSummary: string = needsAction.length > 0
-      ? needsAction.map((a: AnyObj) => a.action === "INSTRUCTION" ? "EVAL instruction" : `${a.action}${a.reason ? ` (${a.reason})` : ""}`).join(", ")
-      : "no action";
-
-    const cur: string = config.management.solMode ? "◎" : "$";
-    mgmtReport = reportLines.join("\n\n") +
-      `\n\nSummary: 💼 ${livePositionData.length} positions | ${cur} ${totalValue.toFixed(4)} | fees: ${cur} ${totalUnclaimed.toFixed(4)} | ${actionSummary}`;
-
-    // ── Call LLM only if action needed (live positions only) ─────────
-    const actionPositions: Position[] = livePositionData.filter((p: Position) => {
-      const a: AnyObj = actionMap.get(p.position)!;
-      return a.action !== "STAY";
-    });
-
-    if (actionPositions.length > 0) {
-      log("cron", `Management: ${actionPositions.length} action(s) needed — invoking LLM [model: ${config.llm.managementModel}]`);
-
-      const actionBlocks: string = actionPositions.map((p: Position) => {
-        const act: AnyObj = actionMap.get(p.position)!;
-        return [
-          `POSITION: ${p.pair} (${p.position})`,
-          `  pool: ${p.pool}`,
-          `  action: ${act.action}${act.rule && act.rule !== "exit" ? ` — Rule ${act.rule}: ${act.reason}` : ""}${act.rule === "exit" ? ` — ⚡ Trailing TP: ${act.reason}` : ""}`,
-          `  pnl_pct: ${p.pnl_pct}% | unclaimed_fees: ${cur} ${p.unclaimed_fees_usd} | value: ${cur} ${p.total_value_usd} | fee_per_tvl_24h: ${p.fee_per_tvl_24h ?? "?"}%`,
-          `  bins: lower=${p.lower_bin} upper=${p.upper_bin} active=${p.active_bin} | oor_minutes: ${p.minutes_out_of_range ?? 0}`,
-          p.instruction ? `  instruction: "${p.instruction}"` : null,
-        ].filter(Boolean).join("\n");
-      }).join("\n\n");
-
-      const { content }: { content: string } = await agentLoop(`
-MANAGEMENT ACTION REQUIRED — ${actionPositions.length} position(s)
-
-${actionBlocks}
-
-RULES:
-- CLOSE: call close_position only — it handles fee claiming internally, do NOT call claim_fees first
-- CLAIM: call claim_fees with position address
-- INSTRUCTION: evaluate the instruction condition. If met → close_position. If not → HOLD, do nothing.
-- ⚡ exit alerts: close immediately, no exceptions
-
-Execute the required actions. Do NOT re-evaluate CLOSE/CLAIM — rules already applied. Just execute.
-After executing, write a brief one-line result per position.
-      `, config.llm.maxSteps, [], "MANAGER", config.llm.managementModel, 2048, {
-        onToolStart: async ({ name }: { name: string }) => { await liveMessage?.toolStart(name); },
-        onToolFinish: async ({ name, result, success }: { name: string; result: any; success: boolean }) => { await liveMessage?.toolFinish(name, result, success); },
-      });
-
-      mgmtReport += `\n\n${content}`;
-    } else {
-      log("cron", "Management: all positions STAY — skipping LLM");
-      await liveMessage?.note("No tool actions needed.");
-    }
-
-    // ── Virtual positions management (deterministic, no LLM) ──────
-    const vpResults: VPResult[] = [];
-    if (process.env.DRY_RUN === "true") {
-      try {
-        const results: VPResult[] = await runVirtualManagementCycle();
-        vpResults.push(...results);
-        const vpClosed = results.filter((r: VPResult) => r.action === "CLOSED");
-        const vpStay = results.filter((r: VPResult) => r.action === "STAY");
-        if (results.length > 0) {
-          log("cron", `Virtual positions: ${vpStay.length} active, ${vpClosed.length} closed`);
-        }
-      } catch (e: any) {
-        log("cron_error", `Virtual position management failed: ${e.message}`);
-      }
-    }
-
-    // Append VP summary to management report.
-    // When there are no live positions, skip the "Summary: 💼 0 positions" header
-    // — the Virtual Positions section is the only content.
-    if (livePositionData.length === 0) mgmtReport = "";
-
-    if (vpResults.length > 0) {
-      const stayResults = vpResults.filter((r: VPResult) => r.action === "STAY");
-      const vpTotalVal: number = stayResults.reduce((s, r) => s + (r.value_sol ?? r.value_usd ?? 0), 0);
-      const vpTotalFees: number = stayResults.reduce((s, r) => s + (r.unclaimed_fees_sol ?? r.unclaimed_fees_usd ?? 0), 0);
-      const vpSummary: string = `💼 ${stayResults.length} VPs | ${cur} ${vpTotalVal.toFixed(4)} | fees: ${cur} ${vpTotalFees.toFixed(4)}`;
-
-      const vpLines: string = vpResults.map((r: VPResult) => {
-        const isSol: boolean = !!config.management.solMode;
-        const pnlVal: number = isSol ? (r.pnl_sol_pct ?? 0) : (r.pnl_pct ?? 0);
-        const isOor: boolean = typeof r.oor === "string" && r.oor !== "IN";
-        const rangeIcon: string = isOor ? "🔴" : "🟢";
-        const ageStr: string = r.age_minutes != null ? `Age: ${r.age_minutes}m | ` : "";
-
-        if (r.action === "CLOSED") {
-          return `**${r.pair}** | CLOSED: ${r.reason} | PnL: ${pnlVal.toFixed(2)}%`;
-        }
-
-        const val: string = isSol ? `◎ ${(r.value_sol ?? 0).toFixed(4)}` : `$ ${(r.value_usd ?? 0).toFixed(2)}`;
-        const fees: string = isSol ? `◎ ${(r.unclaimed_fees_sol ?? 0).toFixed(4)}` : `$ ${(r.unclaimed_fees_usd ?? 0).toFixed(2)}`;
-        // Synthetic 24h yield: (fees / value) × (1440 / age) × 100.
-        // Same formula as Rule 5 — position-specific, unit-agnostic.
-        const rAge2: number = r.age_minutes ?? 0;
-        const yieldVal: string = rAge2 > 0 && (r.value_sol ?? r.value_usd ?? 0) > 0
-          ? (((isSol ? r.unclaimed_fees_sol : r.unclaimed_fees_usd) ?? 0) / (isSol ? (r.value_sol ?? 1) : (r.value_usd ?? 1)) * (1440 / rAge2) * 100).toFixed(1)
-          : "?";
-        return `**${r.pair}** | ${ageStr}Val: ${val} | Unclaimed: ${fees} | Yield: ${yieldVal}% | PnL: ${pnlVal.toFixed(2)}% | ${rangeIcon} ${r.oor} | STAY`;
-      }).join("\n");
-      mgmtReport += `\n\n---\n**Virtual Positions**\n\n${vpLines}\n\n${vpSummary}`;
-    }
-
-    // Trigger screening after management
-    const afterPositions: any = await getMyPositions({ force: true }).catch(() => null);
-    const afterCount: number = afterPositions?.positions?.length ?? 0;
-    if (afterCount < config.risk.maxPositions) {
-      tryStartScreening("mgmt-post-management");
-    }
-  } catch (error: any) {
-    log("cron_error", `Management cycle failed: ${error.message}`);
-    mgmtReport = `Management cycle failed: ${error.message}`;
-  } finally {
-    _managementBusy = false;
-    if (!silent && telegramEnabled()) {
-      if (mgmtReport) {
-        if (liveMessage) await liveMessage.finalize(stripThink(mgmtReport)).catch(() => {});
-        else sendLongMessage(`🔄 Management Cycle\n\n${stripThink(mgmtReport)}`).catch(() => { });
-      }
-      for (const p of positions) {
-        // Step 7 (meridian-wie): explicit === false guard. `!null` is true,
-        // and if a future refactor adds minutes_out_of_range to VPs (e.g.
-        // from _oor_minutes), null in_range would trigger false OOR
-        // notifications during RPC outages. Be explicit.
-        if (p.in_range === false && p.minutes_out_of_range >= config.management.outOfRangeWaitMinutes) {
-          notifyOutOfRange({ pair: p.pair, minutesOOR: p.minutes_out_of_range }).catch(() => { });
-        }
-      }
-    }
-  }
-  return mgmtReport;
-}
-
-/**
- * Fire screening cycle if not already running and cooldown has elapsed.
- * All callers should use this instead of calling runScreeningCycle directly,
- * to avoid overlapping cycles and provide clear source attribution in logs.
- */
-function tryStartScreening(source: string, silent: boolean = false): boolean {
-  if (_screeningBusy) {
-    log("cron", `Screening skipped (${source}) — already running`);
-    return false;
-  }
-  if (Date.now() - _screeningLastTriggered < SCREENING_COOLDOWN_MS) {
-    const remaining: number = Math.ceil((SCREENING_COOLDOWN_MS - (Date.now() - _screeningLastTriggered)) / 1000);
-    log("cron", `Screening skipped (${source}) — cooldown active (${remaining}s remaining)`);
-    return false;
-  }
-  runScreeningCycle({ silent }).catch((e: Error) => log("cron_error", `${source} failed: ${e.message}`));
-  return true;
-}
-
-export async function runScreeningCycle({ silent = false }: { silent?: boolean } = {}): Promise<string | null> {
-  if (_screeningBusy) {
-    log("cron", "Screening skipped — previous cycle still running");
-    return null;
-  }
-  _screeningBusy = true; // set immediately — prevents TOCTOU race with concurrent callers
-
-  // Hard guards — don't even run the agent if preconditions aren't met
-  let prePositions: any, preBalance: any;
-  let liveMessage: any = null;
-  let screenReport: string | null = null;
-  try {
-    [prePositions, preBalance] = await Promise.all([getMyPositions({ force: true }), getWalletBalances()]);
-    if (prePositions.total_positions >= config.risk.maxPositions) {
-      log("cron", `Screening skipped — max positions reached (${prePositions.total_positions}/${config.risk.maxPositions})`);
-      screenReport = `Screening skipped — max positions reached (${prePositions.total_positions}/${config.risk.maxPositions}).`;
-      appendDecision({
-        type: "skip",
-        actor: "SCREENER",
-        summary: "Screening skipped",
-        reason: `Max positions reached (${prePositions.total_positions}/${config.risk.maxPositions})`,
-      });
-      _screeningBusy = false;
-      return screenReport;
-    }
-    const minRequired: number = config.management.deployAmountSol + config.management.gasReserve;
-    const isDryRun: boolean = process.env.DRY_RUN === "true";
-    if (!isDryRun && preBalance.sol < minRequired) {
-      log("cron", `Screening skipped — insufficient SOL (${preBalance.sol.toFixed(3)} < ${minRequired} needed for deploy + gas)`);
-      screenReport = `Screening skipped — insufficient SOL (${preBalance.sol.toFixed(3)} < ${minRequired} needed for deploy + gas).`;
-      appendDecision({
-        type: "skip",
-        actor: "SCREENER",
-        summary: "Screening skipped",
-        reason: `Insufficient SOL (${preBalance.sol.toFixed(3)} < ${minRequired})`,
-      });
-      _screeningBusy = false;
-      return screenReport;
-    }
-  } catch (e: any) {
-    log("cron_error", `Screening pre-check failed: ${e.message}`);
-    screenReport = `Screening pre-check failed: ${e.message}`;
-    _screeningBusy = false;
-    return screenReport;
-  }
-  _screeningLastTriggered = Date.now();
-  if (!silent && telegramEnabled()) {
-    liveMessage = await createLiveMessage("🔍 Screening Cycle", "Scanning candidates...");
-  }
-  timers.screeningLastRun = Date.now();
-  log("cron", `Starting screening cycle [model: ${config.llm.screeningModel}]`);
-  try {
-    // Reuse pre-fetched balance — no extra RPC call needed
-    const currentBalance: any = preBalance;
-    const deployAmount: number = computeDeployAmount(currentBalance.sol);
-    log("cron", `Computed deploy amount: ${deployAmount} SOL (wallet: ${currentBalance.sol} SOL)`);
-
-    // Load active strategy
-    const activeStrategy: any = getActiveStrategy();
-    const strategyBlock: string = activeStrategy
-      ? `ACTIVE STRATEGY: ${activeStrategy.name} — LP: ${activeStrategy.lp_strategy} | bins_above: ${activeStrategy.range?.bins_above ?? 0} (FIXED — never change) | deposit: ${activeStrategy.entry?.single_side === "sol" ? "SOL only (amount_y, amount_x=0)" : "dual-sided"} | best for: ${activeStrategy.best_for}`
-      : `No active strategy — use default bid_ask, bins_above: 0, SOL only.`;
-
-    // Fetch top candidates, then recon each sequentially with a small delay to avoid 429s
-    const topCandidates: any = await getTopCandidates({ limit: 10 }).catch(() => null);
-    const candidates: any[] = (topCandidates?.candidates || topCandidates?.pools || []).slice(0, 10);
-    const earlyFilteredExamples: any[] = topCandidates?.filtered_examples || [];
-
-    const allCandidates: Candidate[] = [];
-    for (const pool of candidates) {
-      const mint: string | undefined = pool.base?.mint;
-      const [smartWallets, narrative, tokenInfo] = await Promise.allSettled([
-        checkSmartWalletsOnPool({ pool_address: pool.pool }),
-        mint ? getTokenNarrative({ mint }) : Promise.resolve(null),
-        mint ? getTokenInfo({ query: mint }) : Promise.resolve(null),
-      ]);
-      allCandidates.push({
-        pool,
-        sw: smartWallets.status === "fulfilled" ? smartWallets.value : null,
-        n: narrative.status === "fulfilled" ? narrative.value : null,
-        ti: tokenInfo.status === "fulfilled" ? (tokenInfo.value as any)?.results?.[0] : null,
-        mem: recallForPool(pool.pool),
-      });
-      await new Promise(r => setTimeout(r, 150)); // avoid 429s
-    }
-
-    // Hard filters after token recon — block launchpads and excessive Jupiter bot holders
-    const filteredOut: AnyObj[] = [];
-    const passing: Candidate[] = allCandidates.filter(({ pool, ti }: Candidate) => {
-      const launchpad: string | null = ti?.launchpad ?? null;
-      if (launchpad && config.screening.allowedLaunchpads?.length > 0 && !config.screening.allowedLaunchpads.includes(launchpad)) {
-        log("screening", `Skipping ${pool.name} — launchpad ${launchpad} not in allow-list`);
-        filteredOut.push({ name: pool.name, reason: `launchpad ${launchpad} not in allow-list` });
-        return false;
-      }
-      if (launchpad && config.screening.blockedLaunchpads.includes(launchpad)) {
-        log("screening", `Skipping ${pool.name} — blocked launchpad (${launchpad})`);
-        filteredOut.push({ name: pool.name, reason: `blocked launchpad (${launchpad})` });
-        return false;
-      }
-      const botPct: number | null | undefined = ti?.audit?.bot_holders_pct;
-      const maxBotHoldersPct: number | null = config.screening.maxBotHoldersPct;
-      if (botPct != null && maxBotHoldersPct != null && botPct > maxBotHoldersPct) {
-        log("screening", `Bot-holder filter: dropped ${pool.name} — bots ${botPct}% > ${maxBotHoldersPct}%`);
-        filteredOut.push({ name: pool.name, reason: `bot holders ${botPct}% > ${maxBotHoldersPct}%` });
-        return false;
-      }
-      return true;
-    });
-
-    if (passing.length === 0) {
-      const combined: any[] = filteredOut.length > 0 ? filteredOut : earlyFilteredExamples;
-      const combinedExamples: string = combined.slice(0, 3)
-        .map((entry: any) => `- ${entry.name}: ${entry.reason}`)
-        .join("\n");
-      screenReport = combinedExamples
-        ? `No candidates available.\nFiltered examples:\n${combinedExamples}`
-        : `No candidates available (all filtered by launchpad / holder-quality rules).`;
-      appendDecision({
-        type: "no_deploy",
-        actor: "SCREENER",
-        summary: "No candidates available",
-        reason: combinedExamples || "All candidates filtered before deploy",
-        rejected: combined.slice(0, 5).map((entry: any) => `${entry.name}: ${entry.reason}`),
-      });
-      return screenReport;
-    }
-
-    if (passing.length === 1) {
-      const skipReason: string | null = getLoneCandidateSkipReason(passing[0]);
-      if (skipReason) {
-        const candidateName: string = passing[0].pool?.name || "unknown";
-        screenReport = [
-          "⛔ NO DEPLOY",
-          "",
-          "Cycle finished with no valid entry.",
-          "",
-          "BEST LOOKING CANDIDATE",
-          candidateName,
-          "",
-          "WHY SKIPPED",
-          `Only one candidate survived filtering, but it was not worth deploying: ${skipReason}.`,
-          "",
-          "REJECTED",
-          `- ${candidateName}: ${skipReason}`,
-        ].join("\n");
-        appendDecision({
-          type: "no_deploy",
-          actor: "SCREENER",
-          summary: "Single candidate skipped",
-          reason: skipReason,
-          pool: passing[0].pool?.pool,
-          pool_name: candidateName,
-        });
-        return screenReport;
-      }
-    }
-
-    // Pre-fetch active_bin for all passing candidates in parallel
-    const activeBinResults: PromiseSettledResult<any>[] = await Promise.allSettled(
-      passing.map(({ pool }: Candidate) => getActiveBin({ pool_address: pool.pool }))
-    );
-
-    // Build compact candidate blocks
-    const candidateBlocks: string[] = passing.map(({ pool, sw, n, ti, mem }: Candidate, i: number) => {
-      const botPct: any = ti?.audit?.bot_holders_pct ?? "?";
-      const top10Pct: any = ti?.audit?.top_holders_pct ?? "?";
-      const feesSol: any = ti?.global_fees_sol ?? "?";
-      const launchpad: string | null = ti?.launchpad ?? null;
-      const priceChange: number | null = ti?.stats_1h?.price_change;
-      const netBuyers: number | null = ti?.stats_1h?.net_buyers;
-      const activeBin: any = activeBinResults[i]?.status === "fulfilled" ? activeBinResults[i].value?.binId : null;
-
-      // OKX signals
-      const okxParts: string = [
-        pool.risk_level     != null ? `risk=${pool.risk_level}`               : null,
-        pool.bundle_pct     != null ? `bundle=${pool.bundle_pct}%`            : null,
-        pool.sniper_pct     != null ? `sniper=${pool.sniper_pct}%`            : null,
-        pool.suspicious_pct != null ? `suspicious=${pool.suspicious_pct}%`    : null,
-        pool.new_wallet_pct != null ? `new_wallets=${pool.new_wallet_pct}%`   : null,
-        pool.is_rugpull != null ? `rugpull=${pool.is_rugpull ? "YES" : "NO"}` : null,
-        pool.is_wash != null ? `wash=${pool.is_wash ? "YES" : "NO"}` : null,
-      ].filter(Boolean).join(", ");
-      const okxUnavailable: boolean = !okxParts && pool.price_vs_ath_pct == null;
-
-      const okxTags: string = [
-        pool.smart_money_buy    ? "smart_money_buy"    : null,
-        pool.kol_in_clusters    ? "kol_in_clusters"    : null,
-        pool.dex_boost          ? "dex_boost"          : null,
-        pool.dex_screener_paid  ? "dex_screener_paid"  : null,
-        pool.dev_sold_all       ? "dev_sold_all(bullish)" : null,
-      ].filter(Boolean).join(", ");
-      const pvpLine: string | null = pool.is_pvp
-        ? `  pvp: HIGH — rival ${pool.pvp_rival_name || pool.pvp_symbol} (${pool.pvp_rival_mint?.slice(0, 8)}...) has pool ${pool.pvp_rival_pool?.slice(0, 8)}..., tvl=$ ${pool.pvp_rival_tvl}, holders=${pool.pvp_rival_holders}, fees=${pool.pvp_rival_fees}SOL`
-        : null;
-      const extended: string = [
-        pool.token_name !== pool.pool_name ? `  token: ${pool.token_name} (name), ${pool.symbol} (symbol)` : null,
-        pvpLine,
-        `  metrics: bin_step=${pool.bin_step}, fee_pct=${pool.fee_pct}%, fee_tvl=${pool.fee_active_tvl_ratio}, vol=$ ${pool.volume_window}, tvl=$ ${pool.tvl ?? pool.active_tvl}, volatility_${pool.volatility_timeframe || "30m"}=${pool.volatility}, mcap=$ ${pool.mcap}, organic=${pool.organic_score}${pool.token_age_hours != null ? `, age=${pool.token_age_hours}h` : ""}`,
-        `  audit: top10=${top10Pct}%, bots=${botPct}%, fees=${feesSol}SOL${launchpad ? `, launchpad=${launchpad}` : ""}`,
-        pvpLine,
-        okxParts ? `  okx: ${okxParts}` : okxUnavailable ? `  okx: unavailable` : null,
-        okxTags  ? `  tags: ${okxTags}` : null,
-        pool.price_vs_ath_pct != null ? `  ath: price_vs_ath=${pool.price_vs_ath_pct}%${pool.top_cluster_trend ? `, top_cluster=${pool.top_cluster_trend}` : ""}` : null,
-        `  smart_wallets: ${sw?.in_pool?.length ?? 0} present${sw?.in_pool?.length ? ` → CONFIDENCE BOOST (${sw.in_pool.map((w: any) => w.name).join(", ")})` : ""}`,
-        activeBin != null ? `  active_bin: ${activeBin}` : null,
-        priceChange != null ? `  1h: price${priceChange >= 0 ? "+" : ""}${priceChange}%, net_buyers=${netBuyers ?? "?"}` : null,
-        n?.narrative ? `  narrative_untrusted: ${sanitizeUntrustedPromptText(n.narrative, 500)}` : `  narrative_untrusted: none`,
-        mem ? `  memory_untrusted: ${sanitizeUntrustedPromptText(mem, 500)}` : null,
-      ].filter(Boolean).join("\n");
-
-      // Stage signals for Darwinian weighting — captured before LLM decides
-      if (config.darwin?.enabled) {
-        const baseMint: string | null = pool.base?.mint || pool.base_mint || ti?.mint || null;
-        stageSignals(pool.pool, {
-          base_mint:             baseMint ?? undefined,
-          organic_score:         pool.organic_score         ?? null,
-          fee_tvl_ratio:         pool.fee_active_tvl_ratio  ?? null,
-          volume:                pool.volume_window         ?? null,
-          mcap:                  pool.mcap                  ?? null,
-          holder_count:          ti?.holders                ?? null,
-          smart_wallets_present: (sw?.in_pool?.length ?? 0) > 0,
-          narrative_quality:     n?.narrative ? "present" : "absent",
-          volatility:            pool.volatility            ?? null,
-        });
-      }
-
-      return extended;
-    });
-
-    const weightsSummary: any = config.darwin?.enabled ? getWeightsSummary() : null;
-
-    let deployAttempted: boolean = false;
-    let deploySucceeded: boolean = false;
-    const { content }: { content: string } = await agentLoop(`
-SCREENING CYCLE
-${strategyBlock}
-Positions: ${prePositions.total_positions}/${config.risk.maxPositions} | SOL: ${currentBalance.sol.toFixed(3)} | Deploy: ${deployAmount} SOL
-
-PRE-LOADED CANDIDATES (${passing.length} pools):
-${candidateBlocks.join("\n\n")}
-
-STEPS:
-1. Decide if any candidate is actually worth deploying. One surviving candidate is not automatically good enough.
-2. Pick the best candidate based on narrative quality, smart wallets, and pool metrics.
-3. Call deploy_position (active_bin is pre-fetched above — no need to call get_active_bin).
-   bins_below = round(${config.strategy.minBinsBelow} + (candidate volatility/5)*(${config.strategy.maxBinsBelow - config.strategy.minBinsBelow})) clamped to [${config.strategy.minBinsBelow},${config.strategy.maxBinsBelow}].
-   pass deploy_position.volatility = the candidate volatility value.
-   For single-side SOL deploys, do not invent upside:
-   set amount_y only, keep amount_x = 0, keep bins_above = 0, and let the upper bin stay at the active bin.
-4. Report in this exact format (no tables, no extra sections):
-   🚀 DEPLOYED
-
-   <pool name>
-   <pool address>
-
-   ◎ <deploy amount> SOL | <strategy> | bin <active_bin>
-   Range: <minPrice> → <maxPrice>
-   Range cover: <downside %> downside | <upside %> upside | <total width %> total
-
-   IMPORTANT:
-   - Do NOT calculate the range percentages yourself.
-   - Use the actual deploy_position tool result:
-     range_coverage.downside_pct
-     range_coverage.upside_pct
-     range_coverage.width_pct
-
-   MARKET
-   Fee/TVL: <x>%
-   Volume: $<x>
-   TVL: $<x>
-   Volatility: <x>
-   Organic: <x>
-   Mcap: $<x>
-   Age: <x>h
-
-   AUDIT
-   Top10: <x>%
-   Bots: <x>%
-   Fees paid: <x> SOL
-   Smart wallets: <names or none>
-
-   RISK
-   <If OKX advanced/risk data exists, list only the fields that actually exist: Risk level, Bundle, Sniper, Suspicious, ATH distance, Rugpull, Wash.>
-   <If only rugpull/wash exist, list just those.>
-   <If OKX enrichment is missing, write exactly: OKX: unavailable>
-
-   WHY THIS WON
-   <2-4 concise sentences on why this pool won, key risks, and why it still beat the alternatives>
-5. If no pool qualifies, report in this exact format instead:
-   ⛔ NO DEPLOY
-
-   Cycle finished with no valid entry.
-
-   BEST LOOKING CANDIDATE
-   <name or none>
-
-   WHY SKIPPED
-   <2-4 concise sentences explaining why nothing was good enough>
-
-   REJECTED
-   <short flat list of top candidate names and why they were skipped>
-IMPORTANT:
-- Never write "unknown" for OKX. Use real values, omit missing fields, or write exactly "OKX: unavailable".
-- Keep the whole report compact and highly scannable for Telegram.
-      `, config.llm.maxSteps, [], "SCREENER", config.llm.screeningModel, 2048, {
-        onToolStart: async ({ name }: { name: string }) => {
-          if (name === "deploy_position") deployAttempted = true;
-          await liveMessage?.toolStart(name);
-        },
-        onToolFinish: async ({ name, result, success }: { name: string; result: any; success: boolean }) => {
-          if (name === "deploy_position") {
-            deployAttempted = true;
-            deploySucceeded = Boolean(success && result?.success !== false && !result?.error && !result?.blocked);
-          }
-          await liveMessage?.toolFinish(name, result, success);
-        },
-      });
-    screenReport = content;
-    if (/⛔\s*NO DEPLOY/i.test(content)) {
-      appendDecision({
-        type: "no_deploy",
-        actor: "SCREENER",
-        summary: "LLM chose no deploy",
-        reason: stripThink(content).slice(0, 500),
-      });
-    } else if (!deploySucceeded) {
-      appendDecision({
-        type: "no_deploy",
-        actor: "SCREENER",
-        summary: deployAttempted ? "Deploy attempt did not succeed" : "No successful deploy in screening cycle",
-        reason: stripThink(content).slice(0, 500),
-      });
-    }
-  } catch (error: any) {
-    log("cron_error", `Screening cycle failed: ${error.message}`);
-    screenReport = `Screening cycle failed: ${error.message}`;
-  } finally {
-    _screeningBusy = false;
-    if (!silent && telegramEnabled()) {
-      if (screenReport) {
-        if (liveMessage) await liveMessage.finalize(stripThink(screenReport)).catch(() => {});
-        else sendLongMessage(`🔍 Screening Cycle\n\n${stripThink(screenReport)}`).catch(() => { });
-      }
-    }
-  }
-  return screenReport;
-}
-
 export function startCronJobs(): void {
   stopCronJobs(); // stop any running tasks before (re)starting
 
   const mgmtTask = cron.schedule(`*/${Math.max(1, config.schedule.managementIntervalMin)} * * * *`, async () => {
-    if (_managementBusy) return;
+    if (managementBusy) return;
     timers.managementLastRun = Date.now();
-    await runManagementCycle();
+    await runManagementCycle({}, manageDeps);
   });
 
   const screenTask = cron.schedule(`*/${Math.max(1, config.schedule.screeningIntervalMin)} * * * *`, async () => {
@@ -931,8 +246,8 @@ export function startCronJobs(): void {
   });
 
   const healthTask = cron.schedule(`0 * * * *`, async () => {
-    if (_managementBusy) return;
-    _managementBusy = true;
+    if (managementBusy) return;
+    setManagementBusy(true);
     log("cron", "Starting health check");
     try {
       await agentLoop(`
@@ -943,7 +258,7 @@ Summarize the current portfolio health, total fees earned, and performance of al
     } catch (error: any) {
       log("cron_error", `Health check failed: ${error.message}`);
     } finally {
-      _managementBusy = false;
+      setManagementBusy(false);
     }
   });
 
@@ -960,7 +275,7 @@ Summarize the current portfolio health, total fees earned, and performance of al
   // Lightweight 30s PnL poller — updates trailing TP state between management cycles, no LLM
   let _pnlPollBusy: boolean = false;
   const pnlPollInterval: NodeJS.Timeout = setInterval(async () => {
-    if (_managementBusy || _screeningBusy || _pnlPollBusy) return;
+    if (managementBusy || screeningBusy || _pnlPollBusy) return;
     if (getTrackedPositions(true).length === 0) return;
     _pnlPollBusy = true;
     try {
@@ -983,11 +298,11 @@ Summarize the current portfolio health, total fees earned, and performance of al
             continue;
           }
           const cooldownMs: number = config.schedule.managementIntervalMin * 60 * 1000;
-          const sinceLastTrigger: number = Date.now() - _pollTriggeredAt;
+          const sinceLastTrigger: number = Date.now() - pollTriggeredAt;
           if (sinceLastTrigger >= cooldownMs) {
-            _pollTriggeredAt = Date.now();
+            setPollTriggeredAt(Date.now());
             log("state", `[PnL poll] Exit alert: ${p.pair} — ${exit.reason} — triggering management`);
-            runManagementCycle({ silent: true }).catch((e: Error) => log("cron_error", `Poll-triggered management failed: ${e.message}`));
+            runManagementCycle({ silent: true }, manageDeps).catch((e: Error) => log("cron_error", `Poll-triggered management failed: ${e.message}`));
           } else {
             log("state", `[PnL poll] Exit alert: ${p.pair} — ${exit.reason} — cooldown (${Math.round((cooldownMs - sinceLastTrigger) / 1000)}s left)`);
           }
@@ -996,11 +311,11 @@ Summarize the current portfolio health, total fees earned, and performance of al
         const closeRule: AnyObj | null = getCloseRule(p, config.management, p.minutes_out_of_range ?? 0, p.fee_per_tvl_24h);
         if (closeRule) {
           const cooldownMs: number = config.schedule.managementIntervalMin * 60 * 1000;
-          const sinceLastTrigger: number = Date.now() - _pollTriggeredAt;
+          const sinceLastTrigger: number = Date.now() - pollTriggeredAt;
           if (sinceLastTrigger >= cooldownMs) {
-            _pollTriggeredAt = Date.now();
+            setPollTriggeredAt(Date.now());
             log("state", `[PnL poll] Deterministic close rule: ${p.pair} — Rule ${closeRule.rule}: ${closeRule.reason} — triggering management`);
-            runManagementCycle({ silent: true }).catch((e: Error) => log("cron_error", `Poll-triggered management failed: ${e.message}`));
+            runManagementCycle({ silent: true }, manageDeps).catch((e: Error) => log("cron_error", `Poll-triggered management failed: ${e.message}`));
           } else {
             log("state", `[PnL poll] Deterministic close rule: ${p.pair} — Rule ${closeRule.rule}: ${closeRule.reason} — cooldown (${Math.round((cooldownMs - sinceLastTrigger) / 1000)}s left)`);
           }
@@ -1527,7 +842,7 @@ function refreshPrompt(): void {
 }
 
 async function drainTelegramQueue(): Promise<void> {
-  while (_telegramQueue.length > 0 && !_managementBusy && !_screeningBusy && !busy) {
+  while (_telegramQueue.length > 0 && !managementBusy && !screeningBusy && !busy) {
     const queued: TelegramMessage | undefined = _telegramQueue.shift();
     if (queued) {
       await telegramHandler(queued);
@@ -1550,7 +865,7 @@ async function telegramHandler(msg: TelegramMessage): Promise<void> {
     await showSettingsMenu().catch((e: Error) => sendMessage(`Settings error: ${e.message}`).catch(() => {}));
     return;
   }
-  if (_managementBusy || _screeningBusy || busy) {
+  if (managementBusy || screeningBusy || busy) {
     if (_telegramQueue.length < 5) {
       _telegramQueue.push(msg);
       sendMessage(`⏳ Queued (${_telegramQueue.length} in queue): "${text.slice(0, 60)}"`).catch(() => {});
@@ -1893,30 +1208,6 @@ async function telegramHandler(msg: TelegramMessage): Promise<void> {
 function fmtPct(value: any): string {
   const n: number = Number(value);
   return Number.isFinite(n) ? `${n.toFixed(2)}%` : "?";
-}
-
-function getLoneCandidateSkipReason({ pool, sw, n, ti }: Candidate = {} as Candidate): string | null {
-  if (!pool) return "missing candidate data";
-  const smartWalletCount: number = Math.max(sw?.in_pool?.length ?? 0, Number(pool.gmgn_smart_wallets ?? 0) || 0);
-  const tokenInfo: any = ti || {};
-  const hasNarrative: boolean = !!n?.narrative;
-  const globalFeesSol: number = Number(tokenInfo.global_fees_sol ?? pool.gmgn_total_fee_sol);
-  const top10Pct: number = Number(tokenInfo.audit?.top_holders_pct ?? pool.gmgn_token_info_top10_pct ?? pool.gmgn_top10_holder_pct);
-  const botPct: number = Number(tokenInfo.audit?.bot_holders_pct ?? pool.gmgn_bot_degen_pct);
-  if (pool.is_wash) return "wash trading was flagged";
-  if (pool.is_rugpull && smartWalletCount === 0) return "rugpull risk was flagged and no smart wallets offset it";
-  if (pool.is_pvp && smartWalletCount === 0) return "PVP symbol conflict and no smart-wallet confirmation";
-  if (Number.isFinite(globalFeesSol) && globalFeesSol < config.screening.minTokenFeesSol) {
-    return `token fees ${globalFeesSol} SOL below minimum ${config.screening.minTokenFeesSol} SOL`;
-  }
-  if (Number.isFinite(top10Pct) && top10Pct > config.screening.maxTop10Pct) {
-    return `top10 concentration ${top10Pct}% above maximum ${config.screening.maxTop10Pct}%`;
-  }
-  if (Number.isFinite(botPct) && botPct > config.screening.maxBotHoldersPct) {
-    return `bot holders ${botPct}% above maximum ${config.screening.maxBotHoldersPct}%`;
-  }
-  if (!hasNarrative && smartWalletCount === 0) return "only candidate has no narrative and no smart-wallet confirmation";
-  return null;
 }
 
 function computeBinsBelow(volatility: any): number {

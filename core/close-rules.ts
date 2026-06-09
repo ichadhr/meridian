@@ -96,14 +96,20 @@ export function getCloseRule(
     : 0;
 
   if (ageMinutes >= minAgeForYieldCheck && (position.total_value_usd ?? 0) > 0) {
-    // Use SDK fee_per_tvl_24h if provided (live), otherwise compute synthetic (VP)
-    let effectiveFeePerTvl: number | null = fee_per_tvl_24h ?? null;
-    if (effectiveFeePerTvl == null) {
+    let effectiveFeePerTvl: number | null;
+    if (fee_per_tvl_24h === undefined) {
+      // VP — compute synthetic yield from unclaimed fees
       const totalValue = position.total_value_usd ?? 0;
       const currentFees = position.unclaimed_fees_usd || 0;
       effectiveFeePerTvl = (currentFees / totalValue) * (1440 / ageMinutes) * 100;
+    } else if (fee_per_tvl_24h !== null) {
+      // Live — use SDK value
+      effectiveFeePerTvl = fee_per_tvl_24h;
+    } else {
+      // Live but SDK returned null — skip Rule 5 (don't guess)
+      effectiveFeePerTvl = null;
     }
-    if (effectiveFeePerTvl < minFeePerTvl24h) {
+    if (effectiveFeePerTvl != null && effectiveFeePerTvl < minFeePerTvl24h) {
       return { action: "CLOSE", rule: 5, reason: "low yield" };
     }
   }
@@ -136,6 +142,3 @@ export function getCloseRule(
 
   return null;
 }
-
-/** Backward-compatible alias for existing VP callers. */
-export const getVirtualCloseRule = getCloseRule;
