@@ -1210,7 +1210,7 @@ function fmtPct(value: any): string {
   return Number.isFinite(n) ? `${n.toFixed(2)}%` : "?";
 }
 
-function computeBinsBelow(volatility: any): number {
+export function computeBinsBelow(volatility: any): number {
   const parsedVolatility: number = Number(volatility);
   if (!Number.isFinite(parsedVolatility) || parsedVolatility <= 0) {
     throw new Error(`Invalid volatility ${volatility ?? "unknown"} — refusing volatility-scaled deploy.`);
