@@ -13,7 +13,7 @@ import { log } from "./utils/logger.js";
 import { getMyPositions, closePosition, getActiveBin, invalidatePositionsCache } from "./providers/meteora/index.js";
 import { getWalletBalances } from "./providers/solana/index.js";
 import { getTopCandidates } from "./providers/meteora/index.js";
-import { config, reloadScreeningThresholds, computeDeployAmount } from "./config/index.js";
+import { config, reloadScreeningThresholds, computeDeployAmount, computeBinsBelow } from "./config/index.js";
 import { evolveThresholds, getPerformanceSummary } from "./core/lessons.js";
 import { executeTool, registerCronRestarter, registerScreeningTrigger } from "./llm/index.js";
 import {
@@ -1208,16 +1208,6 @@ async function telegramHandler(msg: TelegramMessage): Promise<void> {
 function fmtPct(value: any): string {
   const n: number = Number(value);
   return Number.isFinite(n) ? `${n.toFixed(2)}%` : "?";
-}
-
-export function computeBinsBelow(volatility: any): number {
-  const parsedVolatility: number = Number(volatility);
-  if (!Number.isFinite(parsedVolatility) || parsedVolatility <= 0) {
-    throw new Error(`Invalid volatility ${volatility ?? "unknown"} — refusing volatility-scaled deploy.`);
-  }
-  const lo: number = config.strategy.minBinsBelow;
-  const hi: number = config.strategy.maxBinsBelow;
-  return Math.max(lo, Math.min(hi, Math.round(lo + (parsedVolatility / 5) * (hi - lo))));
 }
 
 // Register restarter — when update_config changes intervals, running cron jobs get replaced

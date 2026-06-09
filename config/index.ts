@@ -306,6 +306,22 @@ export function computeDeployAmount(walletSol: number): number {
 }
 
 /**
+ * Compute bins_below for a position based on pool volatility.
+ *
+ * Formula: linear interpolation between minBinsBelow and maxBinsBelow,
+ * scaled by volatility (0-5 range), clamped to [minBinsBelow, maxBinsBelow].
+ */
+export function computeBinsBelow(volatility: any): number {
+  const parsedVolatility: number = Number(volatility);
+  if (!Number.isFinite(parsedVolatility) || parsedVolatility <= 0) {
+    throw new Error(`Invalid volatility ${volatility ?? "unknown"} — refusing volatility-scaled deploy.`);
+  }
+  const lo: number = config.strategy.minBinsBelow;
+  const hi: number = config.strategy.maxBinsBelow;
+  return Math.max(lo, Math.min(hi, Math.round(lo + (parsedVolatility / 5) * (hi - lo))));
+}
+
+/**
  * Reload user-config.json and apply updated screening thresholds to the
  * in-memory config object. Called after threshold evolution so the next
  * agent cycle uses the evolved values without a restart.

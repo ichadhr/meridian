@@ -92,6 +92,17 @@ describe("getCloseRule", () => {
       expect(result).toEqual({ action: "CLOSE", rule: 3, reason: "pumped far above range" });
     });
 
+    it("stays at boundary (active_bin === upper_bin + outOfRangeBinsToClose)", () => {
+      // Condition is > not >=, so exactly at boundary should NOT trigger
+      const result = getCloseRule(
+        pos({ active_bin: 105, upper_bin: 100 }),
+        baseConfig,
+        0,
+        highFee,
+      );
+      expect(result).toBeNull();
+    });
+
     it("stays when active_bin is within range", () => {
       const result = getCloseRule(
         pos({ active_bin: 103, upper_bin: 100 }),
@@ -109,6 +120,16 @@ describe("getCloseRule", () => {
         pos({ active_bin: 101, upper_bin: 100 }),
         baseConfig,
         35,
+        highFee,
+      );
+      expect(result).toEqual({ action: "CLOSE", rule: 4, reason: "OOR" });
+    });
+
+    it("closes at boundary (minutes === wait threshold)", () => {
+      const result = getCloseRule(
+        pos({ active_bin: 101, upper_bin: 100 }),
+        baseConfig,
+        30,
         highFee,
       );
       expect(result).toEqual({ action: "CLOSE", rule: 4, reason: "OOR" });
@@ -142,6 +163,16 @@ describe("getCloseRule", () => {
         total_value_usd: 100,
       });
       const result = getCloseRule(oldPos, baseConfig, 0, lowFee);
+      expect(result).toEqual({ action: "CLOSE", rule: 5, reason: "low yield" });
+    });
+
+    it("closes when fee_per_tvl_24h is 0 (zero yield)", () => {
+      const oldPos = pos({
+        deployed_at: new Date(Date.now() - 120 * 60_000).toISOString(),
+        total_value_usd: 100,
+      });
+      // 0 < minFeePerTvl24h (7) → should close
+      const result = getCloseRule(oldPos, baseConfig, 0, 0);
       expect(result).toEqual({ action: "CLOSE", rule: 5, reason: "low yield" });
     });
 
@@ -213,6 +244,21 @@ describe("getCloseRule", () => {
         { pnl_pct: -8 },
         { pnl_pct: -10 },
         { pnl_pct: -12 },
+      ];
+      const result = getCloseRule(pos({ snapshots }), baseConfig, 0, highFee);
+      expect(result).toEqual({
+        action: "CLOSE",
+        rule: 6,
+        reason: "consecutive down-trend (3 cycles)",
+      });
+    });
+
+    it("uses pnl_sol_pct when solMode is true", () => {
+      const snapshots = [
+        { pnl_sol_pct: -5 },
+        { pnl_sol_pct: -8 },
+        { pnl_sol_pct: -10 },
+        { pnl_sol_pct: -12 },
       ];
       const result = getCloseRule(pos({ snapshots }), baseConfig, 0, highFee);
       expect(result).toEqual({

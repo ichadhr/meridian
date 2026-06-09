@@ -62,4 +62,14 @@ describe("computeDeployAmount", () => {
     // result = max(0.5, 0.0035) = 0.5 (floor)
     expect(computeDeployAmount(0.36)).toBe(0.5);
   });
+
+  it("returns ceiling when floor > ceiling", () => {
+    // Set floor > ceiling
+    config.management.deployAmountSol = 10;
+    config.risk.maxDeployAmount = 5;
+    // deployable = 100 - 0.2 - 0.15 = 99.65
+    // dynamic = 99.65 * 0.35 = 34.8775
+    // result = min(5, max(10, 34.8775)) = min(5, 10) = 5 (ceiling)
+    expect(computeDeployAmount(100)).toBe(5);
+  });
 });

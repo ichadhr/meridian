@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { computeBinsBelow } from "../index.js";
+import { computeBinsBelow } from "../config/index.js";
 import { config } from "../config/index.js";
 
 describe("computeBinsBelow", () => {
