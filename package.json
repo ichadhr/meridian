@@ -18,7 +18,8 @@
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "lint": "eslint . --max-warnings 0 && tsc --noEmit",
-    "test": "npm run test:all",
+    "test:unit": "vitest run",
+    "test": "vitest run && npm run test:all",
     "test:syntax": "find . -path ./node_modules -prune -o -name '*.js' -exec node --check {} \\;",
     "test:screen": "npx tsx test/test-screening.ts",
     "test:agent": "DRY_RUN=true npx tsx test/test-agent.ts",
@@ -52,6 +53,7 @@
     "@typescript-eslint/parser": "^8.61.0",
     "eslint": "^9.39.4",
     "tsx": "^4.22.4",
-    "typescript": "^6.0.3"
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.8"
   }
 }
