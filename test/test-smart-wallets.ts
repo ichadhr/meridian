@@ -11,7 +11,7 @@ import {
   removeSmartWallet,
   listSmartWallets,
   checkSmartWalletsOnPool,
-} from "../smart-wallets.js";
+} from "../core/smart-wallets.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);

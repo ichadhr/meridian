@@ -8,7 +8,7 @@
 // Tests are SYNCHRONOUS for the "not found" case because getVirtualPosition
 // returns null before any async work begins.
 
-import { closeVpManual } from "../tools/manage-virtual.js";
+import { closeVpManual } from "../core/vp/manage.js";
 
 let pass = 0;
 let fail = 0;

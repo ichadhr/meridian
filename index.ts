@@ -10,7 +10,7 @@ import { getMyPositions, closePosition, getActiveBin, invalidatePositionsCache }
 import { getWalletBalances } from "./providers/solana/index.js";
 import { getTopCandidates } from "./providers/meteora/pool-discovery.js";
 import { config, reloadScreeningThresholds, computeDeployAmount } from "./config/index.js";
-import { evolveThresholds, getPerformanceSummary } from "./lessons.js";
+import { evolveThresholds, getPerformanceSummary } from "./core/lessons.js";
 import { executeTool, registerCronRestarter, registerScreeningTrigger } from "./tools/executor.js";
 import {
   startPolling,
@@ -27,20 +27,20 @@ import {
   createLiveMessage,
 } from "./telegram.js";
 import { generateBriefing } from "./core/briefing.js";
-import { getLastBriefingDate, setLastBriefingDate, getTrackedPosition, getTrackedPositions, setPositionInstruction, updatePnlAndCheckExits, queuePeakConfirmation, resolvePendingPeak, queueTrailingDropConfirmation, resolvePendingTrailingDrop } from "./state.js";
-import { getActiveStrategy } from "./strategy-library.js";
-import { recordPositionSnapshot, recallForPool, addPoolNote } from "./pool-memory.js";
-import { checkSmartWalletsOnPool } from "./smart-wallets.js";
+import { getLastBriefingDate, setLastBriefingDate, getTrackedPosition, getTrackedPositions, setPositionInstruction, updatePnlAndCheckExits, queuePeakConfirmation, resolvePendingPeak, queueTrailingDropConfirmation, resolvePendingTrailingDrop } from "./core/state.js";
+import { getActiveStrategy } from "./core/strategy-library.js";
+import { recordPositionSnapshot, recallForPool, addPoolNote } from "./core/pool-memory.js";
+import { checkSmartWalletsOnPool } from "./core/smart-wallets.js";
 import { getTokenNarrative, getTokenInfo } from "./providers/jupiter/token.js";
 import { stageSignals } from "./core/signal-tracker.js";
-import { getWeightsSummary } from "./signal-weights.js";
+import { getWeightsSummary } from "./core/signal-weights.js";
 import { bootstrapHiveMind, ensureAgentId, getHiveMindPullMode, isHiveMindEnabled, pullHiveMindLessons, pullHiveMindPresets, registerHiveMindAgent, startHiveMindBackgroundSync } from "./providers/hivemind/index.js";
 import { appendDecision } from "./core/decision-log.js";
-import { runVirtualManagementCycle } from "./tools/manage-virtual.js";
-import { parseVirtualPositionAddress } from "./tools/dry-run-state.js";
-import { closeVpManual } from "./tools/manage-virtual.js";
-import { generateDryRunReport } from "./tools/generate-dry-run-report.js";
-import { readArchive, compileVpStats } from "./tools/position-archive.js";
+import { runVirtualManagementCycle } from "./core/vp/manage.js";
+import { parseVirtualPositionAddress } from "./core/vp/state.js";
+import { closeVpManual } from "./core/vp/manage.js";
+import { generateDryRunReport } from "./core/vp/report.js";
+import { readArchive, compileVpStats } from "./core/archive.js";
 
 // ── Type helpers ──────────────────────────────────────────────
 type AnyObj = Record<string, any>;
@@ -112,7 +112,7 @@ if (isMain) {
   bootstrapHiveMind().catch((error: Error) => log("hivemind_warn", `Bootstrap failed: ${error.message}`));
   startHiveMindBackgroundSync();
   // One-time migration from old JSON archives to JSONL, then purge corrupted records
-  import("./tools/position-archive.js").then((m: any) => {
+  import("./core/archive.js").then((m: any) => {
     m.migrateOldArchives();
     m.purgeCorruptedArchiveRecords();
   }).catch(() => {});

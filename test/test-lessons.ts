@@ -17,7 +17,7 @@ import {
   recordPerformance,
   getLessonsForPrompt,
   getPerformanceSummary,
-} from "../lessons.js";
+} from "../core/lessons.js";
 import { config } from "../config/index.js";
 
 const __filename = fileURLToPath(import.meta.url);

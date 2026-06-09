@@ -18,8 +18,8 @@ import path from "path";
 import { fileURLToPath } from "url";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-import { mergeVirtualPositions } from "../tools/merge-virtual-positions.js";
-import { getVirtualCloseRule } from "../tools/virtual-close-rule.js";
+import { mergeVirtualPositions } from "../core/vp/merge.js";
+import { getVirtualCloseRule } from "../core/close-rules.js";
 
 let passed = 0;
 let failed = 0;

@@ -23,10 +23,10 @@ import {
   getTrackedPosition,
   minutesOutOfRange,
   syncOpenPositions,
-} from "../../state.js";
-import { trackVirtualPosition } from "../../tools/dry-run-state.js";
-import { recordPerformance } from "../../lessons.js";
-import { isBaseMintOnCooldown, isPoolOnCooldown } from "../../pool-memory.js";
+} from "../../core/state.js";
+import { trackVirtualPosition } from "../../core/vp/state.js";
+import { recordPerformance } from "../../core/lessons.js";
+import { isBaseMintOnCooldown, isPoolOnCooldown } from "../../core/pool-memory.js";
 import { fetchSolPrice } from "../jupiter/api.js";
 import { normalizeMint, getConnection, getWallet } from "../solana/wallet.js";
 import { getWalletBalances } from "../solana/balance.js";
@@ -34,7 +34,7 @@ import { appendDecision } from "../../core/decision-log.js";
 import { estimateDeployGasSol, estimateCloseGasSol, samplePriorityFee } from "../solana/gas-estimator.js";
 import { agentMeridianJson, getAgentIdForRequests, getAgentMeridianHeaders } from "../hivemind/index.js";
 import { getAndClearStagedSignals } from "../../core/signal-tracker.js";
-import { mergeVirtualPositions } from "../../tools/merge-virtual-positions.js";
+import { mergeVirtualPositions } from "../../core/vp/merge.js";
 
 // ─── Transaction reliability infrastructure ──────────────────
 // Priority fee + retry on transient RPC errors. Avoids lost deploys from
@@ -1891,8 +1891,8 @@ export async function getMyPositions({ force = false, silent = false, wallet_add
     let resultPositions = positions;
     if (process.env.DRY_RUN === "true" && useLocalWallet) {
       try {
-        const { listVirtualPositions } = await import("../../tools/dry-run-state.js");
-        const { computePositionPnl } = await import("../../tools/compute-position-pnl.js");
+        const { listVirtualPositions } = await import("../../core/vp/state.js");
+        const { computePositionPnl } = await import("../../core/pnl.js");
         const vps = listVirtualPositions("open");
         // ALWAYS fetch a real SOL price for computePositionPnl (it needs solPrice
         // to compute USD fields correctly, even when display is in SOL mode).

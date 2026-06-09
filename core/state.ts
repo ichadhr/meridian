@@ -9,7 +9,7 @@
  */
 
 import fs from "fs";
-import { log } from "./utils/logger.js";
+import { log } from "../utils/logger.js";
 
 const STATE_FILE = "./state.json";
 

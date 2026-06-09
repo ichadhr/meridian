@@ -3,7 +3,7 @@
  */
 
 import fs from "fs";
-import { recalculateWeights, getWeightsSummary } from "../signal-weights.js";
+import { recalculateWeights, getWeightsSummary } from "../core/signal-weights.js";
 
 const WEIGHTS_FILE = "./signal-weights.json";
 

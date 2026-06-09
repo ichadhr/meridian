@@ -10,9 +10,9 @@
  */
 
 import fs from "fs";
-import { log } from "./utils/logger.js";
-import { loadJsonRecord, saveJsonRecord } from "./config/index.js";
-import type { Config, PerformanceRecord, SignalWeightsDB } from "./types/index.js";
+import { log } from "../utils/logger.js";
+import { loadJsonRecord, saveJsonRecord } from "../config/index.js";
+import type { Config, PerformanceRecord, SignalWeightsDB } from "../types/index.js";
 
 const WEIGHTS_FILE = "./signal-weights.json";
 

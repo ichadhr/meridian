@@ -3,41 +3,96 @@
  *
  * All outside code imports from here. Never import core sub-files directly.
  * This is a pure barrel re-export — no logic lives here.
- *
- * During migration, export paths will be wired incrementally as files move into core/.
- * Initially, re-export from the current locations (root, tools/) to keep imports working.
  */
 
 // Position lifecycle
-// TODO: wire when core/state.ts exists
-// export { openPosition, closePosition, listPositions, getPositionState } from "./state.js";
+export {
+  getStateSummary,
+  getTrackedPosition,
+  getTrackedPositions,
+  setPositionInstruction,
+  updatePnlAndCheckExits,
+  queuePeakConfirmation,
+  resolvePendingPeak,
+  queueTrailingDropConfirmation,
+  resolvePendingTrailingDrop,
+  getLastBriefingDate,
+  setLastBriefingDate,
+} from "./state.js";
 
 // Learning & evolution
-// TODO: wire when core/lessons.ts exists
-// export { recordPerformance, getPromptLessons, evolveThresholds } from "./lessons.js";
-// TODO: wire when core/signal-weights.ts exists
-// export { recalculateWeights } from "./signal-weights.js";
+export {
+  recordPerformance,
+  getLessonsForPrompt,
+  evolveThresholds,
+  getPerformanceSummary,
+  addLesson,
+  clearAllLessons,
+  clearPerformance,
+  removeLessonsByKeyword,
+  getPerformanceHistory,
+  pinLesson,
+  unpinLesson,
+  listLessons,
+} from "./lessons.js";
+
+// Signal weights
+export {
+  recalculateWeights,
+  getWeightsSummary,
+} from "./signal-weights.js";
 
 // Pool & deploy memory
-// TODO: wire when core/pool-memory.ts exists
-// export { recordPoolDeploy, getPoolMemory, addPoolNote } from "./pool-memory.js";
+export {
+  recordPositionSnapshot,
+  recallForPool,
+  addPoolNote,
+  recordPoolDeploy,
+  getPoolMemory,
+} from "./pool-memory.js";
 
 // Archive
-// TODO: wire when core/archive.ts exists
-// export { appendArchiveRecord, getPerformanceHistory } from "./archive.js";
+export {
+  readArchive,
+  compileVpStats,
+} from "./archive.js";
 
 // Strategies
-// TODO: wire when core/strategy-library.ts exists
-// export { getActiveStrategy, addStrategy, listStrategies } from "./strategy-library.js";
+export {
+  getActiveStrategy,
+  addStrategy,
+  listStrategies,
+  getStrategy,
+  setActiveStrategy,
+  removeStrategy,
+} from "./strategy-library.js";
 
 // Smart wallets
-// TODO: wire when core/smart-wallets.ts exists
-// export { addSmartWallet, removeSmartWallet, listSmartWallets } from "./smart-wallets.js";
+export {
+  addSmartWallet,
+  removeSmartWallet,
+  listSmartWallets,
+  checkSmartWalletsOnPool,
+} from "./smart-wallets.js";
 
-// Blacklist (already migrated)
-export { addToBlacklist, isBlacklisted, listBlacklist } from "./token-blacklist.js";
+// Blacklist
+export { addToBlacklist, removeFromBlacklist, isBlacklisted, listBlacklist, blockDev, unblockDev, listBlockedDevs } from "./token-blacklist.js";
 
-// Briefing & decisions (already migrated)
+// Briefing & decisions
 export { generateBriefing } from "./briefing.js";
 export { appendDecision, getRecentDecisions } from "./decision-log.js";
 export { stageSignals, getAndClearStagedSignals, getStagedPools } from "./signal-tracker.js";
+
+// Close rules
+export { getVirtualCloseRule } from "./close-rules.js";
+
+// PnL computation
+export { computePositionPnl, estimateSlippageLamports } from "./pnl.js";
+export type { PositionPnlResult, BinData } from "./pnl.js";
+
+// VP management
+export { runVirtualManagementCycle, closeVpManual } from "./vp/manage.js";
+export { parseVirtualPositionAddress, listVirtualPositions, trackVirtualPosition } from "./vp/state.js";
+export { mergeVirtualPositions } from "./vp/merge.js";
+export { generateVirtualDigest } from "./vp/digest.js";
+export { generateDryRunReport } from "./vp/report.js";

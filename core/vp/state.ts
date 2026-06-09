@@ -1,10 +1,10 @@
 import fs from "fs";
-import { log } from "../utils/logger.js";
+import { log } from "../../utils/logger.js";
 import {
   appendArchiveRecordIfNew,
   dedupeAllArchives,
   ARCHIVE_DIR,
-} from "./position-archive.js";
+} from "../archive.js";
 const STATE_FILE = "./dry-run-state.json";
 
 // ─── Types ────────────────────────────────────────────────────────────────

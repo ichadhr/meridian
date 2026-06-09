@@ -1,9 +1,9 @@
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
-import { log } from "./utils/logger.js";
-import { loadJsonRecord, saveJsonRecord } from "./config/index.js";
-import type { SmartWallet, SmartWalletsDB } from "./types/index.js";
+import { log } from "../utils/logger.js";
+import { loadJsonRecord, saveJsonRecord } from "../config/index.js";
+import type { SmartWallet, SmartWalletsDB } from "../types/index.js";
 
 const WALLETS_PATH = path.join(process.cwd(), "smart-wallets.json");
 
@@ -85,7 +85,7 @@ export async function checkSmartWalletsOnPool({
     };
   }
 
-  const { getWalletPositions } = await import("./providers/meteora/index.js");
+  const { getWalletPositions } = await import("../providers/meteora/index.js");
 
   const results = await Promise.all(
     wallets.map(async (wallet) => {

@@ -7,8 +7,8 @@
  * volatility bucket, fee_tvl_ratio bucket, and flags toxic pools.
  */
 
-import { log } from "../utils/logger.js";
-import { readArchive } from "./position-archive.js";
+import { log } from "../../utils/logger.js";
+import { readArchive } from "../archive.js";
 
 function safeNum(v: unknown): number {
   const n = Number(v ?? 0);

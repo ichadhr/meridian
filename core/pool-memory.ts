@@ -6,10 +6,10 @@
  */
 
 import fs from "fs";
-import { log } from "./utils/logger.js";
-import { config } from "./config/index.js";
-import { loadJsonRecord, saveJsonRecord } from "./config/index.js";
-import type { PoolMemoryEntry, PoolDeploy, PoolSnapshot } from "./types/index.js";
+import { log } from "../utils/logger.js";
+import { config } from "../config/index.js";
+import { loadJsonRecord, saveJsonRecord } from "../config/index.js";
+import type { PoolMemoryEntry, PoolDeploy, PoolSnapshot } from "../types/index.js";
 
 const POOL_MEMORY_FILE = "./pool-memory.json";
 const MAX_NOTE_LENGTH = 280;

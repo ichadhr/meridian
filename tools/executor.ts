@@ -10,19 +10,19 @@ import {
   searchPools,
   invalidatePositionsCache,
 } from "../providers/meteora/index.js";
-import { parseVirtualPositionAddress } from "./dry-run-state.js";
-import { closeVpManual } from "./manage-virtual.js";
+import { parseVirtualPositionAddress } from "../core/vp/state.js";
+import { closeVpManual } from "../core/vp/manage.js";
 import { swapToken } from "../providers/jupiter/index.js";
 import { getWalletBalances } from "../providers/solana/index.js";
 import { studyTopLPers } from "./study.js";
-import { addLesson, clearAllLessons, clearPerformance, removeLessonsByKeyword, getPerformanceHistory, pinLesson, unpinLesson, listLessons } from "../lessons.js";
-import { setPositionInstruction } from "../state.js";
+import { addLesson, clearAllLessons, clearPerformance, removeLessonsByKeyword, getPerformanceHistory, pinLesson, unpinLesson, listLessons } from "../core/lessons.js";
+import { setPositionInstruction } from "../core/state.js";
 
-import { getPoolMemory, addPoolNote } from "../pool-memory.js";
-import { addStrategy, listStrategies, getStrategy, setActiveStrategy, removeStrategy } from "../strategy-library.js";
+import { getPoolMemory, addPoolNote } from "../core/pool-memory.js";
+import { addStrategy, listStrategies, getStrategy, setActiveStrategy, removeStrategy } from "../core/strategy-library.js";
 import { addToBlacklist, removeFromBlacklist, listBlacklist } from "../core/token-blacklist.js";
 import { blockDev, unblockDev, listBlockedDevs } from "../core/token-blacklist.js";
-import { addSmartWallet, removeSmartWallet, listSmartWallets, checkSmartWalletsOnPool } from "../smart-wallets.js";
+import { addSmartWallet, removeSmartWallet, listSmartWallets, checkSmartWalletsOnPool } from "../core/smart-wallets.js";
 import { getTokenInfo, getTokenHolders, getTokenNarrative } from "../providers/jupiter/token.js";
 import { getAdvancedInfo } from "../providers/okx/index.js";
 import { config, reloadScreeningThresholds, MIN_SAFE_BINS_BELOW } from "../config/index.js";

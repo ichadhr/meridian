@@ -10,7 +10,7 @@
  * When solMode is false (solPrice = 0), they contain USD values.
  */
 
-import type { VirtualPosition } from "../types/index.js";
+import type { VirtualPosition } from "../../types/index.js";
 
 export interface MergedPosition {
   position: string;

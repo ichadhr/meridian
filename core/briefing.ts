@@ -1,7 +1,7 @@
 // core/briefing.ts — Daily briefing generator
 import fs from "fs";
 import { log } from "../utils/logger.js";
-import { getPerformanceSummary } from "../lessons.js";
+import { getPerformanceSummary } from "./lessons.js";
 
 const STATE_FILE = "./state.json";
 const LESSONS_FILE = "./lessons.json";

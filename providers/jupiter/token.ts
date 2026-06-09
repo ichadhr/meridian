@@ -254,7 +254,7 @@ export async function getTokenHolders({
   ]);
 
   // ─── Smart Wallet / KOL Cross-reference ──────────────────────
-  const { listSmartWallets } = await import("../../smart-wallets.js");
+  const { listSmartWallets } = await import("../../core/smart-wallets.js");
   const { wallets: smartWallets } = listSmartWallets();
   let smartWalletsHolding: SmartWalletHolding[] = [];
 

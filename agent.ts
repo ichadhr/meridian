@@ -94,8 +94,8 @@ import { getWalletBalances } from "./providers/solana/index.js";
 import { getMyPositions } from "./providers/meteora/index.js";
 import { log } from "./utils/logger.js";
 import { config } from "./config/index.js";
-import { getStateSummary } from "./state.js";
-import { getLessonsForPrompt, getPerformanceSummary } from "./lessons.js";
+import { getStateSummary } from "./core/state.js";
+import { getLessonsForPrompt, getPerformanceSummary } from "./core/lessons.js";
 import { getDecisionSummary } from "./core/decision-log.js";
 
 // Supports OpenRouter (default) or any OpenAI-compatible local server (e.g. LM Studio)
@@ -182,12 +182,12 @@ export async function agentLoop(
   let virtualDigest: any = null;
   if (agentType === "SCREENER") {
     try {
-      const { getWeightsSummary } = await import("./signal-weights.js");
+      const { getWeightsSummary } = await import("./core/signal-weights.js");
       const { config } = await import("./config/index.js");
       if ((config as any).darwin?.enabled) weightsSummary = (getWeightsSummary as any)();
     } catch { /* signal-weights not critical */ }
     try {
-      const { generateVirtualDigest } = await import("./tools/virtual-digest.js");
+      const { generateVirtualDigest } = await import("./core/vp/digest.js");
       virtualDigest = await (generateVirtualDigest as any)();
     } catch { /* virtual-digest not critical */ }
   }

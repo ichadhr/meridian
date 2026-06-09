@@ -6,9 +6,9 @@
  *   const html = await generateDryRunReport();
  *   fs.writeFileSync("dry-run-report.html", html);
  */
-import { log } from "../utils/logger.js";
-import { readArchive } from "./position-archive.js";
-import { archiveVirtualPositions } from "./dry-run-state.js";
+import { log } from "../../utils/logger.js";
+import { readArchive } from "../archive.js";
+import { archiveVirtualPositions } from "./state.js";
 
 /** A closed virtual-position record from the JSONL archive. */
 export interface ClosedPosition {

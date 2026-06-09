@@ -7,9 +7,9 @@
  */
 
 import fs from "fs";
-import { log } from "./utils/logger.js";
-import { loadJsonRecord, saveJsonRecord } from "./config/index.js";
-import type { StrategyDB, StrategyEntry } from "./types/index.js";
+import { log } from "../utils/logger.js";
+import { loadJsonRecord, saveJsonRecord } from "../config/index.js";
+import type { StrategyDB, StrategyEntry } from "../types/index.js";
 
 const STRATEGY_FILE = "./strategy-library.json";
 

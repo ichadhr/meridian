@@ -9,10 +9,10 @@
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
-import { log } from "./utils/logger.js";
-import { getSharedLessonsForPrompt, pushHiveLesson, pushHivePerformanceEvent } from "./providers/hivemind/index.js";
-import { loadJsonRecord, saveJsonRecord } from "./config/index.js";
-import type { Config, Lesson, PerformanceRecord, PerformanceSummary, LessonsDB } from "./types/index.js";
+import { log } from "../utils/logger.js";
+import { getSharedLessonsForPrompt, pushHiveLesson, pushHivePerformanceEvent } from "../providers/hivemind/index.js";
+import { loadJsonRecord, saveJsonRecord } from "../config/index.js";
+import type { Config, Lesson, PerformanceRecord, PerformanceSummary, LessonsDB } from "../types/index.js";
 
 const USER_CONFIG_PATH = path.join(process.cwd(), "user-config.json");
 
@@ -155,7 +155,7 @@ export async function recordPerformance(perf: PerformanceRecord): Promise<void> 
 
   // Evolve thresholds every 5 closed positions
   if (data.performance.length % MIN_EVOLVE_POSITIONS === 0) {
-    const { config, reloadScreeningThresholds } = await import("./config/index.js");
+    const { config, reloadScreeningThresholds } = await import("../config/index.js");
     const result = evolveThresholds(data.performance, config);
     if (result?.changes && Object.keys(result.changes).length > 0) {
       reloadScreeningThresholds();
@@ -703,7 +703,7 @@ export async function getPerformanceHistory({
   // ── Paper positions from JSONL archives ──
   if (source !== "live") {
     try {
-      const { readArchive } = await import("./tools/position-archive.js");
+      const { readArchive } = await import("./archive.js");
       const vpRecords = await readArchive({ source: "paper", hours, limit }) as Record<string, unknown>[];
       for (const r of vpRecords) {
         positions.push({
