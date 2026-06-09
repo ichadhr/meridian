@@ -5,18 +5,19 @@
  */
 
 import BN from "bn.js";
-import { getBinsInRange, getConnection, invalidatePositionsCache } from "./dlmm.js";
+import { getBinsInRange, invalidatePositionsCache } from "../providers/meteora/index.js";
+import { getConnection } from "../providers/solana/index.js";
 import {
   listVirtualPositions,
   updateVirtualPosition,
   closeVirtualPosition,
   getVirtualPosition,
 } from "./dry-run-state.js";
-import { fetchSolPrice } from "./wallet.js";
+import { fetchSolPrice } from "../providers/jupiter/index.js";
 import { recordPoolDeploy } from "../pool-memory.js";
 import { config } from "../config/index.js";
 import { log } from "../utils/logger.js";
-import { estimateCloseGasSol, samplePriorityFee } from "./gas-estimator.js";
+import { estimateCloseGasSol, samplePriorityFee } from "../providers/solana/gas-estimator.js";
 import { getVirtualCloseRule } from "./virtual-close-rule.js";
 import { computePositionPnl, estimateSlippageLamports } from "./compute-position-pnl.js";
 import type { PositionPnlResult, BinData } from "./compute-position-pnl.js";

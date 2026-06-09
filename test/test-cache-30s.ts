@@ -15,11 +15,11 @@ import {
   _resetBinsInRangeCacheForTesting,
   _setBinsInRangeCacheForTesting,
   _getBinsInRangeCacheSizeForTesting,
-} from "../tools/dlmm.js";
+} from "../providers/meteora/index.js";
 import {
   fetchSolPrice,
   _resetSolPriceCacheForTesting,
-} from "../tools/wallet.js";
+} from "../providers/jupiter/index.js";
 import { config } from "../config/index.js";
 
 let pass = 0;

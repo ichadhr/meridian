@@ -2,7 +2,7 @@
 
 Autonomous DLMM liquidity provider agent for Meteora pools on Solana.
 
-> **Note:** The JavaScript to TypeScript conversion is complete. All active source files are now `.ts`. Original `.js` files are preserved as `*.js.legacy` backups. The folder restructuring (`external/`, `core/`, etc.) described below is the planned target architecture.
+> **Note:** The JavaScript to TypeScript conversion is complete. All active source files are now `.ts`. Original `.js` files are preserved as `*.js.legacy` backups. The folder restructuring (`providers/`, `core/`, etc.) described below is the planned target architecture.
 
 ## Current State (ts-migration branch)
 
@@ -53,11 +53,11 @@ import { notifyDeploy, notifyClose, notifySwap } from "../../interfaces/index.js
 // Current (wrong — external calling core):
 import { recordPerformance } from "../lessons.js";
 ```
-**Rule violated**: `external/` must never import from `core/`. It is the lowest I/O layer.
+**Rule violated**: `providers/` must never import from `core/`. It is the lowest I/O layer.
 
 **Fix — move `recordPerformance()` UP to the caller**:
 ```
-external/meteora/index.ts → closePosition() returns { pnlUsd, pnlPct, fees, ... }
+providers/meteora/index.ts → closePosition() returns { pnlUsd, pnlPct, fees, ... }
 core/live/state.ts        → receives result → calls recordPerformance(result)  ✅
 ```
 The SDK wrapper only does the SDK operation and returns data. Recording performance is business logic that belongs in `core/`, not inside an SDK wrapper.
@@ -75,17 +75,17 @@ The SDK wrapper only does the SDK operation and returns data. Recording performa
 ```ts
 // After migration, index.ts imports only from gates:
 import { notifyDeploy, sendMessage }  from "./interfaces/index.js";
-import { getMyPositions, closePosition } from "./external/sdk.js";
+import { getMyPositions, closePosition } from "./providers/sdk.js";
 import { recordPerformance, openPosition } from "./core/index.js";
 ```
 
 ### Safe Migration Order
 ```
-1. Create gate files (empty barrels): core/index.ts, external/sdk.ts,
+1. Create gate files (empty barrels): core/index.ts, providers/sdk.ts,
    interfaces/index.ts, llm/tools/index.ts
 2. Move utils/ (no deps)
 3. Move config/ (depends only on utils/)
-4. Move external/ providers → fix Blocker 2 at this step
+4. Move providers/ providers → fix Blocker 2 at this step
 5. Move core/ files → populate core/index.ts barrel
 6. Move llm/ files → split definitions.ts + executor.ts into group files
 7. Move interfaces/ → fix Blocker 1 at this step → create interfaces/index.ts
@@ -98,7 +98,7 @@ import { recordPerformance, openPosition } from "./core/index.js";
 
 | Directory | Responsibility |
 |-----------|---------------|
-| `external/` | I/O only. Talks to APIs, SDKs, RPCs. Zero business logic. |
+| `providers/` | I/O only. Talks to APIs, SDKs, RPCs. Zero business logic. |
 | `core/` | Pure logic. Computes PnL, manages state, orchestrates fallbacks. No direct API calls. |
 | `interfaces/` | Platform interfaces. Telegram, Discord, and other communication platforms. |
 | `llm/` | Agent harness. LLM communication layer. |
@@ -135,6 +135,7 @@ meridian/
 │   ├── strategy-library.ts     # Trading strategies
 │   ├── token-blacklist.ts      # Token blacklist
 │   ├── live/
+│   │   ├── manage.ts           # Live lifecycle management (extracted from index.ts)
 │   │   └── state.ts            # Live position state
 │   └── vp/
 │       ├── digest.ts           # VP performance analysis
@@ -143,7 +144,7 @@ meridian/
 │       ├── report.ts           # Dry-run HTML calendar report generation
 │       └── state.ts            # VP state management
 │
-├── external/
+├── providers/
 │   ├── caller.ts               # Shared HTTP client (retry, backoff, timeout)
 │   ├── hivemind/
 │   │   └── index.ts            # HiveMind sync
@@ -161,6 +162,9 @@ meridian/
 │   │   └── pool-discovery.ts   # Pool screening / candidate selection
 │   ├── okx/
 │   │   └── index.ts            # OKX wallet info
+│   ├── solana/
+│   │   ├── index.ts            # RPC connection, account reads, tx simulation
+│   │   └── balance.ts          # Direct RPC balance fallback
 │   └── sdk.ts                  # Unified provider interface
 │
 ├── interfaces/
@@ -221,7 +225,7 @@ Detailed specifications for the root folder are documented in [1.ROOT_FOLDER.md]
 | `agent.ts` | `llm/agent.ts` |
 | `prompt.ts` | `llm/prompt.ts` |
 | `telegram.ts` | `interfaces/telegram/index.ts` |
-| `hivemind.ts` | `external/hivemind/index.ts` |
+| `hivemind.ts` | `providers/hivemind/index.ts` |
 | `lessons.ts` | `core/lessons.ts` |
 | `pool-memory.ts` | `core/pool-memory.ts` |
 | `signal-weights.ts` | `core/signal-weights.ts` |
@@ -252,7 +256,7 @@ Runtime configuration and static config files.
 
 Detailed specifications for the core folder are documented in [3.CORE_FOLDER.md](file:///Users/ichadhr/Develop/node/meridian/docs/structures/3.CORE_FOLDER.md).
 
-Pure business logic. No direct API or RPC calls; imports from `external/` for I/O.
+Pure business logic. No direct API or RPC calls; imports from `providers/` for I/O.
 
 **Already migrated (4 files):**
 
@@ -282,6 +286,7 @@ Pure business logic. No direct API or RPC calls; imports from `external/` for I/
 
 | File | Role |
 |------|------|
+| `live/manage.ts` | Live lifecycle management (extracted from `index.ts` `runManagementCycle()`) |
 | `live/state.ts` | Live position state management |
 
 ### vp
@@ -314,6 +319,8 @@ External I/O adapters. Pure API wrappers; no business logic. **Not yet created.*
 | `meteora/indicators.ts` | Chart indicators for screening |
 | `meteora/pool-discovery.ts` | Pool screening and candidate selection |
 | `okx/index.ts` | OKX wallet enrichment (risk, advanced info, cluster, price) |
+| `solana/index.ts` | Solana RPC connection, account reads, tx simulation |
+| `solana/balance.ts` | Direct RPC balance fallback (`getParsedAccountInfo`) |
 
 ## interfaces
 

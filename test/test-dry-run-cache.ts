@@ -6,7 +6,7 @@
 // changes based on DRY_RUN env. The integration behavior is straightforward:
 // 5min = 300_000ms, 10s = 10_000ms. The exact number is the contract.
 
-import { _positionsCacheTtlForTesting, invalidatePositionsCache } from "../tools/dlmm.js";
+import { _positionsCacheTtlForTesting, invalidatePositionsCache } from "../providers/meteora/index.js";
 
 const TTL = _positionsCacheTtlForTesting;
 let pass = 0;

@@ -1,8 +1,8 @@
 import fs from "fs";
 import path from "path";
 import { randomBytes, randomUUID } from "crypto";
-import { log } from "./utils/logger.js";
-import { config } from "./config/index.js";
+import { log } from "../../utils/logger.js";
+import { config } from "../../config/index.js";
 
 const USER_CONFIG_PATH = path.join(process.cwd(), "user-config.json");
 const CACHE_PATH = path.join(process.cwd(), "hivemind-cache.json");

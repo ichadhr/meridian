@@ -1,4 +1,4 @@
-import { discoverPools, getPoolDetail, getTopCandidates } from "./screening.js";
+import { discoverPools, getPoolDetail, getTopCandidates } from "../providers/meteora/pool-discovery.js";
 import {
   getActiveBin,
   deployPosition,
@@ -9,10 +9,11 @@ import {
   closePosition,
   searchPools,
   invalidatePositionsCache,
-} from "./dlmm.js";
+} from "../providers/meteora/index.js";
 import { parseVirtualPositionAddress } from "./dry-run-state.js";
 import { closeVpManual } from "./manage-virtual.js";
-import { getWalletBalances, swapToken } from "./wallet.js";
+import { swapToken } from "../providers/jupiter/index.js";
+import { getWalletBalances } from "../providers/solana/index.js";
 import { studyTopLPers } from "./study.js";
 import { addLesson, clearAllLessons, clearPerformance, removeLessonsByKeyword, getPerformanceHistory, pinLesson, unpinLesson, listLessons } from "../lessons.js";
 import { setPositionInstruction } from "../state.js";
@@ -22,8 +23,8 @@ import { addStrategy, listStrategies, getStrategy, setActiveStrategy, removeStra
 import { addToBlacklist, removeFromBlacklist, listBlacklist } from "../core/token-blacklist.js";
 import { blockDev, unblockDev, listBlockedDevs } from "../core/token-blacklist.js";
 import { addSmartWallet, removeSmartWallet, listSmartWallets, checkSmartWalletsOnPool } from "../smart-wallets.js";
-import { getTokenInfo, getTokenHolders, getTokenNarrative } from "./token.js";
-import { getAdvancedInfo } from "./okx.js";
+import { getTokenInfo, getTokenHolders, getTokenNarrative } from "../providers/jupiter/token.js";
+import { getAdvancedInfo } from "../providers/okx/index.js";
 import { config, reloadScreeningThresholds, MIN_SAFE_BINS_BELOW } from "../config/index.js";
 import { getRecentDecisions } from "../core/decision-log.js";
 import fs from "fs";

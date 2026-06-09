@@ -4,7 +4,7 @@
  * Docs: https://web3.okx.com/build/dev-docs/
  */
 import crypto from "crypto";
-import { config } from "../config/index.js";
+import { config } from "../../config/index.js";
 
 const BASE = "https://web3.okx.com";
 const CHAIN_SOLANA = "501";

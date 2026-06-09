@@ -85,7 +85,7 @@ export async function checkSmartWalletsOnPool({
     };
   }
 
-  const { getWalletPositions } = await import("./tools/dlmm.js");
+  const { getWalletPositions } = await import("./providers/meteora/index.js");
 
   const results = await Promise.all(
     wallets.map(async (wallet) => {

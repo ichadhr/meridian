@@ -1,7 +1,7 @@
-import { config } from "../config/index.js";
-import { log } from "../utils/logger.js";
-import { agentMeridianJson, getAgentMeridianHeaders } from "./agent-meridian.js";
-import { safeNumber } from "../utils/number.js";
+import { config } from "../../config/index.js";
+import { log } from "../../utils/logger.js";
+import { agentMeridianJson, getAgentMeridianHeaders } from "./api.js";
+import { safeNumber } from "../../utils/number.js";
 
 const DEFAULT_INTERVALS = ["5_MINUTE"];
 const DEFAULT_CANDLES = 298;

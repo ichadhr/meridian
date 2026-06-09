@@ -289,14 +289,14 @@ switch (subcommand) {
 
   // ── balance ──────────────────────────────────────────────────────
   case "balance": {
-    const { getWalletBalances } = await import("./tools/wallet.js");
+    const { getWalletBalances } = await import("./providers/solana/index.js");
     out(await getWalletBalances());
     break;
   }
 
   // ── positions ────────────────────────────────────────────────────
   case "positions": {
-    const { getMyPositions } = await import("./tools/dlmm.js");
+    const { getMyPositions } = await import("./providers/meteora/index.js");
     out(await getMyPositions({ force: true }));
     break;
   }
@@ -308,7 +308,7 @@ switch (subcommand) {
     if (!positionAddress) die("Usage: meridian pnl <position_address>");
 
     const { getTrackedPosition } = await import("./state.js");
-    const { getPositionPnl, getMyPositions } = await import("./tools/dlmm.js");
+    const { getPositionPnl, getMyPositions } = await import("./providers/meteora/index.js");
 
     let poolAddress: string | undefined;
     const tracked = getTrackedPosition(positionAddress);
@@ -331,9 +331,9 @@ switch (subcommand) {
 
   // ── candidates ───────────────────────────────────────────────────
   case "candidates": {
-    const { getTopCandidates } = await import("./tools/screening.js");
-    const { getActiveBin } = await import("./tools/dlmm.js");
-    const { getTokenInfo, getTokenHolders, getTokenNarrative } = await import("./tools/token.js");
+    const { getTopCandidates } = await import("./providers/meteora/pool-discovery.js");
+    const { getActiveBin } = await import("./providers/meteora/index.js");
+    const { getTokenInfo, getTokenHolders, getTokenNarrative } = await import("./providers/jupiter/token.js");
     const { checkSmartWalletsOnPool } = await import("./smart-wallets.js");
     const { recallForPool } = await import("./pool-memory.js");
 
@@ -397,7 +397,7 @@ switch (subcommand) {
   case "token-info": {
     const query = flags.query || flags.mint || argv.find((a, i) => !a.startsWith("-") && i > 0 && a !== "token-info");
     if (!query) die("Usage: meridian token-info --query <mint_or_symbol>");
-    const { getTokenInfo } = await import("./tools/token.js");
+    const { getTokenInfo } = await import("./providers/jupiter/token.js");
     out(await getTokenInfo({ query }));
     break;
   }
@@ -406,7 +406,7 @@ switch (subcommand) {
   case "token-holders": {
     const mint = flags.mint || argv.find((a, i) => !a.startsWith("-") && i > 0 && a !== "token-holders");
     if (!mint) die("Usage: meridian token-holders --mint <addr>");
-    const { getTokenHolders } = await import("./tools/token.js");
+    const { getTokenHolders } = await import("./providers/jupiter/token.js");
     const limit = flags.limit ? parseInt(flags.limit) : 20;
     out(await getTokenHolders({ mint, limit }));
     break;
@@ -416,7 +416,7 @@ switch (subcommand) {
   case "token-narrative": {
     const mint = flags.mint || argv.find((a, i) => !a.startsWith("-") && i > 0 && a !== "token-narrative");
     if (!mint) die("Usage: meridian token-narrative --mint <addr>");
-    const { getTokenNarrative } = await import("./tools/token.js");
+    const { getTokenNarrative } = await import("./providers/jupiter/token.js");
     out(await getTokenNarrative({ mint }));
     break;
   }
@@ -424,7 +424,7 @@ switch (subcommand) {
   // ── pool-detail ───────────────────────────────────────────────
   case "pool-detail": {
     if (!flags.pool) die("Usage: meridian pool-detail --pool <addr> [--timeframe 5m]");
-    const { getPoolDetail } = await import("./tools/screening.js");
+    const { getPoolDetail } = await import("./providers/meteora/pool-discovery.js");
     out(await getPoolDetail({ pool_address: flags.pool, timeframe: flags.timeframe || "5m" }));
     break;
   }
@@ -433,7 +433,7 @@ switch (subcommand) {
   case "search-pools": {
     const query = flags.query || argv.find((a, i) => !a.startsWith("-") && i > 0 && a !== "search-pools");
     if (!query) die("Usage: meridian search-pools --query <name_or_symbol>");
-    const { searchPools } = await import("./tools/dlmm.js");
+    const { searchPools } = await import("./providers/meteora/index.js");
     const limit = flags.limit ? parseInt(flags.limit) : 10;
     out(await searchPools({ query, limit }));
     break;
@@ -442,7 +442,7 @@ switch (subcommand) {
   // ── active-bin ────────────────────────────────────────────────
   case "active-bin": {
     if (!flags.pool) die("Usage: meridian active-bin --pool <addr>");
-    const { getActiveBin } = await import("./tools/dlmm.js");
+    const { getActiveBin } = await import("./providers/meteora/index.js");
     out(await getActiveBin({ pool_address: flags.pool }));
     break;
   }
@@ -451,7 +451,7 @@ switch (subcommand) {
   case "wallet-positions": {
     const wallet = flags.wallet || argv.find((a, i) => !a.startsWith("-") && i > 0 && a !== "wallet-positions");
     if (!wallet) die("Usage: meridian wallet-positions --wallet <addr>");
-    const { getWalletPositions } = await import("./tools/dlmm.js");
+    const { getWalletPositions } = await import("./providers/meteora/index.js");
     out(await getWalletPositions({ wallet_address: wallet }));
     break;
   }
@@ -671,7 +671,7 @@ switch (subcommand) {
   case "withdraw-liquidity": {
     if (!flags.position) die("Usage: meridian withdraw-liquidity --position <addr> --pool <addr> [--bps 10000]");
     if (!flags.pool) die("--pool is required");
-    const { withdrawLiquidity } = await import("./tools/dlmm.js") as any;
+    const { withdrawLiquidity } = await import("./providers/meteora/index.js") as any;
     out(await withdrawLiquidity({
       position_address: flags.position,
       pool_address: flags.pool,
@@ -685,7 +685,7 @@ switch (subcommand) {
   case "add-liquidity": {
     if (!flags.position) die("Usage: meridian add-liquidity --position <addr> --pool <addr> [--amount-x <n>] [--amount-y <n>]");
     if (!flags.pool) die("--pool is required");
-    const { addLiquidity } = await import("./tools/dlmm.js") as any;
+    const { addLiquidity } = await import("./providers/meteora/index.js") as any;
     out(await addLiquidity({
       position_address: flags.position,
       pool_address: flags.pool,

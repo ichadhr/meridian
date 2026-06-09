@@ -12,8 +12,8 @@ import {
 } from "@solana/web3.js";
 import BN from "bn.js";
 import bs58 from "bs58";
-import { config, computeDeployAmount, MIN_SAFE_BINS_BELOW } from "../config/index.js";
-import { log } from "../utils/logger.js";
+import { config, computeDeployAmount, MIN_SAFE_BINS_BELOW } from "../../config/index.js";
+import { log } from "../../utils/logger.js";
 import {
   trackPosition,
   markOutOfRange,
@@ -23,16 +23,18 @@ import {
   getTrackedPosition,
   minutesOutOfRange,
   syncOpenPositions,
-} from "../state.js";
-import { trackVirtualPosition } from "./dry-run-state.js";
-import { recordPerformance } from "../lessons.js";
-import { isBaseMintOnCooldown, isPoolOnCooldown } from "../pool-memory.js";
-import { getWalletBalances, normalizeMint, fetchSolPrice } from "./wallet.js";
-import { appendDecision } from "../core/decision-log.js";
-import { estimateDeployGasSol, estimateCloseGasSol, samplePriorityFee } from "./gas-estimator.js";
-import { agentMeridianJson, getAgentIdForRequests, getAgentMeridianHeaders } from "./agent-meridian.js";
-import { getAndClearStagedSignals } from "../core/signal-tracker.js";
-import { mergeVirtualPositions } from "./merge-virtual-positions.js";
+} from "../../state.js";
+import { trackVirtualPosition } from "../../tools/dry-run-state.js";
+import { recordPerformance } from "../../lessons.js";
+import { isBaseMintOnCooldown, isPoolOnCooldown } from "../../pool-memory.js";
+import { fetchSolPrice } from "../jupiter/api.js";
+import { normalizeMint, getConnection, getWallet } from "../solana/wallet.js";
+import { getWalletBalances } from "../solana/balance.js";
+import { appendDecision } from "../../core/decision-log.js";
+import { estimateDeployGasSol, estimateCloseGasSol, samplePriorityFee } from "../solana/gas-estimator.js";
+import { agentMeridianJson, getAgentIdForRequests, getAgentMeridianHeaders } from "../hivemind/index.js";
+import { getAndClearStagedSignals } from "../../core/signal-tracker.js";
+import { mergeVirtualPositions } from "../../tools/merge-virtual-positions.js";
 
 // ─── Transaction reliability infrastructure ──────────────────
 // Priority fee + retry on transient RPC errors. Avoids lost deploys from
@@ -182,26 +184,7 @@ export function decimalPriceToQ64(priceStr: string): BN {
 }
 
 // ─── Lazy wallet/connection init ──────────────────────────────
-let _connection: Connection | null = null;
-let _wallet: Keypair | null = null;
-
-export function getConnection(): Connection {
-  if (!_connection) {
-    _connection = new Connection(process.env.RPC_URL!, "confirmed");
-  }
-  return _connection;
-}
-
-function getWallet(): Keypair {
-  if (!_wallet) {
-    if (!process.env.WALLET_PRIVATE_KEY) {
-      throw new Error("WALLET_PRIVATE_KEY not set");
-    }
-    _wallet = Keypair.fromSecretKey(bs58.decode(process.env.WALLET_PRIVATE_KEY));
-    log("init", `Wallet: ${_wallet.publicKey.toString()}`);
-  }
-  return _wallet;
-}
+// getConnection and getWallet are imported from solana/wallet.js
 
 function shouldUseLpAgentRelay(): boolean {
   return !!config.api.lpAgentRelayEnabled;
@@ -1908,8 +1891,8 @@ export async function getMyPositions({ force = false, silent = false, wallet_add
     let resultPositions = positions;
     if (process.env.DRY_RUN === "true" && useLocalWallet) {
       try {
-        const { listVirtualPositions } = await import("./dry-run-state.js");
-        const { computePositionPnl } = await import("./compute-position-pnl.js");
+        const { listVirtualPositions } = await import("../../tools/dry-run-state.js");
+        const { computePositionPnl } = await import("../../tools/compute-position-pnl.js");
         const vps = listVirtualPositions("open");
         // ALWAYS fetch a real SOL price for computePositionPnl (it needs solPrice
         // to compute USD fields correctly, even when display is in SOL mode).

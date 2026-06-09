@@ -90,8 +90,8 @@ function getToolsForRole(agentType: AgentType, goal: string = ""): any[] {
   if (matched.size === 0) return tools.filter((t: any) => !GENERAL_INTENT_ONLY_TOOLS.has(t.function.name));
   return tools.filter((t: any) => matched.has(t.function.name));
 }
-import { getWalletBalances } from "./tools/wallet.js";
-import { getMyPositions } from "./tools/dlmm.js";
+import { getWalletBalances } from "./providers/solana/index.js";
+import { getMyPositions } from "./providers/meteora/index.js";
 import { log } from "./utils/logger.js";
 import { config } from "./config/index.js";
 import { getStateSummary } from "./state.js";

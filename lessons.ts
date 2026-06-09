@@ -10,7 +10,7 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import { log } from "./utils/logger.js";
-import { getSharedLessonsForPrompt, pushHiveLesson, pushHivePerformanceEvent } from "./hivemind.js";
+import { getSharedLessonsForPrompt, pushHiveLesson, pushHivePerformanceEvent } from "./providers/hivemind/index.js";
 import { loadJsonRecord, saveJsonRecord } from "./config/index.js";
 import type { Config, Lesson, PerformanceRecord, PerformanceSummary, LessonsDB } from "./types/index.js";
 

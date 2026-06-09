@@ -3,7 +3,7 @@
  * Run: npx tsx test/test-screening.ts
  */
 
-import { discoverPools, getPoolDetail } from "../tools/screening.js";
+import { discoverPools, getPoolDetail } from "../providers/meteora/pool-discovery.js";
 
 async function main(): Promise<void> {
   console.log("=== Testing Pool Discovery API ===\n");

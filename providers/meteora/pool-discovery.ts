@@ -1,10 +1,9 @@
-import { config } from "../config/index.js";
-import { isBlacklisted } from "../core/token-blacklist.js";
-import { isDevBlocked, getBlockedDevs } from "../core/token-blacklist.js";
-import { log } from "../utils/logger.js";
-import { isBaseMintOnCooldown, isPoolOnCooldown } from "../pool-memory.js";
-import { confirmIndicatorPreset } from "./chart-indicators.js";
-import { getAgentMeridianBase, getAgentMeridianHeaders } from "./agent-meridian.js";
+import { config } from "../../config/index.js";
+import { isBlacklisted } from "../../core/token-blacklist.js";
+import { isDevBlocked, getBlockedDevs } from "../../core/token-blacklist.js";
+import { log } from "../../utils/logger.js";
+import { isBaseMintOnCooldown, isPoolOnCooldown } from "../../pool-memory.js";
+import { confirmIndicatorPreset, getAgentMeridianBase, getAgentMeridianHeaders } from "../hivemind/index.js";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -71,7 +70,7 @@ interface PoolDiscoveryRecord {
 }
 
 // Re-export the canonical ScreeningConfig from types for local use
-import type { ScreeningConfig } from "../types/index.js";
+import type { ScreeningConfig } from "../../types/index.js";
 
 interface CondensedPool {
   pool: string | undefined;
@@ -774,7 +773,7 @@ export async function discoverPools({
 export async function getTopCandidates({ limit = 10 }: {
   limit?: number;
 } = {}): Promise<GetTopCandidatesResult> {
-  const { config } = await import("../config/index.js");
+  const { config } = await import("../../config/index.js");
   const discovery = await discoverPools({ page_size: 50 });
   const { pools } = discovery;
   const filteredOut: FilteredExample[] = Array.isArray(discovery.filtered_examples) ? [...discovery.filtered_examples] : [];
@@ -782,7 +781,7 @@ export async function getTopCandidates({ limit = 10 }: {
   // Exclude pools where the wallet already has an open position.
   // In DRY_RUN mode, getMyPositions() already includes virtual positions, so
   // occupiedPools / occupiedMints are the single source of truth.
-  const { getMyPositions } = await import("./dlmm.js");
+  const { getMyPositions } = await import("./index.js");
   const { positions } = await getMyPositions() as { positions: Position[] };
   const occupiedPools = new Set(positions.map((p: Position) => p.pool));
   const occupiedMints = new Set(positions.map((p: Position) => p.base_mint).filter(Boolean));
@@ -850,7 +849,7 @@ export async function getTopCandidates({ limit = 10 }: {
 
   // Enrich with OKX data — advanced info (risk/bundle/sniper) + ATH price (no API key required)
   if (eligible.length > 0) {
-    const { getAdvancedInfo, getPriceInfo, getClusterList, getRiskFlags } = await import("./okx.js");
+    const { getAdvancedInfo, getPriceInfo, getClusterList, getRiskFlags } = await import("../okx/index.js");
     const okxResults = await Promise.allSettled(
       eligible.map(async (p) => {
         if (!p.base?.mint) return { adv: null, price: null, clusters: [], risk: null };

@@ -1310,17 +1310,17 @@ After Tasks 1-9, the pattern is established. Each subsequent file follows the sa
 - `tools/merge-virtual-positions.js` → `core/vp/merge.ts` (102 lines)
 
 **Tier 4 — External adapters:**
-- `tools/agent-meridian.js` → `external/lpagent/index.ts` (110 lines)
-- `tools/study.js` → `external/lpagent/study.ts` (152 lines)
-- `tools/token.js` → `external/jupiter/token.ts` (209 lines)
-- `tools/okx.js` → `external/okx/index.ts` (282 lines)
-- `tools/chart-indicators.js` → `external/meteora/indicators.ts` (299 lines)
-- `tools/gas-estimator.js` → `external/meteora/gas.ts` (179 lines)
+- `tools/agent-meridian.js` → `providers/lpagent/index.ts` (110 lines)
+- `tools/study.js` → `providers/lpagent/study.ts` (152 lines)
+- `tools/token.js` → `providers/jupiter/token.ts` (209 lines)
+- `tools/okx.js` → `providers/okx/index.ts` (282 lines)
+- `tools/chart-indicators.js` → `providers/meteora/indicators.ts` (299 lines)
+- `tools/gas-estimator.js` → `providers/meteora/gas.ts` (179 lines)
 
 **Tier 5 — Complex externals:**
-- `tools/wallet.js` → `external/helius/index.ts` + `external/jupiter/index.ts` (314 lines, split)
-- `tools/screening.js` → `external/meteora/pool-discovery.ts` (865 lines)
-- `tools/dlmm.js` → `external/meteora/index.ts` (2653 lines — consider splitting)
+- `tools/wallet.js` → `providers/helius/index.ts` + `providers/jupiter/index.ts` (314 lines, split)
+- `tools/screening.js` → `providers/meteora/pool-discovery.ts` (865 lines)
+- `tools/dlmm.js` → `providers/meteora/index.ts` (2653 lines — consider splitting)
 
 **Tier 6 — Stateful core:**
 - `state.js` → `core/state.ts` (513 lines)
@@ -1339,13 +1339,13 @@ After Tasks 1-9, the pattern is established. Each subsequent file follows the sa
 - `cli.js` → `cli.ts` (676 lines)
 - `setup.js` → `setup.ts` (481 lines)
 - `index.js` → `index.ts` (2250 lines)
-- `hivemind.js` → `external/hivemind/index.ts` (346 lines)
+- `hivemind.js` → `providers/hivemind/index.ts` (346 lines)
 - `discord-listener/index.js` → `bots/discord/index.ts`
 - `discord-listener/pre-checks.js` → `bots/discord/pre-checks.ts`
 
 **Tier 9 — Scripts:**
 - `scripts/envrypt.js` → `utils/envrypt-cli.ts`
-- `scripts/measure-gas.js` → `external/meteora/measure-gas.ts`
+- `scripts/measure-gas.js` → `providers/meteora/measure-gas.ts`
 - `scripts/patch-anchor.js` → `utils/patch-anchor.ts`
 - `scripts/validate-slippage.js` → `core/pnl/validate-slippage.ts`
 
@@ -1354,7 +1354,7 @@ After Tasks 1-9, the pattern is established. Each subsequent file follows the sa
 Before Tier 4+, create the target directories:
 
 ```bash
-mkdir -p external/{meteora,helius,jupiter,okx,lpagent,hivemind}
+mkdir -p providers/{meteora,helius,jupiter,okx,lpagent,hivemind}
 mkdir -p core/vp
 mkdir -p llm
 mkdir -p bots/{tools,discord}

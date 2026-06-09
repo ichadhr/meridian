@@ -1,4 +1,4 @@
-import { agentMeridianJson, getAgentMeridianHeaders } from "./agent-meridian.js";
+import { agentMeridianJson, getAgentMeridianHeaders } from "../providers/hivemind/index.js";
 
 interface TopLpEntry {
   owner: string;

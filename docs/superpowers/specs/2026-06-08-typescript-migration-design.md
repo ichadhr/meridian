@@ -80,12 +80,12 @@ I/O-only files. Each calls exactly one external API/SDK.
 
 | Source | Target | Lines |
 |--------|--------|-------|
-| `tools/agent-meridian.js` | `external/lpagent/index.ts` | 110 |
-| `tools/study.js` | `external/lpagent/study.ts` | 152 |
-| `tools/token.js` | `external/jupiter/token.ts` | 209 |
-| `tools/okx.js` | `external/okx/index.ts` | 282 |
-| `tools/chart-indicators.js` | `external/meteora/indicators.ts` | 299 |
-| `tools/gas-estimator.js` | `external/meteora/gas.ts` | 179 |
+| `tools/agent-meridian.js` | `providers/lpagent/index.ts` | 110 |
+| `tools/study.js` | `providers/lpagent/study.ts` | 152 |
+| `tools/token.js` | `providers/jupiter/token.ts` | 209 |
+| `tools/okx.js` | `providers/okx/index.ts` | 282 |
+| `tools/chart-indicators.js` | `providers/meteora/indicators.ts` | 299 |
+| `tools/gas-estimator.js` | `providers/meteora/gas.ts` | 179 |
 
 ### Phase 6: Complex Externals (6-8 hrs)
 
@@ -93,9 +93,9 @@ The hardest external files.
 
 | Source | Target | Lines |
 |--------|--------|-------|
-| `tools/wallet.js` | `external/helius/index.ts` + `external/jupiter/index.ts` | 314 (split) |
-| `tools/screening.js` | `external/meteora/pool-discovery.ts` | 865 |
-| `tools/dlmm.js` | `external/meteora/index.ts` | 2653 |
+| `tools/wallet.js` | `providers/helius/index.ts` + `providers/jupiter/index.ts` | 314 (split) |
+| `tools/screening.js` | `providers/meteora/pool-discovery.ts` | 865 |
+| `tools/dlmm.js` | `providers/meteora/index.ts` | 2653 |
 
 `dlmm.js` is the largest single file. May need to split during migration.
 
@@ -130,7 +130,7 @@ Migrate last — they import everything.
 | `cli.js` | `cli.ts` | 676 |
 | `setup.js` | `setup.ts` | 481 |
 | `index.js` | `index.ts` | 2250 |
-| `hivemind.js` | `external/hivemind/index.ts` | 346 |
+| `hivemind.js` | `providers/hivemind/index.ts` | 346 |
 | `discord-listener/index.js` | `bots/discord/index.ts` | ~100 |
 | `discord-listener/pre-checks.js` | `bots/discord/pre-checks.ts` | ~100 |
 
@@ -139,7 +139,7 @@ Migrate last — they import everything.
 | Source | Target |
 |--------|--------|
 | `scripts/envrypt.js` | `utils/envrypt-cli.ts` |
-| `scripts/measure-gas.js` | `external/meteora/measure-gas.ts` |
+| `scripts/measure-gas.js` | `providers/meteora/measure-gas.ts` |
 | `scripts/patch-anchor.js` | `utils/patch-anchor.ts` |
 | `scripts/validate-slippage.js` | `core/pnl/validate-slippage.ts` |
 
@@ -198,7 +198,7 @@ Define these as you encounter them during migration. Don't try to define everyth
 
 ## Risk Mitigation
 
-1. **`dlmm.js` (2653 lines)**: Biggest risk. May need to split into multiple files during migration. Consider breaking into `external/meteora/client.ts`, `external/meteora/positions.ts`, `external/meteora/pools.ts`.
+1. **`dlmm.js` (2653 lines)**: Biggest risk. May need to split into multiple files during migration. Consider breaking into `providers/meteora/client.ts`, `providers/meteora/positions.ts`, `providers/meteora/pools.ts`.
 2. **Circular imports**: Watch for `index.js` ↔ `tools/executor.js` ↔ `tools/definitions.js` circular deps. Use type-only imports (`import type`) where possible.
 3. **`any` escape hatches**: Strict mode means no implicit `any`. For genuinely dynamic code (JSON parsing, SDK returns), use explicit `any` with a `// TODO: type properly` comment. Limit to <5 per file.
 4. **Build breakage**: Keep `allowJs: true` in tsconfig until Phase 9. This lets .js files import from .ts files and vice versa.
