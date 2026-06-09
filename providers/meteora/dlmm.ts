@@ -1918,8 +1918,8 @@ export async function getMyPositions({ force = false, silent = false, wallet_add
           const results = await Promise.allSettled(vps.map(async (vp) => {
             const { activeBin, binStep, sParameter, vParameter, bins } = await getBinsInRange({
               pool_address: vp.pool,
-              lower_bin: vp.lower_bin,
-              upper_bin: vp.upper_bin,
+              lower_bin: vp.lower_bin ?? 0,
+              upper_bin: vp.upper_bin ?? 0,
             });
             const poolParams: any = binStep != null && sParameter != null && vParameter != null
               ? { binStep, sParameter, vParameter }

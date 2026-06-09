@@ -132,7 +132,7 @@ function recordVpDeployToPoolMemory(
 
   try {
     recordPoolDeploy(vp.pool, {
-      pool_name: vp.pool_name || vp.pair,
+    pool_name: vp.pool_name ?? vp.pair ?? (undefined as unknown as string),
       base_mint: vp.base_mint ?? undefined,
       deployed_at: vp.deployed_at ?? undefined,
       closed_at: new Date().toISOString(),
@@ -267,7 +267,7 @@ export async function closeVpManual(vpId: string, reason: string): Promise<Close
     position: `vp:${vpId}`,
     pair: vp.pair || vp.pool_name || `vp:${vpId}`,
     pool: vp.pool,
-    pool_name: vp.pool_name || vp.pair,
+    pool_name: vp.pool_name || vp.pair || undefined,
     base_mint: vp.base_mint || undefined,
     pnl_usd: isSol ? finalPnl.netPnlSol : finalPnl.pnlUsd,
     pnl_pct: isSol ? finalPnl.pnlSolPct : finalPnl.pnlPct,

@@ -5,9 +5,14 @@ import {
   dedupeAllArchives,
   ARCHIVE_DIR,
 } from "../archive.js";
+import type { VpPosition } from "../../types/index.js";
+
 const STATE_FILE = "./dry-run-state.json";
 
 // ─── Types ────────────────────────────────────────────────────────────────
+
+/** @deprecated Use VpPosition from types/index.ts instead */
+export type DryRunVirtualPosition = VpPosition;
 
 export interface DryRunState {
   virtual_positions: DryRunVirtualPosition[];
@@ -23,48 +28,6 @@ export interface BinShareEntry {
   feeYPerTokenComplete: string | null;
   xAmount: string | null;
   yAmount: string | null;
-}
-
-export interface DryRunVirtualPosition {
-  id: string;
-  pool: string;
-  pool_name: string | null;
-  pair: string;
-  status: "open" | "closed";
-  deployed_at: string | null;
-  closed_at: string | null;
-  strategy: string;
-  bins_below: number;
-  lower_bin: number;
-  upper_bin: number;
-  active_bin_at_deploy: number;
-  bin_step: number;
-  amount_sol: number;
-  initial_value_usd: number;
-  sol_price_at_deploy: number | null;
-  bin_shares: BinShareEntry[] | null;
-  base_mint: string | null;
-  volatility: number | null;
-  fee_tvl_ratio: unknown;
-  organic_score: unknown;
-  signal_snapshot: Record<string, unknown> | null;
-  deploy_gas_sol: number | null;
-  close_gas_sol: number | null;
-  gas_priority_fee: number | null;
-  gas_cost_sol: number | null;
-  last_sync_at: string | null;
-  _oor_since: string | null;
-  _oor_minutes: number;
-  _peak_pnl_pct: number;
-  _peak_pnl_sol_pct: number;
-  _trailing_active: boolean;
-  _trailing_pending: boolean;
-  _trailing_pending_since: string | null;
-  snapshots: Array<Record<string, unknown>>;
-  close_reason: string | null;
-  close_pnl_usd: number | null;
-  close_pnl_pct: number | null;
-  [key: string]: unknown;
 }
 
 /** Parameters accepted by trackVirtualPosition. */
