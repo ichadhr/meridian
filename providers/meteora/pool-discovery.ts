@@ -782,7 +782,7 @@ export async function getTopCandidates({ limit = 10 }: {
   // In DRY_RUN mode, getMyPositions() already includes virtual positions, so
   // occupiedPools / occupiedMints are the single source of truth.
   const { getMyPositions } = await import("./index.js");
-  const { positions } = await getMyPositions() as { positions: Position[] };
+  const { positions } = await getMyPositions();
   const occupiedPools = new Set(positions.map((p: Position) => p.pool));
   const occupiedMints = new Set(positions.map((p: Position) => p.base_mint).filter(Boolean));
 

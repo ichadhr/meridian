@@ -13,6 +13,7 @@ import {
 import BN from "bn.js";
 import bs58 from "bs58";
 import { config, computeDeployAmount, MIN_SAFE_BINS_BELOW } from "../../config/index.js";
+import type { PositionsResult } from "../../types/index.js";
 import { log } from "../../utils/logger.js";
 import {
   trackPosition,
@@ -1430,9 +1431,9 @@ export function invalidatePositionsCache() {
   _positionsCacheAt = 0;
 }
 
-let _positionsCache: any = null;
+let _positionsCache: PositionsResult | null = null;
 let _positionsCacheAt = 0;
-let _positionsInflight: Promise<any> | null = null; // deduplicates concurrent calls
+let _positionsInflight: Promise<PositionsResult> | null = null; // deduplicates concurrent calls
 const LPAGENT_API = "https://api.lpagent.io/open-api/v1";
 
 /**
@@ -1968,7 +1969,7 @@ export async function getMyPositions({ force = false, silent = false, wallet_add
 }
 
 // ─── Get Positions for Any Wallet ─────────────────────────────
-export async function getWalletPositions({ wallet_address }: { wallet_address: string }): Promise<any> {
+export async function getWalletPositions({ wallet_address }: { wallet_address: string }): Promise<PositionsResult> {
   try {
     const DLMM_PROGRAM = new PublicKey("LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo");
 
@@ -2026,7 +2027,7 @@ export async function getWalletPositions({ wallet_address }: { wallet_address: s
       };
     });
 
-    return { wallet: wallet_address, total_positions: positions.length, positions };
+    return { wallet: wallet_address, total_positions: positions.length, positions: positions as any };
   } catch (error: any) {
     log("wallet_positions_error", error.message);
     return { wallet: wallet_address, total_positions: 0, positions: [], error: error.message };
