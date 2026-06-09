@@ -331,8 +331,8 @@ WARNING: This executes a real on-chain transaction. Cannot be undone.`,
 Use this when the user asks about another wallet's positions, wants to monitor a wallet,
 or wants to copy/compare positions.
 
-Returns the same structure as get_my_positions but for the given wallet:
-position address, pool, bin range, in-range status, unclaimed fees, PnL, age.`,
+Returns open DLMM positions for the given wallet:
+position address, pool, bin range, in-range status, unclaimed fees, PnL, and age.`,
       parameters: {
         type: "object",
         properties: {
