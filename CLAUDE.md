@@ -7,30 +7,55 @@ Autonomous DLMM liquidity provider agent for Meteora pools on Solana.
 ## Architecture Overview
 
 ```
-index.ts            Main entry: REPL + cron orchestration + Telegram bot polling
-agent.ts            ReAct loop (OpenRouter/OpenAI-compatible): LLM → tool call → repeat
-config/index.ts     Runtime config from user-config.json + .env; exposes config object
-prompt.ts           Builds system prompt per agent role (SCREENER / MANAGER / GENERAL)
-state.ts            Position registry (state.json): tracks bin ranges, OOR timestamps, notes
-lessons.ts          Learning engine: records closed-position perf, derives lessons, evolves thresholds
-pool-memory.ts      Per-pool deploy history + snapshots (pool-memory.json)
-strategy-library.ts Saved LP strategies (strategy-library.json)
-core/briefing.ts    Daily Telegram briefing (HTML)
-telegram.ts         Telegram bot: polling, notifications (deploy/close/swap/OOR)
-hivemind.ts         Agent Meridian HiveMind sync
-smart-wallets.ts    KOL/alpha wallet tracker (smart-wallets.json)
-core/token-blacklist.ts Permanent token blacklist (token-blacklist.json)
-utils/logger.ts     Daily-rotating log files + action audit trail
+index.ts              Main entry: REPL + cron orchestration + Telegram bot polling
+cli.ts                CLI utilities (28 subcommands)
+config/index.ts       Runtime config from user-config.json + .env; exposes config object
 
-tools/
-  definitions.ts    Tool schemas in OpenAI format (what LLM sees)
-  executor.ts       Tool dispatch: name → fn, safety checks, pre/post hooks
-  dlmm.ts           Meteora DLMM SDK wrapper (deploy, close, claim, positions, PnL)
-  screening.ts      Pool discovery from Meteora API
-  wallet.ts         SOL/token balances (Helius) + Jupiter swap
-  token.ts          Token info/holders/narrative (Jupiter API)
-  study.ts          Top LPer study via LPAgent API
+core/                 Pure business logic (no direct API calls)
+  index.ts            Public gate — barrel re-export
+  state.ts            Position registry (state.json): tracks bin ranges, OOR timestamps, notes
+  lessons.ts          Learning engine: records closed-position perf, derives lessons, evolves thresholds
+  pool-memory.ts      Per-pool deploy history + snapshots (pool-memory.json)
+  strategy-library.ts Saved LP strategies (strategy-library.json)
+  briefing.ts         Daily Telegram briefing (HTML)
+  token-blacklist.ts  Permanent token blacklist (token-blacklist.json)
+  close-rules.ts      Shared close-rule engine (live + VP)
+  pnl.ts              Shared PnL computation
+  decision-log.ts     Decision audit trail
+  signal-weights.ts   Signal weight management
+  smart-wallets.ts    KOL/alpha wallet tracker
+  live/
+    manage.ts         Live lifecycle management (runManagementCycle)
+    screen.ts         Screening cycle + tryStartScreening
+    cycle-state.ts    Shared mutable state (busy flags, timers)
+  vp/                 Virtual position management
 
+providers/            I/O only — talks to APIs, SDKs, RPCs
+  sdk.ts              Unified provider interface
+  hivemind/           Agent Meridian HiveMind sync
+  jupiter/            Token info + swap execution
+  meteora/            DLMM SDK wrapper + pool discovery
+  okx/                OKX wallet enrichment
+  solana/             RPC connection + wallet operations
+
+interfaces/           Platform communication
+  index.ts            Outbound gate — delegates to telegram
+  telegram/index.ts   Telegram bot: polling, notifications
+  discord/            Discord listener (standalone subprocess)
+
+llm/                  Agent harness — LLM communication layer
+  index.ts            LLM gate — barrel re-export
+  agent.ts            ReAct loop (OpenRouter/OpenAI-compatible): LLM → tool call → repeat
+  prompt.ts           Builds system prompt per agent role (SCREENER / MANAGER / GENERAL)
+  tools/
+    index.ts          Tool system gate
+    definitions.ts    Tool schemas in OpenAI format (what LLM sees)
+    executor.ts       Tool dispatch: name → fn, safety checks, pre/post hooks
+    study.ts          Top LPer study via LPAgent API
+
+utils/
+  logger.ts           Daily-rotating log files + action audit trail
+  text.ts             Text utilities (stripThink, sanitize)
 ```
 
 ---
