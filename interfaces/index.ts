@@ -13,12 +13,12 @@ import * as telegram from "./telegram/index.js";
 export interface DeployNotification {
   pair: string;
   amountSol: number;
-  position: string;
-  tx: string;
-  priceRange: string;
-  rangeCoverage: string;
-  binStep: number;
-  baseFee: number | null;
+  position?: string;
+  tx?: string;
+  priceRange?: { min: number; max: number };
+  rangeCoverage?: { downside_pct: number; upside_pct: number; width_pct: number };
+  binStep?: number;
+  baseFee?: number;
 }
 
 export interface CloseNotification {
