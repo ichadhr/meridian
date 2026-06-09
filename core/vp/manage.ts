@@ -22,6 +22,7 @@ import { getCloseRule } from "../close-rules.js";
 import { computePositionPnl, estimateSlippageLamports } from "../pnl.js";
 import type { PositionPnlResult, BinData } from "../pnl.js";
 import type { DryRunVirtualPosition } from "./state.js";
+import type { VpResult } from "../../types/index.js";
 
 /** Return type from getBinsInRange (dlmm.js is still JS) */
 interface BinsInRangeResult {
@@ -30,28 +31,6 @@ interface BinsInRangeResult {
   sParameter: unknown;
   vParameter: unknown;
   bins: BinData[];
-}
-
-/** Result entry from runVirtualManagementCycle */
-interface VpCycleResult {
-  id: string;
-  pair: string;
-  action: "CLOSED" | "STAY";
-  reason?: string;
-  age_minutes?: number;
-  pnl_pct?: number;
-  pnl_usd?: number;
-  pnl_sol_pct?: number;
-  pnl_sol?: number;
-  il_sol?: number;
-  unclaimed_fees_sol?: number;
-  cost_sol?: number;
-  il_usd?: number;
-  unclaimed_fees_usd?: number;
-  cost_usd?: number;
-  value_sol?: number;
-  value_usd?: number;
-  oor?: string;
 }
 
 /** Return type from closeVpManual */
@@ -302,7 +281,7 @@ export async function closeVpManual(vpId: string, reason: string): Promise<Close
  *
  * @returns Result array with { id, pair, action, ... } for each VP
  */
-export async function runVirtualManagementCycle(): Promise<VpCycleResult[]> {
+export async function runVirtualManagementCycle(): Promise<VpResult[]> {
   const vpList = listVirtualPositions("open");
   if (vpList.length === 0) return [];
 
@@ -320,7 +299,7 @@ export async function runVirtualManagementCycle(): Promise<VpCycleResult[]> {
   }
 
   const mgmtConfig = config.management || {};
-  const results: VpCycleResult[] = [];
+  const results: VpResult[] = [];
   const binCache = new Map<string, Promise<BinsInRangeResult | null>>();
 
   for (const vp of vpList) {
@@ -446,7 +425,7 @@ export async function runVirtualManagementCycle(): Promise<VpCycleResult[]> {
         results.push({
           id: vp.id, pair: vp.pair!, action: "CLOSED", reason: closeReason,
           ...buildCloseResult(finalPnl, vpAgeMinutes),
-        } as VpCycleResult);
+        } as VpResult);
         continue;
       }
 

@@ -220,6 +220,32 @@ export interface WalletPositionsResult {
   error?: string;
 }
 
+/**
+ * Result of a VP management cycle action.
+ * Canonical type — replaces VPResult (manage.ts) and VpCycleResult (vp/manage.ts).
+ */
+export interface VpResult {
+  id?: string;
+  pair: string;
+  action: "CLOSED" | "STAY";
+  reason?: string;
+  age_minutes?: number;
+  pnl_pct?: number;
+  pnl_usd?: number;
+  pnl_sol_pct?: number;
+  pnl_sol?: number;
+  il_sol?: number;
+  unclaimed_fees_sol?: number;
+  cost_sol?: number;
+  il_usd?: number;
+  unclaimed_fees_usd?: number;
+  cost_usd?: number;
+  value_sol?: number;
+  value_usd?: number;
+  oor?: string;
+  [key: string]: any;
+}
+
 // ─── Pool / Screening ──────────────────────────────────────────
 
 export interface PoolCandidate {

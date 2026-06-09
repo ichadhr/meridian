@@ -16,25 +16,10 @@ import { recordPositionSnapshot, recallForPool } from "../pool-memory.js";
 import { runVirtualManagementCycle } from "../vp/manage.js";
 import { stripThink } from "../../utils/text.js";
 import { managementBusy, setManagementBusy, timers } from "./cycle-state.js";
-import type { LivePosition } from "../../types/index.js";
+import type { LivePosition, VpResult } from "../../types/index.js";
 
 // ── Types ─────────────────────────────────────────────────────
 type AnyObj = Record<string, any>;
-
-interface VPResult {
-  action: string;
-  reason?: string;
-  value_sol?: number;
-  value_usd?: number;
-  unclaimed_fees_sol?: number;
-  unclaimed_fees_usd?: number;
-  pnl_sol_pct?: number;
-  pnl_pct?: number;
-  oor?: string;
-  age_minutes?: number;
-  pair: string;
-  [key: string]: any;
-}
 
 /** Dependencies that live in index.ts — avoids circular imports. */
 export interface ManageDeps {
@@ -66,13 +51,13 @@ export async function runManagementCycle(
 
     if (positions.length === 0) {
       // In dry-run mode, we may still have virtual positions to manage
-      const vpEarlyResults: VPResult[] = [];
+      const vpEarlyResults: VpResult[] = [];
       if (process.env.DRY_RUN === "true") {
         try {
-          const results: VPResult[] = await runVirtualManagementCycle();
+          const results: VpResult[] = await runVirtualManagementCycle();
           vpEarlyResults.push(...results);
-          const vpClosed = results.filter((r: VPResult) => r.action === "CLOSED");
-          const vpStay = results.filter((r: VPResult) => r.action === "STAY");
+          const vpClosed = results.filter((r: VpResult) => r.action === "CLOSED");
+          const vpStay = results.filter((r: VpResult) => r.action === "STAY");
           if (results.length > 0) {
             log("cron", `Virtual positions: ${vpStay.length} active, ${vpClosed.length} closed`);
           }
@@ -82,13 +67,13 @@ export async function runManagementCycle(
       }
       let report: string = vpEarlyResults.length > 0 ? "" : "No open positions. Triggering screening cycle.";
       if (vpEarlyResults.length > 0) {
-        const stayResults = vpEarlyResults.filter((r: VPResult) => r.action === "STAY");
+        const stayResults = vpEarlyResults.filter((r: VpResult) => r.action === "STAY");
         const vpTotalVal: number = stayResults.reduce((s, r) => s + (r.value_sol ?? r.value_usd ?? 0), 0);
         const vpTotalFees: number = stayResults.reduce((s, r) => s + (r.unclaimed_fees_sol ?? r.unclaimed_fees_usd ?? 0), 0);
         const cur: string = config.management.solMode ? "◎" : "$";
         const vpSummary: string = `💼 ${stayResults.length} VPs | ${cur} ${vpTotalVal.toFixed(4)} | fees: ${cur} ${vpTotalFees.toFixed(4)}`;
 
-        const vpLines: string = vpEarlyResults.map((r: VPResult) => {
+        const vpLines: string = vpEarlyResults.map((r: VpResult) => {
           const isSol: boolean = !!config.management.solMode;
           const pnlVal: number = isSol ? (r.pnl_sol_pct ?? 0) : (r.pnl_pct ?? 0);
           const isOor: boolean = typeof r.oor === "string" && r.oor !== "IN";
@@ -241,13 +226,13 @@ After executing, write a brief one-line result per position.
     }
 
     // ── Virtual positions management (deterministic, no LLM) ──────
-    const vpResults: VPResult[] = [];
+    const vpResults: VpResult[] = [];
     if (process.env.DRY_RUN === "true") {
       try {
-        const results: VPResult[] = await runVirtualManagementCycle();
+        const results: VpResult[] = await runVirtualManagementCycle();
         vpResults.push(...results);
-        const vpClosed = results.filter((r: VPResult) => r.action === "CLOSED");
-        const vpStay = results.filter((r: VPResult) => r.action === "STAY");
+        const vpClosed = results.filter((r: VpResult) => r.action === "CLOSED");
+        const vpStay = results.filter((r: VpResult) => r.action === "STAY");
         if (results.length > 0) {
           log("cron", `Virtual positions: ${vpStay.length} active, ${vpClosed.length} closed`);
         }
@@ -259,12 +244,12 @@ After executing, write a brief one-line result per position.
     if (liveLivePositionData.length === 0) mgmtReport = "";
 
     if (vpResults.length > 0) {
-      const stayResults = vpResults.filter((r: VPResult) => r.action === "STAY");
+      const stayResults = vpResults.filter((r: VpResult) => r.action === "STAY");
       const vpTotalVal: number = stayResults.reduce((s, r) => s + (r.value_sol ?? r.value_usd ?? 0), 0);
       const vpTotalFees: number = stayResults.reduce((s, r) => s + (r.unclaimed_fees_sol ?? r.unclaimed_fees_usd ?? 0), 0);
       const vpSummary: string = `💼 ${stayResults.length} VPs | ${cur} ${vpTotalVal.toFixed(4)} | fees: ${cur} ${vpTotalFees.toFixed(4)}`;
 
-      const vpLines: string = vpResults.map((r: VPResult) => {
+      const vpLines: string = vpResults.map((r: VpResult) => {
         const isSol: boolean = !!config.management.solMode;
         const pnlVal: number = isSol ? (r.pnl_sol_pct ?? 0) : (r.pnl_pct ?? 0);
         const isOor: boolean = typeof r.oor === "string" && r.oor !== "IN";
