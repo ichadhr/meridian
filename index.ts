@@ -45,30 +45,10 @@ import { closeVpManual } from "./core/vp/manage.js";
 import { generateDryRunReport } from "./core/vp/report.js";
 import { readArchive, compileVpStats } from "./core/archive.js";
 import { managementBusy, setManagementBusy, screeningBusy, setScreeningBusy, timers, peakConfirmTimers, trailingDropConfirmTimers, TRAILING_PEAK_CONFIRM_DELAY_MS, TRAILING_PEAK_CONFIRM_TOLERANCE, TRAILING_DROP_CONFIRM_DELAY_MS, TRAILING_DROP_CONFIRM_TOLERANCE_PCT, pollTriggeredAt, setPollTriggeredAt } from "./core/live/cycle-state.js";
+import type { LivePosition } from "./types/index.js";
 
 // ── Type helpers ──────────────────────────────────────────────
 type AnyObj = Record<string, any>;
-
-interface Position {
-  position: string;
-  pool: string;
-  pair: string;
-  pnl_pct: number | null;
-  pnl_pct_suspicious?: boolean;
-  unclaimed_fees_usd: number;
-  total_value_usd: number;
-  fee_per_tvl_24h: number | null;
-  lower_bin: number;
-  upper_bin: number;
-  active_bin: number | null;
-  minutes_out_of_range: number;
-  in_range: boolean | null;
-  age_minutes: number | null;
-  instruction?: string;
-  pnl_usd?: number;
-  recall?: any;
-  [key: string]: any;
-}
 
 interface VPResult {
   action: string;
@@ -161,7 +141,7 @@ function schedulePeakConfirmation(positionAddress: string): void {
     peakConfirmTimers.delete(positionAddress);
     try {
       const result = await getMyPositions({ force: true, silent: true }).catch(() => null);
-      const position = result?.positions?.find((p: Position) => p.position === positionAddress);
+      const position = result?.positions?.find((p: LivePosition) => p.position === positionAddress);
       resolvePendingPeak(positionAddress, position?.pnl_pct ?? null, TRAILING_PEAK_CONFIRM_TOLERANCE);
     } catch (error: any) {
       log("state_warn", `Peak confirmation failed for ${positionAddress}: ${error.message}`);
@@ -178,7 +158,7 @@ function scheduleTrailingDropConfirmation(positionAddress: string): void {
     trailingDropConfirmTimers.delete(positionAddress);
     try {
       const result = await getMyPositions({ force: true, silent: true }).catch(() => null);
-      const position = result?.positions?.find((p: Position) => p.position === positionAddress);
+      const position = result?.positions?.find((p: LivePosition) => p.position === positionAddress);
       const resolved: any = resolvePendingTrailingDrop(
         positionAddress,
         position?.pnl_pct ?? null,
@@ -910,10 +890,10 @@ async function telegramHandler(msg: TelegramMessage): Promise<void> {
 
   if (text === "/positions") {
     try {
-      const { positions, total_positions }: { positions: Position[]; total_positions: number } = await getMyPositions({ force: true });
+      const { positions, total_positions }: { positions: LivePosition[]; total_positions: number } = await getMyPositions({ force: true });
       if (total_positions === 0) { await sendMessage("No open positions."); return; }
       const cur: string = config.management.solMode ? "◎" : "$";
-      const lines: string[] = positions.map((p: Position, i: number) => {
+      const lines: string[] = positions.map((p: LivePosition, i: number) => {
         const pnlUsd: number = p.pnl_usd ?? 0;
         const pnl: string = pnlUsd >= 0 ? `+${cur} ${pnlUsd}` : `-${cur} ${Math.abs(pnlUsd)}`;
         const age: string = p.age_minutes != null ? `${p.age_minutes}m` : "?";
@@ -943,11 +923,11 @@ async function telegramHandler(msg: TelegramMessage): Promise<void> {
         // Use getMyPositions({force:true}) so the display has FRESH PnL
         // (via Step 3 fresh path) and live in_range — not the stale cached
         // fields. Filter to VPs only.
-        const { positions }: { positions: Position[] } = await getMyPositions({ force: true });
-        const vps: Position[] = positions.filter((p: Position) => p.position?.startsWith("vp:"));
+        const { positions }: { positions: LivePosition[] } = await getMyPositions({ force: true });
+        const vps: LivePosition[] = positions.filter((p: LivePosition) => p.position?.startsWith("vp:"));
         if (vps.length === 0) { await sendMessage("No open virtual positions."); return; }
         const cur: string = config.management.solMode ? "◎" : "$";
-        const lines: string[] = vps.map((pos: Position) => {
+        const lines: string[] = vps.map((pos: LivePosition) => {
           const vpId: string = pos.position.slice(3); // strip "vp:" prefix
           const pnl: string = pos.pnl_pct != null ? `${pos.pnl_pct.toFixed(2)}%` : "?";
           const fees: string = pos.unclaimed_fees_usd != null ? `${cur} ${pos.unclaimed_fees_usd.toFixed(2)}` : "?";
@@ -966,9 +946,9 @@ async function telegramHandler(msg: TelegramMessage): Promise<void> {
   if (poolMatch) {
     try {
       const idx: number = parseInt(poolMatch[1]) - 1;
-      const { positions }: { positions: Position[] } = await getMyPositions({ force: true });
+      const { positions }: { positions: LivePosition[] } = await getMyPositions({ force: true });
       if (idx < 0 || idx >= positions.length) { await sendMessage("Invalid number. Use /positions first."); return; }
-      const pos: Position = positions[idx];
+      const pos: LivePosition = positions[idx];
         await sendMessage([
           `${idx + 1}. ${pos.pair}`,
           `Pool: ${pos.pool}`,
@@ -991,7 +971,7 @@ async function telegramHandler(msg: TelegramMessage): Promise<void> {
   // Routes to closeVirtualPosition for VPs (source: "virtual") and
   // closePosition for live on-chain positions. Returns a unified
   // result shape so the success/failure branches work for both.
-  async function closeTelegramPosition(pos: Position): Promise<any> {
+  async function closeTelegramPosition(pos: LivePosition): Promise<any> {
     const vpId: string | null = parseVirtualPositionAddress(pos.position);
     if (vpId) {
       // closeVpManual does a fresh bin fetch + computePositionPnl — the
@@ -1006,9 +986,9 @@ async function telegramHandler(msg: TelegramMessage): Promise<void> {
   if (closeMatch) {
     try {
       const idx: number = parseInt(closeMatch[1]) - 1;
-      const { positions }: { positions: Position[] } = await getMyPositions({ force: true });
+      const { positions }: { positions: LivePosition[] } = await getMyPositions({ force: true });
       if (idx < 0 || idx >= positions.length) { await sendMessage("Invalid number. Use /positions first."); return; }
-      const pos: Position = positions[idx];
+      const pos: LivePosition = positions[idx];
       await sendMessage(`Closing ${pos.pair}...`);
       const result: any = await closeTelegramPosition(pos);
       if (result.success) {
@@ -1030,7 +1010,7 @@ async function telegramHandler(msg: TelegramMessage): Promise<void> {
 
   if (text === "/closeall") {
     try {
-      const { positions }: { positions: Position[] } = await getMyPositions({ force: true });
+      const { positions }: { positions: LivePosition[] } = await getMyPositions({ force: true });
       if (!positions.length) { await sendMessage("No open positions."); return; }
       await sendMessage(`Closing ${positions.length} position(s)...`);
       const results: string[] = [];
@@ -1062,9 +1042,9 @@ async function telegramHandler(msg: TelegramMessage): Promise<void> {
     try {
       const idx: number = parseInt(setMatch[1]) - 1;
       const note: string = setMatch[2].trim();
-      const { positions }: { positions: Position[] } = await getMyPositions({ force: true });
+      const { positions }: { positions: LivePosition[] } = await getMyPositions({ force: true });
       if (idx < 0 || idx >= positions.length) { await sendMessage("Invalid number. Use /positions first."); return; }
-      const pos: Position = positions[idx];
+      const pos: LivePosition = positions[idx];
       setPositionInstruction(pos.position, note);
       await sendMessage(`✅ Note set for ${pos.pair}:\n"${note}"`);
     } catch (e: any) { await sendMessage(`Error: ${e.message}`).catch(() => {}); }
@@ -1506,8 +1486,8 @@ Focus on: hold duration, entry/exit timing, what win rates look like, whether sc
           // Use getMyPositions({force:true}) so the display has FRESH PnL
           // (via Step 3 fresh path) and live in_range — not the stale cached
           // fields. Filter to VPs only.
-          const { positions }: { positions: Position[] } = await getMyPositions({ force: true });
-          const vps: Position[] = positions.filter((p: Position) => p.position?.startsWith("vp:"));
+          const { positions }: { positions: LivePosition[] } = await getMyPositions({ force: true });
+          const vps: LivePosition[] = positions.filter((p: LivePosition) => p.position?.startsWith("vp:"));
           if (vps.length === 0) {
             console.log("No open virtual positions.\n");
             return;

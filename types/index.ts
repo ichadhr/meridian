@@ -162,18 +162,29 @@ export interface Config {
 
 // ─── Position ──────────────────────────────────────────────────
 
-export interface Position {
+/**
+ * Operational position shape used by the management cycle.
+ * Includes PnL, fees, range state — the canonical type for live position data.
+ */
+export interface LivePosition {
+  position: string;
   pool: string;
-  baseMint: string;
-  quoteMint: string;
-  lowerBin: number;
-  upperBin: number;
-  amount: number;
-  deployed_at?: string;
-  closed?: boolean;
-  closed_at?: string;
-  vp_id?: string;
-  [key: string]: unknown;
+  pair: string;
+  pnl_pct: number | null;
+  pnl_pct_suspicious?: boolean;
+  unclaimed_fees_usd: number;
+  total_value_usd: number;
+  fee_per_tvl_24h: number | null;
+  lower_bin: number;
+  upper_bin: number;
+  active_bin: number | null;
+  minutes_out_of_range: number;
+  in_range: boolean | null;
+  age_minutes: number | null;
+  instruction?: string;
+  pnl_usd?: number;
+  recall?: any;
+  [key: string]: any;
 }
 
 // ─── Pool / Screening ──────────────────────────────────────────

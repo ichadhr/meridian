@@ -16,30 +16,10 @@ import { recordPositionSnapshot, recallForPool } from "../pool-memory.js";
 import { runVirtualManagementCycle } from "../vp/manage.js";
 import { stripThink } from "../../utils/text.js";
 import { managementBusy, setManagementBusy, timers } from "./cycle-state.js";
+import type { LivePosition } from "../../types/index.js";
 
 // ── Types ─────────────────────────────────────────────────────
 type AnyObj = Record<string, any>;
-
-interface Position {
-  position: string;
-  pool: string;
-  pair: string;
-  pnl_pct: number | null;
-  pnl_pct_suspicious?: boolean;
-  unclaimed_fees_usd: number;
-  total_value_usd: number;
-  fee_per_tvl_24h: number | null;
-  lower_bin: number;
-  upper_bin: number;
-  active_bin: number | null;
-  minutes_out_of_range: number;
-  in_range: boolean | null;
-  age_minutes: number | null;
-  instruction?: string;
-  pnl_usd?: number;
-  recall?: any;
-  [key: string]: any;
-}
 
 interface VPResult {
   action: string;
@@ -75,7 +55,7 @@ export async function runManagementCycle(
   timers.managementLastRun = Date.now();
   log("cron", "Starting management cycle");
   let mgmtReport: string | null = null;
-  let positions: Position[] = [];
+  let positions: LivePosition[] = [];
   let liveMessage: any = null;
   try {
     if (!silent && telegramEnabled()) {
@@ -135,15 +115,15 @@ export async function runManagementCycle(
     }
 
     // Snapshot + load pool memory.
-    const positionData: Position[] = positions.map((p: Position) => {
+    const positionData: LivePosition[] = positions.map((p: LivePosition) => {
       recordPositionSnapshot(p.pool, p as any);
       return { ...p, recall: recallForPool(p.pool) };
     });
-    const livePositionData: Position[] = positionData.filter((p: Position) => !p.position?.startsWith?.("vp:"));
+    const liveLivePositionData: LivePosition[] = positionData.filter((p: LivePosition) => !p.position?.startsWith?.("vp:"));
 
     // JS trailing TP check (live positions only)
     const exitMap: Map<string, string> = new Map();
-    for (const p of livePositionData) {
+    for (const p of liveLivePositionData) {
       if (
         !p.pnl_pct_suspicious &&
         queuePeakConfirmation(p.position, p.pnl_pct as number, { immediate: !deps.shouldUsePnlRecheck() }) &&
@@ -166,7 +146,7 @@ export async function runManagementCycle(
 
     // ── Deterministic rule checks (no LLM) ──────────────────────────
     const actionMap: Map<string, AnyObj> = new Map();
-    for (const p of livePositionData) {
+    for (const p of liveLivePositionData) {
       if (exitMap.has(p.position)) {
         actionMap.set(p.position, { action: "CLOSE", rule: "exit", reason: exitMap.get(p.position) });
         continue;
@@ -189,10 +169,10 @@ export async function runManagementCycle(
     }
 
     // ── Build JS report (live positions only) ──
-    const totalValue: number = livePositionData.reduce((s, p) => s + (p.total_value_usd ?? 0), 0);
-    const totalUnclaimed: number = livePositionData.reduce((s, p) => s + (p.unclaimed_fees_usd ?? 0), 0);
+    const totalValue: number = liveLivePositionData.reduce((s, p) => s + (p.total_value_usd ?? 0), 0);
+    const totalUnclaimed: number = liveLivePositionData.reduce((s, p) => s + (p.unclaimed_fees_usd ?? 0), 0);
 
-    const reportLines: string[] = livePositionData.map((p: Position) => {
+    const reportLines: string[] = liveLivePositionData.map((p: LivePosition) => {
       const act: AnyObj = actionMap.get(p.position)!;
       const inRange = p.in_range === true ? "🟢 IN" : p.in_range === false ? `🔴 OOR ${p.minutes_out_of_range ?? 0}m` : "??";
       const val = config.management.solMode ? `◎ ${p.total_value_usd ?? "?"}` : `$ ${p.total_value_usd ?? "?"}`;
@@ -213,18 +193,18 @@ export async function runManagementCycle(
 
     const cur: string = config.management.solMode ? "◎" : "$";
     mgmtReport = reportLines.join("\n\n") +
-      `\n\nSummary: 💼 ${livePositionData.length} positions | ${cur} ${totalValue.toFixed(4)} | fees: ${cur} ${totalUnclaimed.toFixed(4)} | ${actionSummary}`;
+      `\n\nSummary: 💼 ${liveLivePositionData.length} positions | ${cur} ${totalValue.toFixed(4)} | fees: ${cur} ${totalUnclaimed.toFixed(4)} | ${actionSummary}`;
 
     // ── Call LLM only if action needed (live positions only) ─────────
-    const actionPositions: Position[] = livePositionData.filter((p: Position) => {
+    const actionLivePositions: LivePosition[] = liveLivePositionData.filter((p: LivePosition) => {
       const a: AnyObj = actionMap.get(p.position)!;
       return a.action !== "STAY";
     });
 
-    if (actionPositions.length > 0) {
-      log("cron", `Management: ${actionPositions.length} action(s) needed — invoking LLM [model: ${config.llm.managementModel}]`);
+    if (actionLivePositions.length > 0) {
+      log("cron", `Management: ${actionLivePositions.length} action(s) needed — invoking LLM [model: ${config.llm.managementModel}]`);
 
-      const actionBlocks: string = actionPositions.map((p: Position) => {
+      const actionBlocks: string = actionLivePositions.map((p: LivePosition) => {
         const act: AnyObj = actionMap.get(p.position)!;
         return [
           `POSITION: ${p.pair} (${p.position})`,
@@ -237,7 +217,7 @@ export async function runManagementCycle(
       }).join("\n\n");
 
       const { content }: { content: string } = await agentLoop(`
-MANAGEMENT ACTION REQUIRED — ${actionPositions.length} position(s)
+MANAGEMENT ACTION REQUIRED — ${actionLivePositions.length} position(s)
 
 ${actionBlocks}
 
@@ -276,7 +256,7 @@ After executing, write a brief one-line result per position.
       }
     }
 
-    if (livePositionData.length === 0) mgmtReport = "";
+    if (liveLivePositionData.length === 0) mgmtReport = "";
 
     if (vpResults.length > 0) {
       const stayResults = vpResults.filter((r: VPResult) => r.action === "STAY");
@@ -307,8 +287,8 @@ After executing, write a brief one-line result per position.
     }
 
     // Trigger screening after management
-    const afterPositions: any = await getMyPositions({ force: true }).catch(() => null);
-    const afterCount: number = afterPositions?.positions?.length ?? 0;
+    const afterLivePositions: any = await getMyPositions({ force: true }).catch(() => null);
+    const afterCount: number = afterLivePositions?.positions?.length ?? 0;
     if (afterCount < config.risk.maxPositions) {
       deps.tryStartScreening("mgmt-post-management");
     }
