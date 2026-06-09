@@ -5,11 +5,11 @@
  * Extracted from index.ts to separate cycle logic from REPL/Telegram wiring.
  */
 
-import { agentLoop } from "../../agent.js";
+import { agentLoop } from "../../llm/index.js";
 import { log } from "../../utils/logger.js";
 import { getMyPositions } from "../../providers/meteora/index.js";
 import { config } from "../../config/index.js";
-import { sendLongMessage, notifyOutOfRange, isEnabled as telegramEnabled, createLiveMessage } from "../../telegram.js";
+import { sendLongMessage, notifyOutOfRange, isEnabled as telegramEnabled, createLiveMessage } from "../../interfaces/index.js";
 import { getCloseRule } from "../close-rules.js";
 import { updatePnlAndCheckExits, queuePeakConfirmation, queueTrailingDropConfirmation } from "../state.js";
 import { recordPositionSnapshot, recallForPool } from "../pool-memory.js";

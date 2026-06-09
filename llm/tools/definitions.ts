@@ -14,7 +14,7 @@ interface ToolParameters {
   additionalProperties?: boolean;
 }
 
-interface ToolDefinition {
+export interface ToolDefinition {
   type: "function";
   function: {
     name: string;

@@ -1,7 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
-import { log } from "./utils/logger.js";
+import { log } from "../../utils/logger.js";
 
 const USER_CONFIG_PATH = path.join(process.cwd(), "user-config.json");
 

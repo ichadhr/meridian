@@ -5,14 +5,14 @@
  * Extracted from index.ts to separate cycle logic from REPL/Telegram wiring.
  */
 
-import { agentLoop } from "../../agent.js";
+import { agentLoop } from "../../llm/index.js";
 import { log } from "../../utils/logger.js";
 import { getMyPositions } from "../../providers/meteora/index.js";
 import { getWalletBalances } from "../../providers/solana/index.js";
 import { getTopCandidates } from "../../providers/meteora/pool-discovery.js";
 import { getActiveBin } from "../../providers/meteora/index.js";
 import { config, computeDeployAmount } from "../../config/index.js";
-import { sendLongMessage, isEnabled as telegramEnabled, createLiveMessage } from "../../telegram.js";
+import { sendLongMessage, isEnabled as telegramEnabled, createLiveMessage } from "../../interfaces/index.js";
 import { checkSmartWalletsOnPool } from "../smart-wallets.js";
 import { getTokenNarrative, getTokenInfo } from "../../providers/jupiter/index.js";
 import { stageSignals } from "../signal-tracker.js";

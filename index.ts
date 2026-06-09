@@ -8,14 +8,14 @@ import cron from "node-cron";
 import readline from "readline";
 import path from "path";
 import { fileURLToPath } from "url";
-import { agentLoop } from "./agent.js";
+import { agentLoop } from "./llm/index.js";
 import { log } from "./utils/logger.js";
 import { getMyPositions, closePosition, getActiveBin, invalidatePositionsCache } from "./providers/meteora/index.js";
 import { getWalletBalances } from "./providers/solana/index.js";
 import { getTopCandidates } from "./providers/meteora/index.js";
 import { config, reloadScreeningThresholds, computeDeployAmount } from "./config/index.js";
 import { evolveThresholds, getPerformanceSummary } from "./core/lessons.js";
-import { executeTool, registerCronRestarter, registerScreeningTrigger } from "./tools/executor.js";
+import { executeTool, registerCronRestarter, registerScreeningTrigger } from "./llm/index.js";
 import {
   startPolling,
   stopPolling,
@@ -29,7 +29,7 @@ import {
   notifyOutOfRange,
   isEnabled as telegramEnabled,
   createLiveMessage,
-} from "./telegram.js";
+} from "./interfaces/index.js";
 import { generateBriefing, runManagementCycle, tryStartScreening, runScreeningCycle, getLoneCandidateSkipReason } from "./core/index.js";
 import { stripThink } from "./utils/text.js";
 import { getLastBriefingDate, setLastBriefingDate, getTrackedPosition, getTrackedPositions, setPositionInstruction, updatePnlAndCheckExits, queuePeakConfirmation, resolvePendingPeak, queueTrailingDropConfirmation, resolvePendingTrailingDrop } from "./core/state.js";

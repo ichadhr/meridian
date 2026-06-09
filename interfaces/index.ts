@@ -4,12 +4,9 @@
  * The ONLY file imported from outside interfaces/ for sending messages.
  * All outbound notifications go through here — ensures consistent format
  * and routes to the correct active platform(s).
- *
- * During migration, platform imports will be wired incrementally as files move into interfaces/.
  */
 
-// --- Platform imports (wire as platforms migrate) ---
-// import * as telegram from "./telegram/index.js";
+import * as telegram from "./telegram/index.js";
 
 // --- Types ---
 
@@ -43,47 +40,52 @@ export interface OutOfRangeNotification {
   minutesOOR: number;
 }
 
-// --- Notification functions ---
+// --- Notification functions (delegate to telegram) ---
 
-export async function notifyDeploy(data: DeployNotification): Promise<void> {
-  // TODO: wire when telegram migrates
-  // if (telegram.isEnabled()) await telegram.notifyDeployTelegram(data);
-  console.log(`[interfaces] Deploy: ${data.pair}`);
+export async function notifyDeploy(...args: Parameters<typeof telegram.notifyDeploy>): Promise<void> {
+  return telegram.notifyDeploy(...args);
 }
 
-export async function notifyClose(data: CloseNotification): Promise<void> {
-  // TODO: wire when telegram migrates
-  console.log(`[interfaces] Close: ${data.pair}`);
+export async function notifyClose(...args: Parameters<typeof telegram.notifyClose>): Promise<void> {
+  return telegram.notifyClose(...args);
 }
 
-export async function notifySwap(data: SwapNotification): Promise<void> {
-  // TODO: wire when telegram migrates
-  console.log(`[interfaces] Swap: ${data.inputSymbol} → ${data.outputSymbol}`);
+export async function notifySwap(...args: Parameters<typeof telegram.notifySwap>): Promise<void> {
+  return telegram.notifySwap(...args);
 }
 
-export async function notifyOutOfRange(data: OutOfRangeNotification): Promise<void> {
-  // TODO: wire when telegram migrates
-  console.log(`[interfaces] OOR: ${data.pair}`);
+export async function notifyOutOfRange(...args: Parameters<typeof telegram.notifyOutOfRange>): Promise<void> {
+  return telegram.notifyOutOfRange(...args);
 }
 
-// --- Messaging primitives ---
+// --- Messaging primitives (delegate to telegram) ---
 
-export async function sendMessage(text: string): Promise<void> {
-  // TODO: wire when telegram migrates
-  console.log(`[interfaces] ${text}`);
+export async function sendMessage(...args: Parameters<typeof telegram.sendMessage>): Promise<void> {
+  return telegram.sendMessage(...args);
 }
 
-export async function sendHTML(html: string): Promise<void> {
-  // TODO: wire when telegram migrates
-  console.log(`[interfaces] ${html}`);
+export async function sendHTML(...args: Parameters<typeof telegram.sendHTML>): Promise<void> {
+  return telegram.sendHTML(...args);
 }
 
-export async function sendLongMessage(text: string): Promise<void> {
-  // TODO: wire when telegram migrates
-  console.log(`[interfaces] ${text}`);
+export async function sendLongMessage(...args: Parameters<typeof telegram.sendLongMessage>): Promise<void> {
+  return telegram.sendLongMessage(...args);
 }
 
-export async function isEnabled(): Promise<boolean> {
-  // TODO: wire when telegram migrates
-  return false;
+export function isEnabled(): boolean {
+  return telegram.isEnabled();
 }
+
+// --- Re-export additional telegram functions used by consumers ---
+
+export {
+  sendMessageWithButtons,
+  sendDocument,
+  editMessage,
+  editMessageWithButtons,
+  answerCallbackQuery,
+  hasActiveLiveMessage,
+  createLiveMessage,
+  startPolling,
+  stopPolling,
+} from "./telegram/index.js";

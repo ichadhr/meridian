@@ -90,13 +90,13 @@ function getToolsForRole(agentType: AgentType, goal: string = ""): any[] {
   if (matched.size === 0) return tools.filter((t: any) => !GENERAL_INTENT_ONLY_TOOLS.has(t.function.name));
   return tools.filter((t: any) => matched.has(t.function.name));
 }
-import { getWalletBalances } from "./providers/solana/index.js";
-import { getMyPositions } from "./providers/meteora/index.js";
-import { log } from "./utils/logger.js";
-import { config } from "./config/index.js";
-import { getStateSummary } from "./core/state.js";
-import { getLessonsForPrompt, getPerformanceSummary } from "./core/lessons.js";
-import { getDecisionSummary } from "./core/index.js";
+import { getWalletBalances } from "../providers/solana/index.js";
+import { getMyPositions } from "../providers/meteora/index.js";
+import { log } from "../utils/logger.js";
+import { config } from "../config/index.js";
+import { getStateSummary } from "../core/state.js";
+import { getLessonsForPrompt, getPerformanceSummary } from "../core/lessons.js";
+import { getDecisionSummary } from "../core/index.js";
 
 // Supports OpenRouter (default) or any OpenAI-compatible local server (e.g. LM Studio)
 // To use LM Studio: set LLM_BASE_URL=http://localhost:1234/v1 and LLM_API_KEY=lm-studio in .env
@@ -144,13 +144,13 @@ function isSystemRoleError(error: any): boolean {
   return /invalid message role:\s*system/i.test(message);
 }
 
-interface AgentLoopOptions {
+export interface AgentLoopOptions {
   interactive?: boolean;
   onToolStart?: ((event: { name: string; args: any; step: number }) => void) | null;
   onToolFinish?: ((event: { name: string; args: any; result: any; success: boolean; step: number }) => void) | null;
 }
 
-interface AgentLoopResult {
+export interface AgentLoopResult {
   content: string;
   userMessage: string;
 }
@@ -182,12 +182,12 @@ export async function agentLoop(
   let virtualDigest: any = null;
   if (agentType === "SCREENER") {
     try {
-      const { getWeightsSummary } = await import("./core/signal-weights.js");
-      const { config } = await import("./config/index.js");
+      const { getWeightsSummary } = await import("../core/signal-weights.js");
+      const { config } = await import("../config/index.js");
       if ((config as any).darwin?.enabled) weightsSummary = (getWeightsSummary as any)();
     } catch { /* signal-weights not critical */ }
     try {
-      const { generateVirtualDigest } = await import("./core/vp/digest.js");
+      const { generateVirtualDigest } = await import("../core/vp/digest.js");
       virtualDigest = await (generateVirtualDigest as any)();
     } catch { /* virtual-digest not critical */ }
   }

@@ -462,7 +462,7 @@ switch (subcommand) {
     const amountX = flags["amount-x"] ? parseFloat(flags["amount-x"]) : undefined;
     if (!flags.amount && !amountX) die("--amount or --amount-x is required");
 
-    const { executeTool } = await import("./tools/executor.js");
+    const { executeTool } = await import("./llm/tools/executor.js");
     out(await executeTool("deploy_position", {
       pool_address: flags.pool,
       amount_y: flags.amount ? parseFloat(flags.amount) : undefined,
@@ -479,7 +479,7 @@ switch (subcommand) {
   // ── claim ────────────────────────────────────────────────────────
   case "claim": {
     if (!flags.position) die("Usage: meridian claim --position <addr>");
-    const { executeTool } = await import("./tools/executor.js");
+    const { executeTool } = await import("./llm/tools/executor.js");
     out(await executeTool("claim_fees", { position_address: flags.position }));
     break;
   }
@@ -487,7 +487,7 @@ switch (subcommand) {
   // ── close ────────────────────────────────────────────────────────
   case "close": {
     if (!flags.position) die("Usage: meridian close --position <addr>");
-    const { executeTool } = await import("./tools/executor.js");
+    const { executeTool } = await import("./llm/tools/executor.js");
     out(await executeTool("close_position", {
       position_address: flags.position,
       skip_swap: flags["skip-swap"] ?? false,
@@ -498,7 +498,7 @@ switch (subcommand) {
   // ── swap ─────────────────────────────────────────────────────────
   case "swap": {
     if (!flags.from || !flags.to || !flags.amount) die("Usage: meridian swap --from <mint> --to <mint> --amount <n>");
-    const { executeTool } = await import("./tools/executor.js");
+    const { executeTool } = await import("./llm/tools/executor.js");
     out(await executeTool("swap_token", {
       input_mint: flags.from,
       output_mint: flags.to,
@@ -539,7 +539,7 @@ switch (subcommand) {
       if (!key || rawVal === undefined) die("Usage: meridian config set <key> <value>");
       let value: any = rawVal;
       try { value = JSON.parse(rawVal); } catch { /* keep as string */ }
-      const { executeTool } = await import("./tools/executor.js");
+      const { executeTool } = await import("./llm/tools/executor.js");
       out(await executeTool("update_config", { changes: { [key]: value }, reason: "CLI config set" }));
     } else {
       die(`Unknown config subcommand: ${sub2}. Use: get, set`);
@@ -550,7 +550,7 @@ switch (subcommand) {
   // ── study ────────────────────────────────────────────────────────
   case "study": {
     if (!flags.pool) die("Usage: meridian study --pool <addr> [--limit 4]");
-    const { studyTopLPers } = await import("./tools/study.js");
+    const { studyTopLPers } = await import("./llm/tools/study.js");
     const limit = flags.limit ? parseInt(flags.limit) : 4;
     out(await studyTopLPers({ pool_address: flags.pool, limit }));
     break;
