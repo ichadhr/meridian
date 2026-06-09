@@ -5,7 +5,8 @@ import { fileURLToPath } from "url";
 import type { Config } from "../types/index.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const USER_CONFIG_PATH = path.join(process.cwd(), "user-config.json");
+const PROJECT_ROOT = path.resolve(__dirname, "../..");
+const USER_CONFIG_PATH = path.join(PROJECT_ROOT, "user-config.json");
 const DEFAULT_HIVEMIND_URL = "https://api.agentmeridian.xyz";
 const DEFAULT_AGENT_MERIDIAN_API_URL = "https://api.agentmeridian.xyz/api";
 const DEFAULT_AGENT_MERIDIAN_PUBLIC_KEY = "bWVyaWRpYW4taXMtdGhlLWJlc3QtYWdlbnRz";

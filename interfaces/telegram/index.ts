@@ -3,7 +3,9 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { log } from "../../utils/logger.js";
 
-const USER_CONFIG_PATH = path.join(process.cwd(), "user-config.json");
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const PROJECT_ROOT = path.resolve(__dirname, "../..");
+const USER_CONFIG_PATH = path.join(PROJECT_ROOT, "user-config.json");
 
 const TOKEN = process.env.TELEGRAM_BOT_TOKEN || null;
 const BASE = TOKEN ? `https://api.telegram.org/bot${TOKEN}` : null;
