@@ -1,16 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import fs from "fs";
-import path from "path";
-
-// Mock state.json path to avoid touching real file
-const MOCK_STATE = path.join(process.cwd(), ".test-state.json");
-
-vi.mock("../core/state.js", async () => {
-  const actual = await vi.importActual("../core/state.js");
-  return actual;
-});
-
-// We need to test the actual functions, so let's use a temp file
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import {
   trackPosition,
   markOutOfRange,
@@ -24,6 +12,7 @@ import {
   queueTrailingDropConfirmation,
   resolvePendingTrailingDrop,
   getTrackedPosition,
+  getTrackedPositions,
 } from "../core/state.js";
 
 describe("State machine — trailing TP", () => {
@@ -268,5 +257,26 @@ describe("State machine — position lifecycle", () => {
     const pos = getTrackedPosition(POS);
     expect(pos?.closed).toBe(true);
     expect(pos?.closed_at).not.toBeNull();
+  });
+
+  it("returns null for nonexistent position", () => {
+    const pos = getTrackedPosition("nonexistent-id");
+    expect(pos).toBeNull();
+  });
+
+  it("getTrackedPositions openOnly excludes closed", () => {
+    trackPosition({
+      position: POS,
+      pool: "test-pool",
+      amount_sol: 0.5,
+    });
+    const before = getTrackedPositions(true);
+    const hadOpen = before.some((p) => p.position === POS);
+    recordClose(POS, "test cleanup");
+    const after = getTrackedPositions(true);
+    const hasOpen = after.some((p) => p.position === POS);
+    // Should have been open before close, closed after
+    expect(hadOpen).toBe(true);
+    expect(hasOpen).toBe(false);
   });
 });

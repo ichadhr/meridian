@@ -1,18 +1,7 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import fs from "fs";
-import path from "path";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { config } from "../config/index.js";
-
-// Mock user-config.json to avoid touching real file
-const MOCK_USER_CONFIG = path.join(process.cwd(), ".test-user-config.json");
-
-vi.mock("../core/lessons.js", async () => {
-  const actual = await vi.importActual("../core/lessons.js");
-  return actual;
-});
-
 import { evolveThresholds, addLesson, listLessons, clearAllLessons } from "../core/lessons.js";
-import type { Config, PerformanceRecord } from "../types/index.js";
+import type { PerformanceRecord } from "../types/index.js";
 
 describe("evolveThresholds", () => {
   const originalConfig = JSON.parse(JSON.stringify(config));
@@ -70,10 +59,11 @@ describe("evolveThresholds", () => {
       { pool: "l3", pnl_pct: -4, fee_tvl_ratio: 0.1, organic_score: 70 } as PerformanceRecord,
     ];
     const result = evolveThresholds(perf, config);
-    // Fees are identical between winners and losers — no reason to evolve
-    if (result?.changes.minFeeActiveTvlRatio) {
-      // If it changed, it should only be a tiny nudge (within MAX_CHANGE_PER_STEP)
-      const change = Math.abs(result.changes.minFeeActiveTvlRatio - 0.05);
+    // Fees are identical between winners and losers — no strong signal
+    // Result may be null or have empty changes
+    if (result) {
+      // If it changed, the change should be minimal (within MAX_CHANGE_PER_STEP = 0.20)
+      const change = Math.abs((result.changes.minFeeActiveTvlRatio ?? 0.05) - 0.05);
       expect(change).toBeLessThan(0.02);
     }
   });
@@ -90,10 +80,9 @@ describe("evolveThresholds", () => {
     ];
     const result = evolveThresholds(perf, config);
     if (result?.changes.minFeeActiveTvlRatio) {
-      // Should not jump more than 20% in one step
-      const maxAllowed = config.screening.minFeeActiveTvlRatio * 1.2;
-      // The value might already be higher due to previous test runs, so just check it's reasonable
-      expect(result.changes.minFeeActiveTvlRatio).toBeLessThanOrEqual(2.0);
+      // MAX_CHANGE_PER_STEP = 0.20, so max change = 0.05 * 0.20 = 0.01
+      const maxAllowed = 0.05 * 1.20; // 20% step from current
+      expect(result.changes.minFeeActiveTvlRatio).toBeLessThanOrEqual(maxAllowed);
     }
   });
 });
