@@ -30,7 +30,7 @@ export interface DryRunVirtualPosition {
   pool: string;
   pool_name: string | null;
   pair: string;
-  status: string;
+  status: "open" | "closed";
   deployed_at: string | null;
   closed_at: string | null;
   strategy: string;

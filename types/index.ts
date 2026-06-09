@@ -246,6 +246,53 @@ export interface VpResult {
   [key: string]: any;
 }
 
+/**
+ * Virtual position state (paper trading).
+ * Canonical type — replaces DryRunVirtualPosition (vp/state.ts).
+ */
+export interface VpPosition {
+  id: string;
+  pool: string;
+  pool_name?: string | null;
+  pair?: string | null;
+  status: "open" | "closed";
+  deployed_at: string | null;
+  closed_at: string | null;
+  strategy?: string;
+  bins_below?: number;
+  lower_bin?: number;
+  upper_bin?: number;
+  active_bin_at_deploy?: number;
+  bin_step?: number;
+  amount_sol?: number;
+  initial_value_usd?: number | null;
+  sol_price_at_deploy?: number | null;
+  bin_shares?: any[] | null;
+  base_mint?: string | null;
+  volatility?: number | null;
+  fee_tvl_ratio?: unknown;
+  organic_score?: unknown;
+  signal_snapshot?: Record<string, unknown> | null;
+  deploy_gas_sol?: number | null;
+  close_gas_sol?: number | null;
+  gas_priority_fee?: number | null;
+  gas_cost_sol?: number | null;
+  last_sync_at?: string | null;
+  _oor_since?: string | null;
+  _oor_minutes?: number;
+  _peak_pnl_pct?: number;
+  _peak_pnl_sol_pct?: number;
+  _trailing_active?: boolean;
+  _trailing_pending?: boolean;
+  _trailing_pending_since?: string | null;
+  snapshots?: Array<Record<string, unknown>>;
+  close_reason?: string | null;
+  close_pnl_usd?: number | null;
+  close_pnl_pct?: number | null;
+  close_fees_usd?: number | null;
+  [key: string]: any;
+}
+
 // ─── Pool / Screening ──────────────────────────────────────────
 
 export interface PoolCandidate {

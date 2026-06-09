@@ -21,8 +21,7 @@ import { estimateCloseGasSol, samplePriorityFee } from "../../providers/solana/g
 import { getCloseRule } from "../close-rules.js";
 import { computePositionPnl, estimateSlippageLamports } from "../pnl.js";
 import type { PositionPnlResult, BinData } from "../pnl.js";
-import type { DryRunVirtualPosition } from "./state.js";
-import type { VpResult } from "../../types/index.js";
+import type { VpPosition, VpResult } from "../../types/index.js";
 
 /** Return type from getBinsInRange (dlmm.js is still JS) */
 interface BinsInRangeResult {
@@ -39,7 +38,7 @@ interface CloseManualResult {
   error?: string;
   dry_run?: true;
   is_virtual?: true;
-  vp?: DryRunVirtualPosition;
+  vp?: VpPosition;
   finalPnl?: PositionPnlResult;
   pnl_usd?: number;
   pnl_pct?: number;
@@ -79,7 +78,7 @@ async function getFreshCloseGasSol(cycleCloseGasSol: number, vpId: string): Prom
  * decisions would diverge from the display.
  */
 function buildPosForRule(
-  vp: DryRunVirtualPosition,
+  vp: VpPosition,
   updates: Record<string, unknown>,
   pnl: PositionPnlResult,
   activeBin: number,
@@ -118,7 +117,7 @@ function buildCloseResult(
  * Populates pool-memory.json so the SCREENER can skip pools with past losses.
  */
 function recordVpDeployToPoolMemory(
-  vp: DryRunVirtualPosition,
+  vp: VpPosition,
   pnl: PositionPnlResult,
   closeReason: string,
   effectiveOorMinutes: number,
@@ -143,8 +142,8 @@ function recordVpDeployToPoolMemory(
       minutes_held: minutesHeld,
       fees_earned_usd: pnl.unclaimedFeesUsd,
       fees_earned_sol: pnl.unclaimedFeesSol,
-      fee_earned_pct: vp.initial_value_usd > 0
-        ? ((pnl.unclaimedFeesUsd || 0) / vp.initial_value_usd) * 100
+      fee_earned_pct: (vp.initial_value_usd ?? 0) > 0
+        ? ((pnl.unclaimedFeesUsd || 0) / vp.initial_value_usd!) * 100
         : undefined,
       close_reason: closeReason,
       strategy: vp.strategy,
@@ -162,7 +161,7 @@ function recordVpDeployToPoolMemory(
  * and trailing-TP close paths.
  */
 async function closeVpAndRecord(
-  vp: DryRunVirtualPosition,
+  vp: VpPosition,
   reason: string,
   bins: BinData[],
   solPrice: number,
