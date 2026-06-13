@@ -13,7 +13,7 @@ import { log } from "./utils/logger.js";
 import { getMyPositions, closePosition, getActiveBin, invalidatePositionsCache } from "./providers/meteora/index.js";
 import { getWalletBalances } from "./providers/solana/index.js";
 import { getTopCandidates } from "./providers/meteora/index.js";
-import { config, reloadScreeningThresholds, computeDeployAmount, computeBinsBelow } from "./config/index.js";
+import { config, reloadScreeningThresholds, computeDeployAmount, computeBinsBelow, initProviders } from "./config/index.js";
 import { evolveThresholds, getPerformanceSummary } from "./core/index.js";
 import { executeTool, registerCronRestarter, registerScreeningTrigger } from "./llm/index.js";
 import {
@@ -97,7 +97,7 @@ const isMain: boolean = entrypointPath
 if (isMain) {
   log("startup", "DLMM LP Agent starting...");
   log("startup", `Mode: ${process.env.DRY_RUN === "true" ? "DRY RUN" : "LIVE"}`);
-  log("startup", `Model: ${process.env.LLM_MODEL || "hermes-3-405b"}`);
+  initProviders();
   ensureAgentId();
   bootstrapHiveMind().catch((error: Error) => log("hivemind_warn", `Bootstrap failed: ${error.message}`));
   startHiveMindBackgroundSync();
@@ -1168,7 +1168,7 @@ async function telegramHandler(msg: TelegramMessage): Promise<void> {
     const hasCloseIntent: boolean = /\bclose\b|\bsell\b|\bexit\b|\bwithdraw\b/i.test(text);
     const isDeployRequest: boolean = !hasCloseIntent && /\bdeploy\b|\bopen position\b|\blp into\b|\badd liquidity\b/i.test(text);
     const agentRole: string = isDeployRequest ? "SCREENER" : "GENERAL";
-    const agentModel: string = agentRole === "SCREENER" ? config.llm.screeningModel : config.llm.generalModel;
+    const agentModel = agentRole === "SCREENER" ? config.llm.screeningModel : config.llm.generalModel;
     liveMessage = await createLiveMessage("🤖 Live Update", `Request: ${text.slice(0, 240)}`);
     const { content }: { content: string } = await agentLoop(text, config.llm.maxSteps, sessionHistory, agentRole as any, agentModel, null, {
       interactive: true,
