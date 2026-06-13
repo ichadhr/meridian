@@ -5,8 +5,9 @@ import { tools, executeTool } from "./tools/index.js";
 import { getWalletBalances } from "../providers/solana/index.js";
 import { getMyPositions } from "../providers/meteora/index.js";
 import { log } from "../utils/logger.js";
-import { config } from "../config/index.js";
+import { config, getClient } from "../config/index.js";
 import { getStateSummary, getLessonsForPrompt, getPerformanceSummary, getDecisionSummary } from "../core/index.js";
+import type { ModelConfig } from "../types/index.js";
 
 type AgentType = "SCREENER" | "MANAGER" | "GENERAL";
 
@@ -95,15 +96,55 @@ function getToolsForRole(agentType: AgentType, goal: string = ""): any[] {
   return tools.filter((t: any) => matched.has(t.function.name));
 }
 
-// Supports OpenRouter (default) or any OpenAI-compatible local server (e.g. LM Studio)
-// To use LM Studio: set LLM_BASE_URL=http://localhost:1234/v1 and LLM_API_KEY=lm-studio in .env
-const client = new OpenAI({
-  baseURL: process.env.LLM_BASE_URL || "https://openrouter.ai/api/v1",
-  apiKey: process.env.LLM_API_KEY || process.env.OPENROUTER_API_KEY || "dummy",
-  timeout: 5 * 60 * 1000,
-});
+// ─── Provider Resolution ─────────────────────────────────────
 
-const DEFAULT_MODEL = process.env.LLM_MODEL || "openrouter/healer-alpha";
+/** Resolve a ModelConfig or string into { client, model }. */
+function resolveModel(model: ModelConfig | string | null, agentType: AgentType): { client: OpenAI; model: string } {
+  let provider: string;
+  let modelName: string;
+
+  if (model && typeof model === "object" && "provider" in model) {
+    provider = model.provider;
+    modelName = model.model;
+  } else if (typeof model === "string" && model.trim()) {
+    const trimmed = model.trim();
+    const slashIdx = trimmed.indexOf("/");
+    if (slashIdx > 0) {
+      provider = trimmed.slice(0, slashIdx);
+      modelName = trimmed.slice(slashIdx + 1);
+    } else {
+      provider = "default";
+      modelName = trimmed;
+    }
+  } else {
+    const roleModel = agentType === "SCREENER" ? config.llm.screeningModel
+      : agentType === "MANAGER" ? config.llm.managementModel
+      : config.llm.generalModel;
+    provider = roleModel.provider;
+    modelName = roleModel.model;
+  }
+
+  return { client: getClient(provider), model: modelName };
+}
+
+// ─── Error Classification ────────────────────────────────────
+
+type ErrorDisposition = "retry" | "failover" | "fatal";
+
+function classifyError(error: any): ErrorDisposition {
+  const status = error?.status ?? error?.code;
+  const msg = String(error?.message || error?.error?.message || error || "");
+
+  if (status === 401 || status === 403) return "fatal";
+  if (status === 400 && !/rate|limit|timeout/i.test(msg)) return "fatal";
+  if (status === 413 || status === 422) return "fatal";
+
+  if (status === 429) return "retry";
+  if (status === 502 || status === 503 || status === 529) return "retry";
+  if (/ECONNREFUSED|ETIMEDOUT|ENOTFOUND|ECONNRESET/i.test(msg)) return "retry";
+
+  return "failover";
+}
 
 const MUTATING_TOOL_INTENTS = /\b(deploy|open position|add liquidity|lp into|invest in|close|exit|withdraw|remove liquidity|claim|harvest|collect|swap|convert|sell|exchange|block|unblock|blacklist|add smart wallet|remove smart wallet|add wallet|remove wallet|pin|unpin|clear lesson|add lesson|set active strategy|remove strategy|add strategy|set |change |update |self.?update|pull latest|git pull|update yourself)\b/i;
 const LIVE_DATA_TOOL_INTENTS = /\b(balance|wallet|position|portfolio|pnl|yield|range|show positions|open positions|screen|candidate|find pool|search|research|analyze|check pool|token holders|narrative|study top|top lpers?|lp behavior|who.?s lping|performance|history|stats|report|list smart wallets|list blacklist|list blocked deployers|list lessons)\b/i;
@@ -164,7 +205,7 @@ export async function agentLoop(
   maxSteps: number = config.llm.maxSteps,
   sessionHistory: any[] = [],
   agentType: AgentType = "GENERAL",
-  model: string | null = null,
+  model: ModelConfig | string | null = null,
   maxOutputTokens: number | null = null,
   options: AgentLoopOptions = {},
 ): Promise<AgentLoopResult> {
@@ -213,67 +254,98 @@ export async function agentLoop(
 
   let emptyStreak = 0;
   const MAX_EMPTY_STREAK = 3;
+
+  // Resolve primary provider once at start
+  const primary = resolveModel(model, agentType);
+
   for (let step = 0; step < maxSteps; step++) {
     log("agent", `Step ${step + 1}/${maxSteps}`);
 
     try {
-      const activeModel = model || DEFAULT_MODEL;
-
-      const FALLBACK_MODEL = "stepfun/step-3.5-flash:free";
       let response: any;
-      let usedModel = activeModel;
 
-      // Retry up to 3 times on transient provider errors (502, 503, 529)
-      for (let attempt = 0; attempt < 3; attempt++) {
-        const reqParams: any = {
-          model: usedModel,
-          messages,
-          tools: getToolsForRole(agentType, goal),
-          tool_choice: "auto",
-          temperature: config.llm.temperature,
-          max_tokens: tokenBudget,
-        };
-        try {
-          response = await client.chat.completions.create(reqParams);
-        } catch (error: any) {
-          if (providerMode === "system" && isSystemRoleError(error)) {
-            providerMode = "user_embedded";
-            messages = buildMessages(systemPrompt, sessionHistory, goal, providerMode);
-            log("agent", "Provider rejected system role — retrying with embedded system instructions");
-            attempt -= 1;
-            continue;
-          }
-          // Generic fallback: if provider rejects tool_choice param entirely,
-          // retry once without it (some reasoning/thinking models reject it)
+      // Build fallback chain from ModelConfig
+      const fallbackChain: Array<{ client: OpenAI; model: string }> = [];
+      if (model && typeof model === "object" && "fallback" in model && Array.isArray(model.fallback)) {
+        for (const fb of model.fallback) {
           try {
-            const fallbackParams: any = { ...reqParams };
-            delete fallbackParams.tool_choice;
-            response = await client.chat.completions.create(fallbackParams);
-            log("agent", "Provider rejected tool_choice — retrying without it succeeded");
+            fallbackChain.push({ client: getClient(fb.provider), model: fb.model });
           } catch {
-            throw error; // retry also failed — throw original error
+            log("warn", `Fallback provider "${fb.provider}" not available — skipping`);
           }
         }
-        if (response.choices?.length) break;
-        const errCode = response.error?.code;
-        if (errCode === 502 || errCode === 503 || errCode === 529) {
-          const wait = (attempt + 1) * 5000;
-          if (attempt === 1 && usedModel !== FALLBACK_MODEL) {
-            usedModel = FALLBACK_MODEL;
-            log("agent", `Switching to fallback model ${FALLBACK_MODEL}`);
-          } else {
-            log("agent", `Provider error ${errCode}, retrying in ${wait / 1000}s (attempt ${attempt + 1}/3)`);
-            await new Promise((r) => setTimeout(r, wait));
+      }
+
+      // Attempt with primary, then fallbacks
+      const attempts = [{ client: primary.client, model: primary.model }, ...fallbackChain];
+      let lastError: any = null;
+
+      for (let attemptIdx = 0; attemptIdx < attempts.length; attemptIdx++) {
+        const { client: tryClient, model: tryModel } = attempts[attemptIdx];
+        let retriesForThisProvider = 0;
+        const MAX_RETRIES = 2;
+
+        while (retriesForThisProvider <= MAX_RETRIES) {
+          const reqParams: any = {
+            model: tryModel,
+            messages,
+            tools: getToolsForRole(agentType, goal),
+            tool_choice: "auto",
+            temperature: config.llm.temperature,
+            max_tokens: tokenBudget,
+          };
+
+          try {
+            response = await tryClient.chat.completions.create(reqParams);
+          } catch (error: any) {
+            // Handle system role rejection (provider-specific)
+            if (providerMode === "system" && isSystemRoleError(error)) {
+              providerMode = "user_embedded";
+              messages = buildMessages(systemPrompt, sessionHistory, goal, providerMode);
+              log("agent", "Provider rejected system role — retrying with embedded system instructions");
+              continue;
+            }
+
+            // Try without tool_choice (some models reject it)
+            try {
+              const fallbackParams: any = { ...reqParams };
+              delete fallbackParams.tool_choice;
+              response = await tryClient.chat.completions.create(fallbackParams);
+              log("agent", "Provider rejected tool_choice — retrying without it succeeded");
+            } catch {
+              lastError = error;
+              const disposition = classifyError(error);
+
+              if (disposition === "fatal") {
+                throw error;
+              }
+
+              if (disposition === "retry" && retriesForThisProvider < MAX_RETRIES) {
+                retriesForThisProvider++;
+                const wait = retriesForThisProvider * 3000;
+                log("agent", `Retryable error (${error.status ?? "network"}), waiting ${wait / 1000}s (attempt ${retriesForThisProvider}/${MAX_RETRIES})`);
+                await new Promise(r => setTimeout(r, wait));
+                continue;
+              }
+
+              // Failover: break inner loop, try next provider in chain
+              log("agent", `Failing over from "${tryModel}" (status: ${error.status ?? "network"})`);
+              break;
+            }
           }
-        } else {
+
+          if (response?.choices?.length) break;
           break;
         }
+
+        if (response?.choices?.length) break;
       }
 
-      if (!response.choices?.length) {
-        log("error", `Bad API response: ${JSON.stringify(response).slice(0, 200)}`);
-        throw new Error(`API returned no choices: ${response.error?.message || JSON.stringify(response)}`);
+      if (!response?.choices?.length) {
+        log("error", `All providers exhausted. Last error: ${lastError?.message ?? "no choices"}`);
+        throw new Error(`All providers failed: ${lastError?.message ?? "no choices"}`);
       }
+
       const msg: any = response.choices[0].message;
       const invalidToolArgErrors = new Map<string, string>();
       // Keep tool-call history API-valid, but never execute unrecoverable args.
