@@ -248,9 +248,17 @@ function normalizeModelConfig(val: unknown): { provider: string; model: string; 
   if (val && typeof val === "object" && !Array.isArray(val)) {
     const obj = val as Record<string, unknown>;
     return {
-      provider: typeof obj.provider === "string" ? obj.provider : "default",
-      model: typeof obj.model === "string" ? obj.model : "",
-      fallback: Array.isArray(obj.fallback) ? obj.fallback : [],
+      provider: typeof obj.provider === "string" && (obj.provider as string).trim()
+        ? (obj.provider as string).trim()
+        : "default",
+      model: typeof obj.model === "string" && (obj.model as string).trim()
+        ? (obj.model as string).trim()
+        : "",
+      fallback: Array.isArray(obj.fallback)
+        ? obj.fallback
+            .filter((f: any) => f && typeof f === "object" && typeof f.provider === "string" && f.provider.trim() && typeof f.model === "string" && f.model.trim())
+            .map((f: any) => ({ provider: f.provider.trim(), model: f.model.trim() }))
+        : [],
     };
   }
   if (typeof val === "string" && val.trim()) {

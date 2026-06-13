@@ -137,12 +137,16 @@ export function parseModelConfig(raw: unknown, defaultProvider: string, defaultM
   // Object format: { provider, model, fallback? }
   if (raw && typeof raw === "object" && !Array.isArray(raw)) {
     const obj = raw as Record<string, unknown>;
-    const provider = typeof obj.provider === "string" ? obj.provider : defaultProvider;
-    const model = typeof obj.model === "string" ? obj.model : defaultModel;
+    const provider = typeof obj.provider === "string" && obj.provider.trim()
+      ? obj.provider.trim()
+      : defaultProvider;
+    const model = typeof obj.model === "string" && obj.model.trim()
+      ? obj.model.trim()
+      : defaultModel;
     const fallback = Array.isArray(obj.fallback)
       ? obj.fallback
-          .filter((f: any) => f && typeof f === "object" && typeof f.provider === "string" && typeof f.model === "string")
-          .map((f: any) => ({ provider: f.provider, model: f.model }))
+          .filter((f: any) => f && typeof f === "object" && typeof f.provider === "string" && f.provider.trim() && typeof f.model === "string" && f.model.trim())
+          .map((f: any) => ({ provider: f.provider.trim(), model: f.model.trim() }))
       : [];
     return { provider, model, fallback };
   }

@@ -5,7 +5,7 @@ import { tools, executeTool } from "./tools/index.js";
 import { getWalletBalances } from "../providers/solana/index.js";
 import { getMyPositions } from "../providers/meteora/index.js";
 import { log } from "../utils/logger.js";
-import { config, getClient } from "../config/index.js";
+import { config, getClient, parseModelConfig } from "../config/index.js";
 import { getStateSummary, getLessonsForPrompt, getPerformanceSummary, getDecisionSummary } from "../core/index.js";
 import type { ModelConfig } from "../types/index.js";
 
@@ -100,31 +100,45 @@ function getToolsForRole(agentType: AgentType, goal: string = ""): any[] {
 
 /** Resolve a ModelConfig or string into { client, model }. */
 function resolveModel(model: ModelConfig | string | null, agentType: AgentType): { client: OpenAI; model: string } {
-  let provider: string;
-  let modelName: string;
+  const roleDefault = agentType === "SCREENER" ? config.llm.screeningModel
+    : agentType === "MANAGER" ? config.llm.managementModel
+    : config.llm.generalModel;
 
+  let parsed: ModelConfig;
   if (model && typeof model === "object" && "provider" in model) {
-    provider = model.provider;
-    modelName = model.model;
-  } else if (typeof model === "string" && model.trim()) {
-    const trimmed = model.trim();
-    const slashIdx = trimmed.indexOf("/");
-    if (slashIdx > 0) {
-      provider = trimmed.slice(0, slashIdx);
-      modelName = trimmed.slice(slashIdx + 1);
-    } else {
-      provider = "default";
-      modelName = trimmed;
-    }
+    // Already a ModelConfig — just validate fields are non-empty
+    parsed = {
+      provider: typeof model.provider === "string" && model.provider.trim() ? model.provider.trim() : roleDefault.provider,
+      model: typeof model.model === "string" && model.model.trim() ? model.model.trim() : roleDefault.model,
+      fallback: Array.isArray(model.fallback) ? model.fallback : [],
+    };
+  } else if (model) {
+    // String: "provider/model" or bare model name
+    parsed = parseModelConfig(model, roleDefault.provider, roleDefault.model);
   } else {
-    const roleModel = agentType === "SCREENER" ? config.llm.screeningModel
-      : agentType === "MANAGER" ? config.llm.managementModel
-      : config.llm.generalModel;
-    provider = roleModel.provider;
-    modelName = roleModel.model;
+    // null/undefined — use role default (already parsed at startup)
+    parsed = roleDefault;
   }
 
-  return { client: getClient(provider), model: modelName };
+  return { client: getClient(parsed.provider), model: parsed.model };
+}
+
+/** Build the full attempt list (primary + fallbacks) from a ModelConfig. */
+function buildAttemptList(model: ModelConfig | string | null, agentType: AgentType): Array<{ client: OpenAI; model: string }> {
+  const primary = resolveModel(model, agentType);
+  const attempts = [primary];
+
+  if (model && typeof model === "object" && "fallback" in model && Array.isArray(model.fallback)) {
+    for (const fb of model.fallback) {
+      try {
+        attempts.push({ client: getClient(fb.provider), model: fb.model });
+      } catch {
+        log("warn", `Fallback provider "${fb.provider}" not available — skipping`);
+      }
+    }
+  }
+
+  return attempts;
 }
 
 // ─── Error Classification ────────────────────────────────────
@@ -136,12 +150,13 @@ function classifyError(error: any): ErrorDisposition {
   const msg = String(error?.message || error?.error?.message || error || "");
 
   if (status === 401 || status === 403) return "fatal";
-  if (status === 400 && !/rate|limit|timeout/i.test(msg)) return "fatal";
+  if (status === 400 && !/rate.limit|too.many.requests|timeout/i.test(msg)) return "fatal";
   if (status === 413 || status === 422) return "fatal";
 
   if (status === 429) return "retry";
+  if (status === 408 || status === 504) return "retry";
   if (status === 502 || status === 503 || status === 529) return "retry";
-  if (/ECONNREFUSED|ETIMEDOUT|ENOTFOUND|ECONNRESET/i.test(msg)) return "retry";
+  if (/ECONNREFUSED|ETIMEDOUT|ENOTFOUND|ECONNRESET|EAI_AGAIN/i.test(msg)) return "retry";
 
   return "failover";
 }
@@ -255,8 +270,8 @@ export async function agentLoop(
   let emptyStreak = 0;
   const MAX_EMPTY_STREAK = 3;
 
-  // Resolve primary provider once at start
-  const primary = resolveModel(model, agentType);
+  // Build full attempt list once (primary + fallbacks) outside step loop
+  const attempts = buildAttemptList(model, agentType);
 
   for (let step = 0; step < maxSteps; step++) {
     log("agent", `Step ${step + 1}/${maxSteps}`);
@@ -264,20 +279,7 @@ export async function agentLoop(
     try {
       let response: any;
 
-      // Build fallback chain from ModelConfig
-      const fallbackChain: Array<{ client: OpenAI; model: string }> = [];
-      if (model && typeof model === "object" && "fallback" in model && Array.isArray(model.fallback)) {
-        for (const fb of model.fallback) {
-          try {
-            fallbackChain.push({ client: getClient(fb.provider), model: fb.model });
-          } catch {
-            log("warn", `Fallback provider "${fb.provider}" not available — skipping`);
-          }
-        }
-      }
-
       // Attempt with primary, then fallbacks
-      const attempts = [{ client: primary.client, model: primary.model }, ...fallbackChain];
       let lastError: any = null;
 
       for (let attemptIdx = 0; attemptIdx < attempts.length; attemptIdx++) {
