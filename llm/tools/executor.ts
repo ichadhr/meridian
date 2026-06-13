@@ -10,29 +10,50 @@ import {
   searchPools,
   invalidatePositionsCache,
 } from "../../providers/meteora/index.js";
-import { parseVirtualPositionAddress } from "../../core/vp/state.js";
-import { closeVpManual } from "../../core/vp/manage.js";
+import {
+  parseVirtualPositionAddress,
+  closeVpPosition,
+  addLesson,
+  clearAllLessons,
+  clearPerformance,
+  removeLessonsByKeyword,
+  getPerformanceHistory,
+  pinLesson,
+  unpinLesson,
+  listLessons,
+  setPositionInstruction,
+  getPoolMemory,
+  addPoolNote,
+  addStrategy,
+  listStrategies,
+  getStrategy,
+  setActiveStrategy,
+  removeStrategy,
+  addToBlacklist,
+  removeFromBlacklist,
+  listBlacklist,
+  blockDev,
+  unblockDev,
+  listBlockedDevs,
+  addSmartWallet,
+  removeSmartWallet,
+  listSmartWallets,
+  checkSmartWalletsOnPool,
+  getRecentDecisions,
+} from "../../core/index.js";
 import { swapToken } from "../../providers/jupiter/index.js";
 import { getWalletBalances } from "../../providers/solana/index.js";
 import { studyTopLPers } from "./study.js";
-import { addLesson, clearAllLessons, clearPerformance, removeLessonsByKeyword, getPerformanceHistory, pinLesson, unpinLesson, listLessons } from "../../core/lessons.js";
-import { setPositionInstruction } from "../../core/state.js";
-
-import { getPoolMemory, addPoolNote } from "../../core/pool-memory.js";
-import { addStrategy, listStrategies, getStrategy, setActiveStrategy, removeStrategy } from "../../core/strategy-library.js";
-import { addToBlacklist, removeFromBlacklist, listBlacklist } from "../../core/token-blacklist.js";
-import { blockDev, unblockDev, listBlockedDevs } from "../../core/token-blacklist.js";
-import { addSmartWallet, removeSmartWallet, listSmartWallets, checkSmartWalletsOnPool } from "../../core/smart-wallets.js";
 import { getTokenInfo, getTokenHolders, getTokenNarrative } from "../../providers/jupiter/token.js";
 import { getAdvancedInfo } from "../../providers/okx/index.js";
 import { config, reloadScreeningThresholds, MIN_SAFE_BINS_BELOW } from "../../config/index.js";
-import { getRecentDecisions } from "../../core/decision-log.js";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import { execSync, spawn } from "child_process";
 
-const USER_CONFIG_PATH: string = path.join(process.cwd(), "user-config.json");
+import { USER_CONFIG_FILE } from "../../config/paths.js";
+
 const POOL_DISCOVERY_BASE: string = "https://pool-discovery-api.datapi.meteora.ag";
 const MIN_VOLATILITY_TIMEFRAME: string = "30m";
 const TIMEFRAME_MINUTES: Record<string, number> = {
@@ -282,9 +303,9 @@ const toolMap: Record<string, ToolFn> = {
     // generic dry-run response without actually closing the VP.
     // closeVpManual does a fresh bin fetch + computePositionPnl — the
     // legacy computeSimpleVirtualPnl read stale `vp.current_value_usd`.
-    const vpId = parseVirtualPositionAddress(args?.position_address as string);
-    if (vpId) {
-      return await closeVpManual(vpId, "LLM close_position tool");
+    const vp_id = parseVirtualPositionAddress(args?.position_address as string);
+    if (vp_id) {
+      return await closeVpPosition(vp_id, "LLM close_position tool");
     }
     return closePosition({ position_address: args.position_address, reason: args.reason } as { position_address: any; reason: any });
   },
@@ -504,9 +525,9 @@ const toolMap: Record<string, ToolFn> = {
     }
 
     let userConfig: Record<string, any> = {};
-    if (fs.existsSync(USER_CONFIG_PATH)) {
+    if (fs.existsSync(USER_CONFIG_FILE)) {
       try {
-        userConfig = JSON.parse(fs.readFileSync(USER_CONFIG_PATH, "utf8"));
+        userConfig = JSON.parse(fs.readFileSync(USER_CONFIG_FILE, "utf8"));
       } catch (error: any) {
         return { success: false, error: `Invalid user-config.json: ${error.message}`, reason };
       }
@@ -554,7 +575,7 @@ const toolMap: Record<string, ToolFn> = {
       }
     }
     userConfig._lastAgentTune = new Date().toISOString();
-    fs.writeFileSync(USER_CONFIG_PATH, JSON.stringify(userConfig, null, 2));
+    fs.writeFileSync(USER_CONFIG_FILE, JSON.stringify(userConfig, null, 2));
 
     // Restart cron jobs if intervals changed
     const intervalChanged = applied.managementIntervalMin != null || applied.screeningIntervalMin != null;

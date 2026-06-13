@@ -3,9 +3,10 @@
  */
 
 import fs from "fs";
-import { recalculateWeights, getWeightsSummary } from "../core/signal-weights.js";
+import { recalculateWeights, getWeightsSummary } from "../core/index.js";
 
-const WEIGHTS_FILE = "./signal-weights.json";
+import { SIGNAL_WEIGHTS_FILE as WEIGHTS_FILE } from "../config/paths.js";
+
 
 let pass = 0;
 let fail = 0;

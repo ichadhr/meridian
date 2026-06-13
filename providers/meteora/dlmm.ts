@@ -17,25 +17,26 @@ import type { PositionsResult, WalletPositionsResult } from "../../types/index.j
 import { log } from "../../utils/logger.js";
 import {
   trackPosition,
-  markOutOfRange,
-  markInRange,
-  recordClaim,
-  recordClose,
+  markLiveOutOfRange,
+  markLiveInRange,
+  recordLiveClaim,
+  recordLiveClose,
   getTrackedPosition,
-  minutesOutOfRange,
-  syncOpenPositions,
-} from "../../core/state.js";
-import { trackVirtualPosition } from "../../core/vp/state.js";
-import { recordPerformance } from "../../core/lessons.js";
-import { isBaseMintOnCooldown, isPoolOnCooldown } from "../../core/pool-memory.js";
+  minutesLiveOutOfRange,
+  syncLiveOpenPositions,
+  trackVpPosition,
+  recordPerformance,
+  isBaseMintOnCooldown,
+  isPoolOnCooldown,
+  appendDecision,
+  getAndClearStagedSignals,
+  mergeVpPositions,
+} from "../../core/index.js";
 import { fetchSolPrice } from "../jupiter/api.js";
 import { normalizeMint, getConnection, getWallet } from "../solana/wallet.js";
 import { getWalletBalances } from "../solana/balance.js";
-import { appendDecision } from "../../core/decision-log.js";
 import { estimateDeployGasSol, estimateCloseGasSol, samplePriorityFee } from "../solana/gas-estimator.js";
 import { agentMeridianJson, getAgentIdForRequests, getAgentMeridianHeaders } from "../hivemind/index.js";
-import { getAndClearStagedSignals } from "../../core/signal-tracker.js";
-import { mergeVirtualPositions } from "../../core/vp/merge.js";
 
 // ─── Transaction reliability infrastructure ──────────────────
 // Priority fee + retry on transient RPC errors. Avoids lost deploys from
@@ -931,7 +932,7 @@ export async function deployPosition({
         log("deploy", `DRY_RUN: gas estimate failed — ${e.message}; using config default`);
       }
 
-      vpId = trackVirtualPosition({
+      vpId = trackVpPosition({
         pool: pool_address,
         pool_name: pool_name as any,
         pair: (pool_name ?? null) as any,
@@ -1765,8 +1766,8 @@ export async function getMyPositions({ force = false, silent = false, wallet_add
         const tracked = getTrackedPosition(positionAddress);
         const isOOR = pool.outOfRange || pool.positionsOutOfRange?.includes(positionAddress);
 
-        if (isOOR) markOutOfRange(positionAddress);
-        else markInRange(positionAddress);
+        if (isOOR) markLiveOutOfRange(positionAddress);
+        else markLiveInRange(positionAddress);
 
         // Bin data: from supplemental PnL call (OOR) or tracked state (in-range)
         const binData = binDataByPool[pool.poolAddress]?.[positionAddress];
@@ -1883,7 +1884,7 @@ export async function getMyPositions({ force = false, silent = false, wallet_add
             ? Math.round(parseFloat(binData.feePerTvl24h || 0) * 100) / 100
             : null,
           age_minutes:        binData?.createdAt ? Math.floor((Date.now() - binData.createdAt * 1000) / 60000) : ageFromState,
-          minutes_out_of_range: minutesOutOfRange(positionAddress),
+          minutes_out_of_range: minutesLiveOutOfRange(positionAddress),
           instruction:        tracked?.instruction ?? null,
         });
       }
@@ -1892,12 +1893,11 @@ export async function getMyPositions({ force = false, silent = false, wallet_add
     let resultPositions = positions;
     if (process.env.DRY_RUN === "true" && useLocalWallet) {
       try {
-        const { listVirtualPositions } = await import("../../core/vp/state.js");
-        const { computePositionPnl } = await import("../../core/pnl.js");
-        const vps = listVirtualPositions("open");
+        const { listVpPositions, computePositionPnl } = await import("../../core/index.js");
+        const vps = listVpPositions("open");
         // ALWAYS fetch a real SOL price for computePositionPnl (it needs solPrice
         // to compute USD fields correctly, even when display is in SOL mode).
-        // Only the display convention in mergeVirtualPositions switches on solMode.
+        // Only the display convention in mergeVpPositions switches on solMode.
         const realSolPrice = await fetchSolPrice();
         if (!realSolPrice) {
           log("positions_warn", "fetchSolPrice failed; VP PnL fields will be null");
@@ -1908,7 +1908,7 @@ export async function getMyPositions({ force = false, silent = false, wallet_add
         }
         // Build fresh PnL map: for each VP, fetch fresh bins + activeBinId,
         // compute PnL via computePositionPnl. On RPC failure, leave the
-        // entry absent so mergeVirtualPositions returns nulls for that VP.
+        // entry absent so mergeVpPositions returns nulls for that VP.
         // Step 7 (meridian-wie): no cached-fields fallback — brief nulls
         // during a 30s RPC outage are far less dangerous than stale values.
         const freshPnlMap = new Map<string, any>();
@@ -1935,7 +1935,7 @@ export async function getMyPositions({ force = false, silent = false, wallet_add
             }
           }
         }
-        resultPositions = (mergeVirtualPositions(positions as any, vps as any, displaySolPrice, Date.now(), freshPnlMap as any) as any).positions;
+        resultPositions = (mergeVpPositions(positions as any, vps as any, displaySolPrice, Date.now(), freshPnlMap as any) as any).positions;
       } catch (e: any) {
         log("positions_warn", `VP merge failed: ${e.message}`);
       }
@@ -1947,7 +1947,7 @@ export async function getMyPositions({ force = false, silent = false, wallet_add
       request_id: relayRequestId,
     };
     if (useLocalWallet) {
-      syncOpenPositions(positions.map(p => p.position));
+      syncLiveOpenPositions(positions.map(p => p.position));
       _positionsCache = result;
       _positionsCacheAt = Date.now();
     }
@@ -2090,7 +2090,7 @@ export async function claimFees({ position_address }: { position_address: string
     const txHashes = await sendTxBatch(getConnection(), txs, [wallet], "claim");
     log("claim", `SUCCESS txs: ${txHashes.join(", ")}`);
     _positionsCacheAt = 0; // invalidate cache after claim
-    recordClaim(position_address, 0);
+    recordLiveClaim(position_address, 0);
 
     return { success: true, position: position_address, txs: txHashes, base_mint: pool.lbPair.tokenXMint.toString() };
   } catch (error: any) {
@@ -2213,7 +2213,7 @@ export async function closePosition({ position_address, reason }: { position_add
         };
       }
 
-      recordClose(position_address, reason || "agent decision");
+      recordLiveClose(position_address, reason || "agent decision");
 
       if (tracked) {
         const deployedAt = new Date(tracked.deployed_at).getTime();
@@ -2453,7 +2453,7 @@ export async function closePosition({ position_address, reason }: { position_add
       };
     }
 
-    recordClose(position_address, reason || "agent decision");
+    recordLiveClose(position_address, reason || "agent decision");
 
     // Record performance for learning
     if (tracked) {

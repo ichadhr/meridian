@@ -5,20 +5,75 @@
  * This is a pure barrel re-export — no logic lives here.
  */
 
-// Position lifecycle
+// Dispatcher (core/state.ts)
 export {
-  getStateSummary,
-  getTrackedPosition,
-  getTrackedPositions,
+  getMyPositions,
+  trackPosition,
+  closePosition,
   setPositionInstruction,
-  updatePnlAndCheckExits,
-  queuePeakConfirmation,
-  resolvePendingPeak,
-  queueTrailingDropConfirmation,
-  resolvePendingTrailingDrop,
+  getStateSummary,
+  getLiveStateSummary,
+  getVpStateSummary,
   getLastBriefingDate,
   setLastBriefingDate,
+  getTrackedPosition,
+  getTrackedPositions,
 } from "./state.js";
+
+// Live state management (core/live/state.ts)
+export {
+  trackLivePosition,
+  markLiveOutOfRange,
+  markLiveInRange,
+  minutesLiveOutOfRange,
+  recordLiveClaim,
+  recordLiveClose,
+  setLivePositionInstruction,
+  queueLivePeakConfirmation,
+  resolveLivePendingPeak,
+  queueLiveTrailingDropConfirmation,
+  resolveLivePendingTrailingDrop,
+  getLivePositions,
+  getLivePosition,
+  updateLivePnlAndCheckExits,
+  syncLiveOpenPositions,
+} from "./live/state.js";
+
+// VP state & management (core/vp/state.ts & core/vp/manage.ts & core/vp/merge.ts & core/vp/digest.ts & core/vp/report.ts)
+export {
+  trackVpPosition,
+  listVpPositions,
+  getVpPosition,
+  updateVpPosition,
+  recordVpClaim,
+  recordVpClose,
+  archiveVpPositions,
+  parseVirtualPositionAddress,
+  isVpOutOfRange,
+  markVpOutOfRange,
+  markVpInRange,
+  minutesVpOutOfRange,
+  queueVpPeakConfirmation,
+  queueVpTrailingDropConfirmation,
+  updateVpPnlAndCheckExits,
+} from "./vp/state.js";
+
+export {
+  closeVpPosition,
+  runVpManagementCycle,
+} from "./vp/manage.js";
+
+export {
+  mergeVpPositions,
+} from "./vp/merge.js";
+
+export {
+  generateVpDigest,
+} from "./vp/digest.js";
+
+export {
+  generateVpReport,
+} from "./vp/report.js";
 
 // Learning & evolution
 export {
@@ -49,6 +104,8 @@ export {
   addPoolNote,
   recordPoolDeploy,
   getPoolMemory,
+  isBaseMintOnCooldown,
+  isPoolOnCooldown,
 } from "./pool-memory.js";
 
 // Archive
@@ -76,7 +133,17 @@ export {
 } from "./smart-wallets.js";
 
 // Blacklist
-export { addToBlacklist, removeFromBlacklist, isBlacklisted, listBlacklist, blockDev, unblockDev, listBlockedDevs } from "./token-blacklist.js";
+export {
+  addToBlacklist,
+  removeFromBlacklist,
+  isBlacklisted,
+  listBlacklist,
+  blockDev,
+  unblockDev,
+  listBlockedDevs,
+  isDevBlocked,
+  getBlockedDevs,
+} from "./token-blacklist.js";
 
 // Briefing & decisions
 export { generateBriefing } from "./briefing.js";
@@ -85,18 +152,36 @@ export { stageSignals, getAndClearStagedSignals, getStagedPools } from "./signal
 
 // Close rules
 export { getCloseRule } from "./close-rules.js";
+export type { CloseRulePosition, CloseRuleConfig } from "./close-rules.js";
 
 // PnL computation
 export { computePositionPnl, estimateSlippageLamports } from "./pnl.js";
 export type { PositionPnlResult, BinData } from "./pnl.js";
 
-// VP management
-export { runVirtualManagementCycle, closeVpManual } from "./vp/manage.js";
-export { parseVirtualPositionAddress, listVirtualPositions, trackVirtualPosition } from "./vp/state.js";
-export { mergeVirtualPositions } from "./vp/merge.js";
-export { generateVirtualDigest } from "./vp/digest.js";
-export { generateDryRunReport } from "./vp/report.js";
-
 // Live cycle management
-export { runManagementCycle, type ManageDeps } from "./live/manage.js";
-export { runScreeningCycle, tryStartScreening, getLoneCandidateSkipReason } from "./live/screen.js";
+export { runLiveManagementCycle, type ManageDeps } from "./live/manage.js";
+export { runScreeningCycle, tryStartScreening, getLoneCandidateSkipReason } from "./screen.js";
+
+// Screening cycle state
+export {
+  managementBusy,
+  setManagementBusy,
+  screeningBusy,
+  setScreeningBusy,
+  timers,
+  screeningLastTriggered,
+  setScreeningLastTriggered,
+  SCREENING_COOLDOWN_MS,
+} from "./cycle-state.js";
+
+// Live trailing TP timers
+export {
+  peakConfirmTimers,
+  trailingDropConfirmTimers,
+  TRAILING_PEAK_CONFIRM_DELAY_MS,
+  TRAILING_PEAK_CONFIRM_TOLERANCE,
+  TRAILING_DROP_CONFIRM_DELAY_MS,
+  TRAILING_DROP_CONFIRM_TOLERANCE_PCT,
+  pollTriggeredAt,
+  setPollTriggeredAt,
+} from "./live/cycle-state.js";

@@ -13,10 +13,10 @@ import {
   blockDev,
   unblockDev,
   listBlockedDevs,
-} from "../core/token-blacklist.js";
+} from "../core/index.js";
 
-const BLACKLIST_FILE = "./token-blacklist.json";
-const BLOCKLIST_FILE = "./dev-blocklist.json";
+import { TOKEN_BLACKLIST_FILE as BLACKLIST_FILE, DEV_BLOCKLIST_FILE as BLOCKLIST_FILE } from "../config/paths.js";
+
 
 let pass = 0;
 let fail = 0;

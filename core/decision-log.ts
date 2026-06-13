@@ -2,8 +2,8 @@
 import fs from "fs";
 import { log } from "../utils/logger.js";
 import type { Decision, DecisionEntry } from "../types/index.js";
+import { DECISION_LOG_FILE } from "../config/paths.js";
 
-const DECISION_LOG_FILE = "./decision-log.json";
 const MAX_DECISIONS = 100;
 
 function load(): { decisions: Decision[] } {

@@ -6,9 +6,11 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import axios from "axios";
+import { TOKEN_BLACKLIST_FILE, USER_CONFIG_FILE } from "../core/paths.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "..");
+
 
 // In-memory dedup: address → timestamp
 const recentSeen = new Map();
@@ -30,7 +32,7 @@ export function dedupCheck(address) {
 
 // Stage 2: Token blacklist — reject if mint is blacklisted
 export function blacklistCheck(mint) {
-  const file = path.join(ROOT, "token-blacklist.json");
+  const file = TOKEN_BLACKLIST_FILE;
   if (!fs.existsSync(file)) return { pass: true };
   try {
     const data = JSON.parse(fs.readFileSync(file, "utf8"));
@@ -132,7 +134,7 @@ export async function feesCheck(mint) {
 
   let minFeesSol = 30;
   try {
-    const cfg = JSON.parse(fs.readFileSync(path.join(ROOT, "user-config.json"), "utf8"));
+    const cfg = JSON.parse(fs.readFileSync(USER_CONFIG_FILE, "utf8"));
     minFeesSol = cfg.screening?.minTokenFeesSol ?? cfg.minTokenFeesSol ?? 30;
   } catch { /* use default */ }
 

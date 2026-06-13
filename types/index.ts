@@ -160,6 +160,40 @@ export interface Config {
   indicators: IndicatorsConfig;
 }
 
+// ─── State Summary ──────────────────────────────────────────────
+
+/**
+ * Shared state summary shape used by both Live and VP.
+ * Returned by getLiveStateSummary() and getVpStateSummary().
+ */
+export interface StateSummaryPosition {
+  position: string;
+  pool: string;
+  strategy: string | null;
+  deployed_at: string;
+  out_of_range_since: string | null;
+  minutes_out_of_range: number;
+  total_fees_claimed_usd: number;
+  initial_fee_tvl_24h: number | null;
+  rebalance_count: number;
+  instruction: string | null;
+}
+
+export interface StateSummaryEvent {
+  ts: string;
+  action: string;
+  [key: string]: unknown;
+}
+
+export interface StateSummary {
+  open_positions: number;
+  closed_positions: number;
+  total_fees_claimed_usd: number;
+  positions: StateSummaryPosition[];
+  last_updated: string | null;
+  recent_events: StateSummaryEvent[];
+}
+
 // ─── Position ──────────────────────────────────────────────────
 
 /**
@@ -256,7 +290,7 @@ export interface VpPosition {
   pool_name?: string | null;
   pair?: string | null;
   status: "open" | "closed";
-  deployed_at: string | null;
+  deployed_at: string;
   closed_at: string | null;
   strategy?: string;
   bins_below?: number;
@@ -290,6 +324,8 @@ export interface VpPosition {
   close_pnl_usd?: number | null;
   close_pnl_pct?: number | null;
   close_fees_usd?: number | null;
+  last_claim_at?: string | null;
+  total_fees_claimed_usd?: number;
   [key: string]: any;
 }
 

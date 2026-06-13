@@ -13,10 +13,10 @@ import fs from "fs";
 import { log } from "../utils/logger.js";
 import { loadJsonRecord, saveJsonRecord } from "../config/index.js";
 import type { Config, PerformanceRecord, SignalWeightsDB } from "../types/index.js";
-
-const WEIGHTS_FILE = "./signal-weights.json";
+import { SIGNAL_WEIGHTS_FILE } from "../config/paths.js";
 
 // ─── Signal Definitions ─────────────────────────────────────────
+
 
 const SIGNAL_NAMES = [
   "organic_score",
@@ -56,7 +56,7 @@ const CATEGORICAL_SIGNALS = new Set<SignalName>(["narrative_quality"]);
 // ─── Persistence ─────────────────────────────────────────────────
 
 function loadWeights(): SignalWeightsDB {
-  return loadJsonRecord<SignalWeightsDB>(WEIGHTS_FILE, {
+  return loadJsonRecord<SignalWeightsDB>(SIGNAL_WEIGHTS_FILE, {
     weights: { ...DEFAULT_WEIGHTS },
     last_recalc: null,
     recalc_count: 0,
@@ -65,7 +65,7 @@ function loadWeights(): SignalWeightsDB {
 }
 
 function saveWeights(data: SignalWeightsDB): void {
-  saveJsonRecord(WEIGHTS_FILE, data);
+  saveJsonRecord(SIGNAL_WEIGHTS_FILE, data);
 }
 
 // ─── Core Algorithm ──────────────────────────────────────────────

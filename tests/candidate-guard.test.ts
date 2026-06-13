@@ -5,7 +5,7 @@ vi.mock("../llm/index.js", () => ({
   agentLoop: vi.fn(),
 }));
 
-import { getLoneCandidateSkipReason } from "../core/live/screen.js";
+import { getLoneCandidateSkipReason } from "../core/index.js";
 import { config } from "../config/index.js";
 
 function candidate(overrides: Record<string, any> = {}) {

@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { config } from "../config/index.js";
-import { evolveThresholds, addLesson, listLessons, clearAllLessons } from "../core/lessons.js";
+import { evolveThresholds, addLesson, listLessons, clearAllLessons } from "../core/index.js";
 import type { PerformanceRecord } from "../types/index.js";
 
 describe("evolveThresholds", () => {

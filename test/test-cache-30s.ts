@@ -304,7 +304,7 @@ async function suite(): Promise<void> {
     // The function source must reference skipCache — verifies the option exists.
     // (Reading source instead of calling to avoid needing a real pool.)
     const fs = await import("fs");
-    const src = fs.readFileSync(new URL("../tools/dlmm.ts", import.meta.url), "utf8");
+    const src = fs.readFileSync(new URL("../providers/meteora/dlmm.ts", import.meta.url), "utf8");
     assert(src.includes("skipCache"), "dlmm.js should reference skipCache");
     assert(src.includes("skipCache: true") || src.includes("skipCache = false"),
       "dlmm.js should define skipCache parameter");

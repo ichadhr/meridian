@@ -11,11 +11,11 @@ import { getMyPositions } from "../../providers/meteora/index.js";
 import { config } from "../../config/index.js";
 import { sendLongMessage, notifyOutOfRange, isEnabled as telegramEnabled, createLiveMessage } from "../../interfaces/index.js";
 import { getCloseRule } from "../close-rules.js";
-import { updatePnlAndCheckExits, queuePeakConfirmation, queueTrailingDropConfirmation } from "../state.js";
+import { updateLivePnlAndCheckExits, queueLivePeakConfirmation, queueLiveTrailingDropConfirmation } from "./state.js";
 import { recordPositionSnapshot, recallForPool } from "../pool-memory.js";
-import { runVirtualManagementCycle } from "../vp/manage.js";
+import { runVpManagementCycle } from "../vp/manage.js";
 import { stripThink } from "../../utils/text.js";
-import { managementBusy, setManagementBusy, timers } from "./cycle-state.js";
+import { managementBusy, setManagementBusy, timers } from "../cycle-state.js";
 import type { LivePosition, VpResult } from "../../types/index.js";
 
 // ── Types ─────────────────────────────────────────────────────
@@ -31,7 +31,7 @@ export interface ManageDeps {
 
 // ── Management Cycle ──────────────────────────────────────────
 
-export async function runManagementCycle(
+export async function runLiveManagementCycle(
   { silent = false }: { silent?: boolean } = {},
   deps: ManageDeps,
 ): Promise<string | null> {
@@ -54,7 +54,7 @@ export async function runManagementCycle(
       const vpEarlyResults: VpResult[] = [];
       if (process.env.DRY_RUN === "true") {
         try {
-          const results: VpResult[] = await runVirtualManagementCycle();
+          const results: VpResult[] = await runVpManagementCycle();
           vpEarlyResults.push(...results);
           const vpClosed = results.filter((r: VpResult) => r.action === "CLOSED");
           const vpStay = results.filter((r: VpResult) => r.action === "STAY");
@@ -111,15 +111,15 @@ export async function runManagementCycle(
     for (const p of liveLivePositionData) {
       if (
         !p.pnl_pct_suspicious &&
-        queuePeakConfirmation(p.position, p.pnl_pct as number, { immediate: !deps.shouldUsePnlRecheck() }) &&
+        queueLivePeakConfirmation(p.position, p.pnl_pct as number, { immediate: !deps.shouldUsePnlRecheck() }) &&
         deps.shouldUsePnlRecheck()
       ) {
         deps.schedulePeakConfirmation(p.position);
       }
-      const exit: any = updatePnlAndCheckExits(p.position, p as any, config.management);
+      const exit: any = updateLivePnlAndCheckExits(p.position, p as any, config.management);
       if (exit) {
         if (exit.action === "TRAILING_TP" && exit.needs_confirmation && deps.shouldUsePnlRecheck()) {
-          if (queueTrailingDropConfirmation(p.position, exit.peak_pnl_pct, exit.current_pnl_pct, config.management.trailingDropPct)) {
+          if (queueLiveTrailingDropConfirmation(p.position, exit.peak_pnl_pct, exit.current_pnl_pct, config.management.trailingDropPct)) {
             deps.scheduleTrailingDropConfirmation(p.position);
           }
           continue;
@@ -229,7 +229,7 @@ After executing, write a brief one-line result per position.
     const vpResults: VpResult[] = [];
     if (process.env.DRY_RUN === "true") {
       try {
-        const results: VpResult[] = await runVirtualManagementCycle();
+        const results: VpResult[] = await runVpManagementCycle();
         vpResults.push(...results);
         const vpClosed = results.filter((r: VpResult) => r.action === "CLOSED");
         const vpStay = results.filter((r: VpResult) => r.action === "STAY");

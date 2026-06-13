@@ -46,7 +46,7 @@ vi.mock("../core/vp/state.js", () => ({
 }));
 
 vi.mock("../core/vp/manage.js", () => ({
-  closeVpManual: vi.fn(),
+  closeVpPosition: vi.fn(),
 }));
 
 vi.mock("../core/lessons.js", () => ({

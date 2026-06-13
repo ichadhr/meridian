@@ -10,7 +10,7 @@
  * When solMode is false (solPrice = 0), they contain USD values.
  */
 
-import type { VirtualPosition } from "../../types/index.js";
+import type { VpPosition } from "../../types/index.js";
 
 export interface VpMergedPosition {
   position: string;
@@ -26,7 +26,7 @@ export interface VpMergedPosition {
   pnl_usd: number | null;
   pnl_pct: number | null;
   age_minutes: number | null;
-  instruction: null;
+  instruction: string | null;
   source: string;
   [key: string]: unknown;
 }
@@ -45,9 +45,9 @@ export interface VpMergeFreshPnl {
   activeBinId?: number;
 }
 
-export function mergeVirtualPositions(
+export function mergeVpPositions(
   positions: VpMergedPosition[],
-  vps: VirtualPosition[],
+  vps: VpPosition[],
   solPrice = 0,
   now = Date.now(),
   freshPnlMap: Map<string, VpMergeFreshPnl> | null = null
@@ -110,7 +110,7 @@ export function mergeVirtualPositions(
       pnl_usd:            pnlUsdDisplay,
       pnl_pct:            pnlPctDisplay,
       age_minutes: ageMinutes,
-      instruction: null,
+      instruction: (vp.instruction as string | null) || null,
       source: "virtual",
     });
   }

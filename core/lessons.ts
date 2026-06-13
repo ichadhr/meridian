@@ -14,9 +14,10 @@ import { getSharedLessonsForPrompt, pushHiveLesson, pushHivePerformanceEvent } f
 import { loadJsonRecord, saveJsonRecord } from "../config/index.js";
 import type { Config, Lesson, PerformanceRecord, PerformanceSummary, LessonsDB } from "../types/index.js";
 
-const USER_CONFIG_PATH = path.join(process.cwd(), "user-config.json");
+import { LESSONS_FILE, USER_CONFIG_FILE } from "../config/paths.js";
 
-const LESSONS_FILE = "./lessons.json";
+const USER_CONFIG_PATH = USER_CONFIG_FILE;
+const LESSONS_PATH = LESSONS_FILE;
 const MIN_EVOLVE_POSITIONS = 5;   // don't evolve until we have real data
 const MAX_CHANGE_PER_STEP  = 0.20; // never shift a threshold more than 20% at once
 const PERFORMANCE_SIGNAL_FIELDS = [
@@ -45,11 +46,11 @@ function sanitizeLessonText(text: unknown, maxLen = MAX_MANUAL_LESSON_LENGTH): s
 }
 
 function load(): LessonsDB {
-  return loadJsonRecord<LessonsDB>(LESSONS_FILE, { lessons: [], performance: [] });
+  return loadJsonRecord<LessonsDB>(LESSONS_PATH, { lessons: [], performance: [] });
 }
 
 function save(data: LessonsDB): void {
-  saveJsonRecord(LESSONS_FILE, data);
+  saveJsonRecord(LESSONS_PATH, data);
 }
 
 function buildSignalSnapshot(perf: PerformanceRecord): Record<string, unknown> | null {

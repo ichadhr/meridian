@@ -13,9 +13,7 @@
 import fs from "fs";
 import path from "path";
 import { log } from "../utils/logger.js";
-
-// ── Paths ────────────────────────────────────────────────────────────────
-export const ARCHIVE_DIR = "./archives";
+import { ARCHIVE_DIR, archivePath } from "../config/paths.js";
 
 function ensureDir(): void {
   if (!fs.existsSync(ARCHIVE_DIR)) {
@@ -23,10 +21,6 @@ function ensureDir(): void {
   }
 }
 
-function archivePath(source: string, month: string): string {
-  const prefix = source === "paper" ? "vp" : "live";
-  return `${ARCHIVE_DIR}/${prefix}-archive-${month}.jsonl`;
-}
 
 function currentMonth(): string {
   return new Date().toISOString().slice(0, 7);

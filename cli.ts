@@ -307,7 +307,7 @@ switch (subcommand) {
     const positionAddress = flags.position || posAddr;
     if (!positionAddress) die("Usage: meridian pnl <position_address>");
 
-    const { getTrackedPosition } = await import("./core/state.js");
+    const { getTrackedPosition } = await import("./core/index.js");
     const { getPositionPnl, getMyPositions } = await import("./providers/meteora/index.js");
 
     let poolAddress: string | undefined;
@@ -334,8 +334,7 @@ switch (subcommand) {
     const { getTopCandidates } = await import("./providers/meteora/pool-discovery.js");
     const { getActiveBin } = await import("./providers/meteora/index.js");
     const { getTokenInfo, getTokenHolders, getTokenNarrative } = await import("./providers/jupiter/token.js");
-    const { checkSmartWalletsOnPool } = await import("./core/smart-wallets.js");
-    const { recallForPool } = await import("./core/pool-memory.js");
+    const { checkSmartWalletsOnPool, recallForPool } = await import("./core/index.js");
 
     const limit = parseInt(flags.limit || "5");
     const raw = await getTopCandidates({ limit });
@@ -517,8 +516,8 @@ switch (subcommand) {
 
   // ── manage ───────────────────────────────────────────────────────
   case "manage": {
-    const { runManagementCycle } = await import("./index.js");
-    const report = await runManagementCycle({ silent }, {
+    const { runLiveManagementCycle } = await import("./index.js");
+    const report = await runLiveManagementCycle({ silent }, {
       shouldUsePnlRecheck: () => false,
       schedulePeakConfirmation: () => {},
       scheduleTrailingDropConfirmation: () => {},
@@ -569,11 +568,11 @@ switch (subcommand) {
     if (sub2 === "add") {
       const text = argv.filter(a => !a.startsWith("-")).slice(2).join(" ");
       if (!text) die("Usage: meridian lessons add <text>");
-      const { addLesson } = await import("./core/lessons.js");
+      const { addLesson } = await import("./core/index.js");
       addLesson(text, [], { pinned: false, role: null });
       out({ saved: true, rule: text, outcome: "manual", role: null });
     } else {
-      const { listLessons } = await import("./core/lessons.js");
+      const { listLessons } = await import("./core/index.js");
       const limit = flags.limit ? parseInt(flags.limit) : 50;
       out(listLessons({ limit }));
     }
@@ -583,7 +582,7 @@ switch (subcommand) {
   // ── pool-memory ──────────────────────────────────────────────────
   case "pool-memory": {
     if (!flags.pool) die("Usage: meridian pool-memory --pool <addr>");
-    const { getPoolMemory } = await import("./core/pool-memory.js");
+    const { getPoolMemory } = await import("./core/index.js");
     out(getPoolMemory({ pool_address: flags.pool }));
     break;
   }
@@ -591,12 +590,12 @@ switch (subcommand) {
   // ── evolve ───────────────────────────────────────────────────────
   case "evolve": {
     const { config } = await import("./config/index.js");
-    const { evolveThresholds } = await import("./core/lessons.js");
+    const { evolveThresholds } = await import("./core/index.js");
+    const { LESSONS_FILE } = await import("./config/paths.js");
     const fs2 = await import("fs");
-    const lessonsFile = "./lessons.json";
     let perfData: any[] = [];
-    if (fs2.existsSync(lessonsFile)) {
-      try { perfData = JSON.parse(fs2.readFileSync(lessonsFile, "utf8")).performance || []; } catch { /* no data */ }
+    if (fs2.existsSync(LESSONS_FILE)) {
+      try { perfData = JSON.parse(fs2.readFileSync(LESSONS_FILE, "utf8")).performance || []; } catch { /* no data */ }
     }
     const result = evolveThresholds(perfData, config);
     if (!result) {
@@ -612,10 +611,10 @@ switch (subcommand) {
     if (sub2 === "add") {
       if (!flags.mint) die("Usage: meridian blacklist add --mint <addr> --reason <text>");
       if (!flags.reason) die("--reason is required");
-      const { addToBlacklist } = await import("./core/token-blacklist.js");
+      const { addToBlacklist } = await import("./core/index.js");
       out(addToBlacklist({ mint: flags.mint, reason: flags.reason }));
     } else if (sub2 === "list" || !sub2) {
-      const { listBlacklist } = await import("./core/token-blacklist.js");
+      const { listBlacklist } = await import("./core/index.js");
       out(listBlacklist());
     } else {
       die(`Unknown blacklist subcommand: ${sub2}. Use: add, list`);
@@ -625,7 +624,7 @@ switch (subcommand) {
 
   // ── performance ──────────────────────────────────────────────────
   case "performance": {
-    const { getPerformanceHistory, getPerformanceSummary } = await import("./core/lessons.js");
+    const { getPerformanceHistory, getPerformanceSummary } = await import("./core/index.js");
     const limit = flags.limit ? parseInt(flags.limit) : 200;
     const history = await getPerformanceHistory({ hours: 999999, limit });
     const summary = getPerformanceSummary();

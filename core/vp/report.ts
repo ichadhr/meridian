@@ -8,7 +8,7 @@
  */
 import { log } from "../../utils/logger.js";
 import { readArchive } from "../archive.js";
-import { archiveVirtualPositions } from "./state.js";
+import { archiveVpPositions } from "./state.js";
 
 /** A closed virtual-position record from the JSONL archive. */
 export interface ClosedPosition {
@@ -60,11 +60,11 @@ interface DayData {
 
 /** Load all closed positions from the JSONL archive. */
 async function loadAllClosedPositions(): Promise<ClosedPosition[]> {
-  // Reconcile first: move any closed VPs still in dry-run-state.json to the
+  // Reconcile first: move any closed VPs still in vp_state.json to the
   // archive, and dedupe the current-month archive. Both are idempotent.
   // This guarantees a single source of truth (archive) and no duplicates.
   try {
-    archiveVirtualPositions();
+    archiveVpPositions();
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
     log("dry_run_report", `Reconcile sweep failed: ${msg}`);
@@ -212,7 +212,7 @@ function formatCurrencyTotal({ usd, sol }: CurrencyTotal): string {
 }
 
 /** Generate the full self-contained HTML report. */
-export async function generateDryRunReport(): Promise<string> {
+export async function generateVpReport(): Promise<string> {
   const positions = await loadAllClosedPositions();
   if (positions.length === 0) {
     return `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Dry Run Report</title><style>body{font-family:system-ui,sans-serif;background:#0a0a0f;color:#888;padding:40px;text-align:center;margin-top:80px}h2{color:#fff}</style></head><body><h2>No closed positions yet</h2><p>Dry run has not closed any positions. Deploy first, then check back.</p></body></html>`;

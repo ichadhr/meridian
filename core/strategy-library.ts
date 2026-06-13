@@ -10,8 +10,8 @@ import fs from "fs";
 import { log } from "../utils/logger.js";
 import { loadJsonRecord, saveJsonRecord } from "../config/index.js";
 import type { StrategyDB, StrategyEntry } from "../types/index.js";
+import { STRATEGY_FILE } from "../config/paths.js";
 
-const STRATEGY_FILE = "./strategy-library.json";
 
 function load(): StrategyDB {
   return loadJsonRecord<StrategyDB>(STRATEGY_FILE, { active: null, strategies: {} });

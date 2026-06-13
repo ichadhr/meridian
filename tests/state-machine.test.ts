@@ -1,19 +1,19 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import {
-  trackPosition,
-  markOutOfRange,
-  markInRange,
-  minutesOutOfRange,
-  recordClaim,
-  recordClose,
-  setPositionInstruction,
-  queuePeakConfirmation,
-  resolvePendingPeak,
-  queueTrailingDropConfirmation,
-  resolvePendingTrailingDrop,
-  getTrackedPosition,
-  getTrackedPositions,
-} from "../core/state.js";
+  trackLivePosition as trackPosition,
+  markLiveOutOfRange as markOutOfRange,
+  markLiveInRange as markInRange,
+  minutesLiveOutOfRange as minutesOutOfRange,
+  recordLiveClaim as recordClaim,
+  recordLiveClose as recordClose,
+  setLivePositionInstruction as setPositionInstruction,
+  queueLivePeakConfirmation as queuePeakConfirmation,
+  resolveLivePendingPeak as resolvePendingPeak,
+  queueLiveTrailingDropConfirmation as queueTrailingDropConfirmation,
+  resolveLivePendingTrailingDrop as resolvePendingTrailingDrop,
+  getLivePosition as getTrackedPosition,
+  getLivePositions as getTrackedPositions,
+} from "../core/index.js";
 
 describe("State machine — trailing TP", () => {
   const POS = "test-pos-001";

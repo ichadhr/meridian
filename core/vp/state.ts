@@ -3,11 +3,12 @@ import { log } from "../../utils/logger.js";
 import {
   appendArchiveRecordIfNew,
   dedupeAllArchives,
-  ARCHIVE_DIR,
 } from "../archive.js";
 import type { VpPosition } from "../../types/index.js";
 
-const STATE_FILE = "./dry-run-state.json";
+import { VP_STATE_FILE, ARCHIVE_DIR } from "../../config/paths.js";
+
+const STATE_FILE = VP_STATE_FILE;
 
 // ─── Types ────────────────────────────────────────────────────────────────
 
@@ -27,8 +28,8 @@ export interface BinShareEntry {
   yAmount: string | null;
 }
 
-/** Parameters accepted by trackVirtualPosition. */
-export interface TrackVirtualPositionParams {
+/** Parameters accepted by trackVpPosition. */
+export interface TrackVpPositionParams {
   pool: string;
   pool_name?: string | null;
   pair?: string;
@@ -51,7 +52,7 @@ export interface TrackVirtualPositionParams {
   bin_shares?: BinShareEntry[];
   base_mint?: string | null;
   // Structured screener signals captured at deploy time. Mirrors the
-  // signal_snapshot field on live positions in state.json — numeric scores
+  // signal_snapshot field on live positions in live_state.json — numeric scores
   // + booleans (organic_score, fee_tvl_ratio, volatility, etc.) used for
   // retro-analysis and Darwin weight tuning. null if Darwin is disabled or
   // no signals were staged for this pool/mint.
@@ -113,7 +114,7 @@ function nextId(_state: VpState): string {
 
 // ─── Public API ───────────────────────────────────────────────────────────
 
-export function trackVirtualPosition({
+export function trackVpPosition({
   pool,
   pool_name,
   pair,
@@ -127,44 +128,16 @@ export function trackVirtualPosition({
   initial_value_usd,
   sol_price_at_deploy,
   base_mint,
-  /**
-   * @type {{ binId: number, shares: string, price: string|null, feeXPerTokenComplete: string|null, feeYPerTokenComplete: string|null, xAmount: string|null, yAmount: string|null }[]}
-   * Per-bin LP position at deploy time. All numeric fields stored as BN strings for JSON safety.
-   * - shares: virtual LP tokens attributed to this position in the bin
-   * - price: bin price in Q64.64 format (for liquidity math verification)
-   * - fee{X,Y}PerTokenComplete: stored fee accumulators at deploy (for delta-based fee calc)
-   * - xAmount, yAmount: bin's total token amounts at deploy time (for debugging/verification)
-   */
   bin_shares,
-  // Structured screener signals captured at deploy time. Mirrors the
-  // signal_snapshot field on live positions in state.json — numeric scores
-  // + booleans (organic_score, fee_tvl_ratio, volatility, etc.) used for
-  // retro-analysis and Darwin weight tuning. null if Darwin is disabled or
-  // no signals were staged for this pool/mint.
   signal_snapshot,
-  // Screening metadata — used by Virtual Digest for pattern analysis
   volatility,
   fee_tvl_ratio,
   organic_score,
-  // Real-time gas estimate — deploy gas is frozen at deploy time, close gas
-  // is refreshed on every PnL cycle and re-estimated at close with a fresh
-  // priority fee sample.
   deploy_gas_sol,
   close_gas_sol,
-  gas_priority_fee, // priority fee (µl/CU) at deploy time, for reference
-  gas_cost_sol,     // legacy: kept for back-compat with VPs deployed under prev. version
-  // Note: Step 7 (meridian-wie) removed seeding of value_sol, pnl_sol,
-  // pnl_sol_pct, total_fees_earned_sol, total_fees_earned_usd, and
-  // current_value_usd. These are now computed fresh on every PnL cycle
-  // via computePositionPnl. The fields are no longer cached in VP state.
-  //
-  // TODO(meridian-wie post-Step-7): the 5 pre-Step-7 VPs on the server
-  // (vp_006, vp_007, vp_009, vp_011, vp_014) still carry these legacy
-  // fields in dry-run-state.json. They are no longer read or written —
-  // they are "dead data" that will drain naturally as VPs close. When
-  // all 5 close, sweep and remove this TODO. See also the matching
-  // TODO in tools/merge-virtual-positions.js.
-}: TrackVirtualPositionParams): string {
+  gas_priority_fee,
+  gas_cost_sol,
+}: TrackVpPositionParams): string {
   const state = load();
   const vp: VpPosition = {
     id: nextId(state),
@@ -214,6 +187,8 @@ export function trackVirtualPosition({
     close_reason: null,
     close_pnl_usd: null,
     close_pnl_pct: null,
+    last_claim_at: null,
+    total_fees_claimed_usd: 0,
   };
   state.virtual_positions.push(vp);
   save(state);
@@ -221,14 +196,14 @@ export function trackVirtualPosition({
   return vp.id;
 }
 
-export function listVirtualPositions(statusFilter?: string): VpPosition[] {
+export function listVpPositions(statusFilter?: string): VpPosition[] {
   const state = load();
   let list = state.virtual_positions;
   if (statusFilter) list = list.filter((p) => p.status === statusFilter);
   return list.map((p) => ({ ...p }));
 }
 
-export function getVirtualPosition(id: string): VpPosition | null {
+export function getVpPosition(id: string): VpPosition | null {
   const state = load();
   const pos = state.virtual_positions.find((p) => p.id === id);
   return pos ? { ...pos } : null;
@@ -248,7 +223,7 @@ const UPDATE_PROTECTED = new Set([
   "_last_unclaimed_fees_usd", "_last_unclaimed_fees_sol",
 ]);
 
-export function updateVirtualPosition(id: string, updates: Record<string, unknown>): boolean {
+export function updateVpPosition(id: string, updates: Record<string, unknown>): boolean {
   const state = load();
   const idx = state.virtual_positions.findIndex((p) => p.id === id);
   if (idx === -1) return false;
@@ -257,6 +232,20 @@ export function updateVirtualPosition(id: string, updates: Record<string, unknow
     if (!UPDATE_PROTECTED.has(key)) pos[key] = updates[key];
   }
   save(state);
+  return true;
+}
+
+export function recordVpClaim(id: string, fees_usd: number): boolean {
+  const state = load();
+  const idx = state.virtual_positions.findIndex((p) => p.id === id);
+  if (idx === -1) return false;
+  const vp = state.virtual_positions[idx];
+  vp.last_claim_at = new Date().toISOString();
+  vp.total_fees_claimed_usd = (vp.total_fees_claimed_usd || 0) + (fees_usd || 0);
+  if (!vp.notes) vp.notes = [];
+  vp.notes.push(`Claimed ~$${fees_usd.toFixed(2)} virtual fees at ${vp.last_claim_at}`);
+  save(state);
+  log("dry_run_state", `Virtual ${id} claimed ~$${fees_usd.toFixed(2)} fees`);
   return true;
 }
 
@@ -277,12 +266,12 @@ export function parseVirtualPositionAddress(positionAddress: string): string | n
   return positionAddress.slice(3);
 }
 
-export function closeVirtualPosition(
+export function recordVpClose(
   id: string,
   reason: string,
-  pnlPct: number,
-  pnlUsd: number,
-  extraFields: Record<string, unknown> = {}
+  pnl_pct: number,
+  pnl_usd: number,
+  extra_fields: Record<string, unknown> = {}
 ): boolean {
   const state = load();
   const idx = state.virtual_positions.findIndex((p) => p.id === id);
@@ -291,57 +280,144 @@ export function closeVirtualPosition(
   vp.status = "closed";
   vp.closed_at = new Date().toISOString();
   vp.close_reason = reason;
-  vp.close_pnl_pct = pnlPct;
-  vp.close_pnl_usd = pnlUsd;
+  vp.close_pnl_pct = pnl_pct;
+  vp.close_pnl_usd = pnl_usd;
   // Only copy whitelisted keys to prevent accidental overwrites
-  for (const key of Object.keys(extraFields)) {
-    if (CLOSE_EXTRA_ALLOWED.has(key)) vp[key] = extraFields[key];
+  for (const key of Object.keys(extra_fields)) {
+    if (CLOSE_EXTRA_ALLOWED.has(key)) vp[key] = extra_fields[key];
   }
-  // State-canonical close: save dry-run-state.json FIRST so the close is durable
-  // even if the archive write fails. The archive is a derived view; the sweeper
-  // will retry on the next call. Old order (archive → splice → save) lost the
-  // close on archive failure and duplicated on crash between archive and save.
+  // State-canonical close: save vp_state.json FIRST so the close is durable
   if (!save(state)) {
-    log("dry_run_state", `Virtual ${id} close FAILED — dry-run-state.json write failed`);
+    log("dry_run_state", `Virtual ${id} close FAILED — vp_state.json write failed`);
     return false;
   }
 
-  // Now attempt idempotent archive move. Returns true (appended), false
-  // (already existed — replay/crash recovery), or null (write error).
-  // Pass the month derived from closed_at so a close at 23:59:31 Jan 31
-  // lands in vp-archive-2026-01.jsonl, not the current month file
-  // (which would create cross-month duplicates on a late sweeper run).
   const archiveResult = appendArchiveRecordIfNew("paper", vp, vp.closed_at.slice(0, 7));
   if (archiveResult === null) {
-    // Archive write failed but the close is durable in dry-run-state.json.
-    // Leave the closed VP in state — next sweep will retry the archive move.
     log("dry_run_state", `Virtual ${id} archive FAILED — durable in state, sweep will retry`);
   } else {
-    // Archive succeeded (new or already-existed): splice from state.
     const newIdx = state.virtual_positions.findIndex((p) => p.id === id);
     if (newIdx !== -1) {
       state.virtual_positions.splice(newIdx, 1);
       if (!save(state)) {
-        // Splice save failed — VP is durable in archive but lingers in state.
-        // Next sweep will re-archive (idempotent skip) and retry the splice.
-        // Don't return false: the close IS durable, just untidy.
         log("dry_run_state", `Virtual ${id} splice save FAILED — VP lingers in state, sweep will retry`);
       }
     }
   }
-  log("dry_run_state", `Virtual ${id} CLOSED: ${reason} PnL=${pnlPct}%`);
+  log("dry_run_state", `Virtual ${id} CLOSED: ${reason} PnL=${pnl_pct}%`);
   return true;
 }
 
-/**
- * Reconcile dry-run-state.json with the JSONL archive:
- *   1. Move any status="closed" VPs from state to archive (idempotent append)
- *   2. Deduplicate the current-month archive (removes legacy duplicates from
- *      the pre-state-canonical era — see meridian-9jf for context)
- *
- * Safe to call on every report generation. Returns counts for logging.
- */
-export function archiveVirtualPositions(): { swept: number; failed: number; duplicatesRemoved: number } {
+// ─── OOR Pure Functions ─────────────────────────────────────────────────────
+
+/** Pure: determine if position is out of range. No disk I/O. */
+export function isVpOutOfRange(activeBin: number, upperBin: number | null): boolean {
+  if (upperBin == null) return false;
+  return activeBin > upperBin;
+}
+
+/** Pure: transition position to OOR state. Idempotent — returns existing oorSince if already OOR. No disk I/O. */
+export function markVpOutOfRange(
+  activeBin: number,
+  upperBin: number | null,
+  currentOorSince: string | null,
+): { oorSince: string | null; changed: boolean } {
+  if (!isVpOutOfRange(activeBin, upperBin)) {
+    return { oorSince: null, changed: currentOorSince !== null };
+  }
+  if (currentOorSince) {
+    return { oorSince: currentOorSince, changed: false };
+  }
+  return { oorSince: new Date().toISOString(), changed: true };
+}
+
+/** Pure: transition position back in range. Idempotent — returns null if already in range. No disk I/O. */
+export function markVpInRange(
+  activeBin: number,
+  upperBin: number | null,
+  currentOorSince: string | null,
+): { oorSince: null; changed: boolean } {
+  if (isVpOutOfRange(activeBin, upperBin)) {
+    return { oorSince: null, changed: false };
+  }
+  return { oorSince: null, changed: currentOorSince !== null };
+}
+
+/** Pure: compute minutes out of range from timestamp. No disk I/O. */
+export function minutesVpOutOfRange(oorSince: string | null): number {
+  if (!oorSince) return 0;
+  const oorTs = new Date(oorSince).getTime();
+  if (!Number.isFinite(oorTs)) return 0;
+  const minutes = Math.floor((Date.now() - oorTs) / 60000);
+  return Math.max(0, minutes);
+}
+
+// ─── Pure Trailing TP Helpers ────────────────────────────────────────────────
+
+export function queueVpPeakConfirmation(
+  trailingActive: boolean,
+  peakPnl: number,
+  triggerPct: number
+): { trailingActive: boolean } {
+  if (!trailingActive && peakPnl >= triggerPct) {
+    return { trailingActive: true };
+  }
+  return { trailingActive };
+}
+
+export function queueVpTrailingDropConfirmation(
+  trailingPending: boolean,
+  peakPnl: number,
+  currentPnl: number,
+  dropPct: number,
+  minPnl = 0
+): { trailingPending: boolean; closeReason: string | null } {
+  const dropFromPeak = peakPnl - currentPnl;
+  if (dropFromPeak >= dropPct && currentPnl >= minPnl) {
+    if (trailingPending) {
+      return {
+        trailingPending,
+        closeReason: `trailing TP: peak ${peakPnl.toFixed(2)}% → current ${currentPnl.toFixed(2)}% (dropped ${dropFromPeak.toFixed(2)}% ≥ ${dropPct}%)`
+      };
+    } else {
+      return { trailingPending: true, closeReason: null };
+    }
+  }
+  return { trailingPending: false, closeReason: null };
+}
+
+export function updateVpPnlAndCheckExits(
+  trailingActive: boolean,
+  trailingPending: boolean,
+  peakPnl: number,
+  currentPnl: number,
+  mgmtConfig: {
+    trailingTakeProfit?: boolean;
+    trailingTriggerPct?: number;
+    trailingDropPct?: number;
+  }
+): { trailingActive: boolean; trailingPending: boolean; trailingCloseReason: string | null } {
+  let active = trailingActive;
+  let pending = trailingPending;
+  let closeReason: string | null = null;
+
+  if (mgmtConfig.trailingTakeProfit) {
+    const triggerPct = mgmtConfig.trailingTriggerPct ?? 6;
+    const resPeak = queueVpPeakConfirmation(active, peakPnl, triggerPct);
+    active = resPeak.trailingActive;
+
+    if (active) {
+      const dropPct = mgmtConfig.trailingDropPct ?? 2.5;
+      const resDrop = queueVpTrailingDropConfirmation(pending, peakPnl, currentPnl, dropPct, 0);
+      pending = resDrop.trailingPending;
+      closeReason = resDrop.closeReason;
+    }
+  }
+
+  return { trailingActive: active, trailingPending: pending, trailingCloseReason: closeReason };
+}
+
+export function archiveVpPositions(): { swept: number; failed: number; duplicatesRemoved: number } {
   const state = load();
   if (state.virtual_positions.length === 0 && !fs.existsSync(ARCHIVE_DIR)) {
     return { swept: 0, failed: 0, duplicatesRemoved: 0 };
@@ -353,17 +429,13 @@ export function archiveVirtualPositions(): { swept: number; failed: number; dupl
     const remaining: VpPosition[] = [];
     for (const vp of state.virtual_positions) {
       if (vp.status === "closed" && vp.closed_at) {
-        // Use closed_at month so cross-month closes (23:59:31 Jan 31 etc.)
-        // write to the correct archive file.
         const month = vp.closed_at.slice(0, 7);
         const result = appendArchiveRecordIfNew("paper", vp, month);
         if (result === null) {
-          // Error — keep for next sweep
           remaining.push(vp);
           failed++;
         } else {
           swept++;
-          // Either appended or already existed — safe to splice
         }
       } else {
         remaining.push(vp);
@@ -372,15 +444,11 @@ export function archiveVirtualPositions(): { swept: number; failed: number; dupl
     if (swept > 0 || failed > 0) {
       state.virtual_positions = remaining;
       if (!save(state)) {
-        // Sweep save failed — VPs are durable in archive but linger in state.
-        // Next sweep will re-archive (idempotent skip) and retry the splice.
         log("dry_run_state", `Reconcile save FAILED — ${remaining.length} VPs linger in state, sweep will retry`);
       }
     }
   }
 
-  // Deduplicate ALL archive months for paper source (legacy cleanup from
-  // pre-state-canonical era; cheap at our scale).
   const duplicatesRemoved = dedupeAllArchives("paper");
 
   if (swept > 0 || failed > 0 || duplicatesRemoved > 0) {

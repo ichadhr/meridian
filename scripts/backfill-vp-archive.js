@@ -27,6 +27,13 @@
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import {
+  ARCHIVE_DIR,
+  LESSONS_FILE as LESSONS,
+  POOL_MEMORY_FILE as POOL_MEMORY,
+  SIGNAL_WEIGHTS_FILE as SIGNAL_WEIGHTS,
+  USER_CONFIG_FILE as USER_CONFIG
+} from '../core/paths.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -39,12 +46,7 @@ const ROOT = path.join(__dirname, '..');
 // inside the imported modules resolve to the project root.
 process.chdir(ROOT);
 
-const ARCHIVE_DIR = path.join(ROOT, 'archives');
 const SERVER_PM = path.join(ARCHIVE_DIR, 'pool-memory.json');
-const LESSONS = path.join(ROOT, 'lessons.json');
-const POOL_MEMORY = path.join(ROOT, 'pool-memory.json');
-const SIGNAL_WEIGHTS = path.join(ROOT, 'signal-weights.json');
-const USER_CONFIG = path.join(ROOT, 'user-config.json');
 
 // Records excluded from backfill (failed validation, semantically invalid, etc.)
 const EXCLUDED_IDS = new Set([

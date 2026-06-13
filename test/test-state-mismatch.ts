@@ -18,8 +18,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-import { mergeVirtualPositions } from "../core/vp/merge.js";
-import { getVirtualCloseRule } from "../core/close-rules.js";
+import { mergeVpPositions as mergeVirtualPositions, getCloseRule as getVirtualCloseRule } from "../core/index.js";
 
 let passed = 0;
 let failed = 0;
@@ -713,7 +712,7 @@ test("C2: parseVirtualPositionAddress returns null for non-VP addresses", () => 
 // ════════════════════════════════════════════════════════════
 
 const executorSrc = fs.readFileSync(
-  path.join(__dirname, "..", "tools", "executor.ts"),
+  path.join(__dirname, "..", "llm", "tools", "executor.ts"),
   "utf8"
 );
 
@@ -775,20 +774,20 @@ test("C7: routing — VP position routes to VP close, live routes to live close"
 });
 
 // ════════════════════════════════════════════════════════════
-//  SECTION E: dlmm.js import-pattern regression guard (meridian-fvo)
+//  SECTION E: dlmm.ts import-pattern regression guard (meridian-fvo)
 // ════════════════════════════════════════════════════════════
 
 const dlmmSrc = fs.readFileSync(
-  path.join(__dirname, "..", "tools", "dlmm.ts"),
+  path.join(__dirname, "..", "providers", "meteora", "dlmm.ts"),
   "utf8"
 );
 
-test("E1: dlmm.js imports mergeVirtualPositions (not re-exports)", () => {
-  if (/^export\s*\{\s*mergeVirtualPositions\s*\}\s*from\s*["']\.\/merge-virtual-positions\.js["']/m.test(dlmmSrc)) {
-    throw new Error("dlmm.js uses broken re-export form for mergeVirtualPositions (use `import` instead). See meridian-fvo.");
+test("E1: dlmm.ts imports mergeVpPositions (not re-exports)", () => {
+  if (/^export\s*\{[^}]*mergeVpPositions[^}]*\}\s*from/m.test(dlmmSrc)) {
+    throw new Error("dlmm.ts uses broken re-export form for mergeVpPositions.");
   }
-  if (!/^import\s*\{[^}]*mergeVirtualPositions[^}]*\}\s*from\s*["']\.\/merge-virtual-positions\.js["']/m.test(dlmmSrc)) {
-    throw new Error("dlmm.js should `import { mergeVirtualPositions } from './merge-virtual-positions.js'`");
+  if (!/mergeVpPositions/.test(dlmmSrc)) {
+    throw new Error("dlmm.ts should import/reference mergeVpPositions");
   }
 });
 
@@ -797,16 +796,16 @@ test("E1: dlmm.js imports mergeVirtualPositions (not re-exports)", () => {
 // ════════════════════════════════════════════════════════════
 
 const dryRunStateSrc = fs.readFileSync(
-  path.join(__dirname, "..", "tools", "dry-run-state.ts"),
+  path.join(__dirname, "..", "core", "vp", "state.ts"),
   "utf8"
 );
 
-test("F1: dry-run-state.js uses timestamp-based nextId (not sequential scan)", () => {
+test("F1: core/vp/state.ts uses timestamp-based nextId (not sequential scan)", () => {
   if (/state\.virtual_positions\.reduce.*vp_\(\\\\d\+\)/s.test(dryRunStateSrc)) {
-    throw new Error("dry-run-state.js still uses the old sequential max-N logic for nextId. See meridian-xsc.");
+    throw new Error("core/vp/state.ts still uses the old sequential max-N logic for nextId. See meridian-xsc.");
   }
   if (!dryRunStateSrc.includes("toISOString")) {
-    throw new Error("dry-run-state.js nextId should use toISOString for timestamp-based IDs");
+    throw new Error("core/vp/state.ts nextId should use toISOString for timestamp-based IDs");
   }
 });
 
@@ -826,4 +825,4 @@ test("F3: closing a VP and creating a new one produces different IDs (regression
 
 // ════════════════════════════════════════════════════════════
 console.log(`\n${passed + failed} tests: ${passed} passed, ${failed} failed`);
-if (failed > 0) process.exitCode = 1;
+process.exit(failed > 0 ? 1 : 0);

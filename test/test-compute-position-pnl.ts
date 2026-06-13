@@ -13,7 +13,7 @@
  * output shape.
  */
 
-import { computePositionPnl, estimateSlippageLamports } from "../core/pnl.js";
+import { computePositionPnl, estimateSlippageLamports } from "../core/index.js";
 // Pre-import SDK so the dynamic import in compute-position-pnl.js resolves
 // (its `.then()` callback sets _swapExactInQuoteAtBin in the next microtask).
 import * as meteoraSdk from "@meteora-ag/dlmm";

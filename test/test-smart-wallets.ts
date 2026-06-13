@@ -11,11 +11,10 @@ import {
   removeSmartWallet,
   listSmartWallets,
   checkSmartWalletsOnPool,
-} from "../core/smart-wallets.js";
+} from "../core/index.js";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const WALLETS_PATH = path.join(__dirname, "..", "smart-wallets.json");
+import { SMART_WALLETS_FILE as WALLETS_PATH } from "../config/paths.js";
+
 
 let pass = 0;
 let fail = 0;

@@ -17,14 +17,11 @@ import {
   recordPerformance,
   getLessonsForPrompt,
   getPerformanceSummary,
-} from "../core/lessons.js";
+} from "../core/index.js";
 import { config } from "../config/index.js";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+import { LESSONS_FILE, USER_CONFIG_FILE } from "../config/paths.js";
 
-const LESSONS_FILE = "./lessons.json";
-const USER_CONFIG_PATH = path.join(__dirname, "..", "user-config.json");
 
 let pass = 0;
 let fail = 0;
@@ -70,8 +67,8 @@ function backup(): void {
   if (fs.existsSync(LESSONS_FILE)) {
     originalLessonsContent = fs.readFileSync(LESSONS_FILE, "utf8");
   }
-  if (fs.existsSync(USER_CONFIG_PATH)) {
-    originalUserConfigContent = fs.readFileSync(USER_CONFIG_PATH, "utf8");
+  if (fs.existsSync(USER_CONFIG_FILE)) {
+    originalUserConfigContent = fs.readFileSync(USER_CONFIG_FILE, "utf8");
   }
 }
 
@@ -83,9 +80,9 @@ function restore(): void {
   }
 
   if (originalUserConfigContent !== null) {
-    fs.writeFileSync(USER_CONFIG_PATH, originalUserConfigContent);
-  } else if (fs.existsSync(USER_CONFIG_PATH)) {
-    fs.unlinkSync(USER_CONFIG_PATH);
+    fs.writeFileSync(USER_CONFIG_FILE, originalUserConfigContent);
+  } else if (fs.existsSync(USER_CONFIG_FILE)) {
+    fs.unlinkSync(USER_CONFIG_FILE);
   }
 }
 

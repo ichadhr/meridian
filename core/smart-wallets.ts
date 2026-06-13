@@ -4,15 +4,15 @@ import { fileURLToPath } from "url";
 import { log } from "../utils/logger.js";
 import { loadJsonRecord, saveJsonRecord } from "../config/index.js";
 import type { SmartWallet, SmartWalletsDB } from "../types/index.js";
+import { SMART_WALLETS_FILE } from "../config/paths.js";
 
-const WALLETS_PATH = path.join(process.cwd(), "smart-wallets.json");
 
 function loadWallets(): SmartWalletsDB {
-  return loadJsonRecord<SmartWalletsDB>(WALLETS_PATH, { wallets: [] });
+  return loadJsonRecord<SmartWalletsDB>(SMART_WALLETS_FILE, { wallets: [] });
 }
 
 function saveWallets(data: SmartWalletsDB): void {
-  saveJsonRecord(WALLETS_PATH, data);
+  saveJsonRecord(SMART_WALLETS_FILE, data);
 }
 
 const SOLANA_PUBKEY_RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;

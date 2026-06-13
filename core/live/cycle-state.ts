@@ -1,30 +1,8 @@
 /**
  * Shared mutable state for live cycle management.
  *
- * Breaks circular dependency between core/live/manage.ts and index.ts.
- * Both modules import this instead of directly referencing each other's state.
+ * Keeps active timer registrations (peakConfirmTimers, trailingDropConfirmTimers, and delay configs).
  */
-
-// ═══════════════════════════════════════════
-//  CYCLE TIMERS
-// ═══════════════════════════════════════════
-export const timers: { managementLastRun: number | null; screeningLastRun: number | null } = {
-  managementLastRun: null,
-  screeningLastRun: null,
-};
-
-// ═══════════════════════════════════════════
-//  CYCLE LOCKS
-// ═══════════════════════════════════════════
-export let managementBusy: boolean = false;
-export let screeningBusy: boolean = false;
-export let screeningLastTriggered: number = 0; // epoch ms — prevents management from spamming screening
-
-export const SCREENING_COOLDOWN_MS: number = 5 * 60 * 1000; // minimum gap between screening cycles
-
-export function setManagementBusy(v: boolean): void { managementBusy = v; }
-export function setScreeningBusy(v: boolean): void { screeningBusy = v; }
-export function setScreeningLastTriggered(v: number): void { screeningLastTriggered = v; }
 
 // ═══════════════════════════════════════════
 //  POLL-TRIGGERED MANAGEMENT

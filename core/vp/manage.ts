@@ -8,10 +8,14 @@ import BN from "bn.js";
 import { getBinsInRange, invalidatePositionsCache } from "../../providers/meteora/index.js";
 import { getConnection } from "../../providers/solana/index.js";
 import {
-  listVirtualPositions,
-  updateVirtualPosition,
-  closeVirtualPosition,
-  getVirtualPosition,
+  listVpPositions,
+  updateVpPosition,
+  recordVpClose,
+  getVpPosition,
+  isVpOutOfRange,
+  markVpOutOfRange,
+  markVpInRange,
+  minutesVpOutOfRange,
 } from "./state.js";
 import { fetchSolPrice } from "../../providers/jupiter/index.js";
 import { recordPoolDeploy } from "../pool-memory.js";
@@ -32,8 +36,8 @@ interface BinsInRangeResult {
   bins: BinData[];
 }
 
-/** Return type from closeVpManual */
-interface CloseManualResult {
+/** Return type from closeVpPosition */
+interface CloseVpPositionResult {
   success: boolean;
   error?: string;
   dry_run?: true;
@@ -55,7 +59,7 @@ interface CloseManualResult {
  * to the cycle value on RPC failure (logs a warning).
  *
  * Used by both close-rule and trailing-TP close paths in
- * runVirtualManagementCycle.
+ * runVpManagementCycle.
  */
 async function getFreshCloseGasSol(cycleCloseGasSol: number, vpId: string): Promise<number> {
   try {
@@ -73,7 +77,7 @@ async function getFreshCloseGasSol(cycleCloseGasSol: number, vpId: string): Prom
  * reads pre-computed polymorphic values. Mirrors the live
  * getCloseRule shape in core/close-rules.ts, which sees
  * position.pnl_pct from getMyPositions — already polymorphic via
- * mergeVirtualPositions. Without this branching the rule would always
+ * mergeVpPositions. Without this branching the rule would always
  * check USD PnL while Telegram shows SOL PnL, so TP/SL/trailing-TP
  * decisions would diverge from the display.
  */
@@ -132,7 +136,7 @@ function recordVpDeployToPoolMemory(
 
   try {
     recordPoolDeploy(vp.pool, {
-    pool_name: vp.pool_name ?? vp.pair ?? (undefined as unknown as string),
+      pool_name: vp.pool_name ?? vp.pair ?? (undefined as unknown as string),
       base_mint: vp.base_mint ?? undefined,
       deployed_at: vp.deployed_at ?? undefined,
       closed_at: new Date().toISOString(),
@@ -177,7 +181,7 @@ async function closeVpAndRecord(
     poolParams: poolParams ?? undefined,
   });
 
-  const closed = closeVirtualPosition(vp.id, reason, finalPnl.pnlPct, finalPnl.pnlUsd, {
+  const closed = recordVpClose(vp.id, reason, finalPnl.pnlPct, finalPnl.pnlUsd, {
     close_pnl_sol_pct: finalPnl.pnlSolPct,
     close_pnl_sol: finalPnl.netPnlSol,
     close_il_sol: finalPnl.rawPnlSol,
@@ -210,9 +214,9 @@ async function closeVpAndRecord(
  * On any failure (VP not found, RPC error, archive write) returns
  * `{ success: false, error }` with NO partial state mutation.
  */
-export async function closeVpManual(vpId: string, reason: string): Promise<CloseManualResult> {
-  const vp = getVirtualPosition(vpId);
-  if (!vp) return { success: false, error: `VP not found: ${vpId}` };
+export async function closeVpPosition(vp_id: string, reason: string): Promise<CloseVpPositionResult> {
+  const vp = getVpPosition(vp_id);
+  if (!vp) return { success: false, error: `VP not found: ${vp_id}` };
 
   let finalPnl: PositionPnlResult;
   try {
@@ -236,11 +240,11 @@ export async function closeVpManual(vpId: string, reason: string): Promise<Close
       poolParams: poolParams ?? undefined,
     });
   } catch (e) {
-    log("vp_close", `Fresh PnL failed for manual close ${vpId}: ${(e as Error).message}`);
+    log("vp_close", `Fresh PnL failed for manual close ${vp_id}: ${(e as Error).message}`);
     return { success: false, error: `Fresh PnL failed: ${(e as Error).message}` };
   }
 
-  const closed = closeVirtualPosition(vpId, reason, finalPnl.pnlPct, finalPnl.pnlUsd, {
+  const closed = recordVpClose(vp_id, reason, finalPnl.pnlPct, finalPnl.pnlUsd, {
     close_pnl_sol_pct: finalPnl.pnlSolPct,
     close_pnl_sol: finalPnl.netPnlSol,
     close_il_sol: finalPnl.rawPnlSol,
@@ -255,7 +259,7 @@ export async function closeVpManual(vpId: string, reason: string): Promise<Close
   }
   invalidatePositionsCache();
   recordVpDeployToPoolMemory(vp, finalPnl, reason, vp._oor_minutes || 0);
-  log("vp_close", `VP ${vpId} (${vp.pair}) CLOSED (manual): ${reason} PnL=${finalPnl.pnlPct.toFixed(2)}% (SOL: ${finalPnl.pnlSolPct.toFixed(2)}%)`);
+  log("vp_close", `VP ${vp_id} (${vp.pair}) CLOSED (manual): ${reason} PnL=${finalPnl.pnlPct.toFixed(2)}% (SOL: ${finalPnl.pnlSolPct.toFixed(2)}%)`);
 
   const isSol = !!config.management.solMode;
   return {
@@ -264,8 +268,8 @@ export async function closeVpManual(vpId: string, reason: string): Promise<Close
     is_virtual: true,
     vp,
     finalPnl,
-    position: `vp:${vpId}`,
-    pair: vp.pair || vp.pool_name || `vp:${vpId}`,
+    position: `vp:${vp_id}`,
+    pair: vp.pair || vp.pool_name || `vp:${vp_id}`,
     pool: vp.pool,
     pool_name: vp.pool_name || vp.pair || undefined,
     base_mint: vp.base_mint || undefined,
@@ -274,14 +278,20 @@ export async function closeVpManual(vpId: string, reason: string): Promise<Close
   };
 }
 
+// ─── Trailing TP ────────────────────────────────────────────────────────────
+// Functions live in core/vp/state.ts (same pattern as core/live/state.ts)
+import { queueVpPeakConfirmation, queueVpTrailingDropConfirmation, updateVpPnlAndCheckExits } from "./state.js";
+
+// ─── Main Management Cycle ──────────────────────────────────────────────────
+
 /**
  * Run one management cycle for all open virtual positions.
  * Fetches live bin state, computes PnL, updates state, auto-closes on exit conditions.
  *
  * @returns Result array with { id, pair, action, ... } for each VP
  */
-export async function runVirtualManagementCycle(): Promise<VpResult[]> {
-  const vpList = listVirtualPositions("open");
+export async function runVpManagementCycle(): Promise<VpResult[]> {
+  const vpList = listVpPositions("open");
   if (vpList.length === 0) return [];
 
   const solPrice = await fetchSolPrice();
@@ -332,66 +342,46 @@ export async function runVirtualManagementCycle(): Promise<VpResult[]> {
         activeBinId: activeBin,
         poolParams: poolParams ?? undefined,
       });
-      const now = Date.now();
-      const isOOR = activeBin > vp.upper_bin!;
 
-      let effectiveOorMinutes = vp._oor_minutes ?? 0;
-      let oorSince: string | null = vp._oor_since as string | null;
-      if (isOOR) {
-        if (!oorSince) {
-          oorSince = new Date().toISOString();
-          effectiveOorMinutes = 0;
-        } else {
-          const oorTs = new Date(oorSince).getTime();
-          effectiveOorMinutes = Number.isFinite(oorTs) ? Math.floor((now - oorTs) / 60000) : 0;
-        }
-      } else {
-        oorSince = null;
-        effectiveOorMinutes = 0;
-      }
+      const upperBin = vp.upper_bin ?? null;
+      const oor = isVpOutOfRange(activeBin, upperBin)
+        ? markVpOutOfRange(activeBin, upperBin, vp._oor_since as string | null)
+        : markVpInRange(activeBin, upperBin, vp._oor_since as string | null);
+      const oorMinutes = minutesVpOutOfRange(oor.oorSince);
 
       const updates: Record<string, unknown> = {
         _peak_pnl_pct: Math.max(vp._peak_pnl_pct || 0, pnl.pnlPct),
         _peak_pnl_sol_pct: Math.max(vp._peak_pnl_sol_pct || 0, pnl.pnlSolPct),
-        _oor_since: oorSince,
-        _oor_minutes: effectiveOorMinutes,
+        _oor_since: oor.oorSince,
+        _oor_minutes: oorMinutes,
         _trailing_active: vp._trailing_active || false,
         _trailing_pending: vp._trailing_pending || false,
         _trailing_pending_since: vp._trailing_pending_since || null,
         last_sync_at: new Date().toISOString(),
       };
 
-      let trailingActive = updates._trailing_active as boolean;
-      let trailingPending = updates._trailing_pending as boolean;
-      let trailingCloseReason: string | null = null;
-
       const trailingIsSol = !!mgmtConfig.solMode;
       const trailingPeakField = trailingIsSol ? "_peak_pnl_sol_pct" : "_peak_pnl_pct";
       const trailingPeak = (updates[trailingPeakField] as number) || 0;
       const trailingCurrentPnl = trailingIsSol ? pnl.pnlSolPct : pnl.pnlPct;
 
-      if (mgmtConfig.trailingTakeProfit && !trailingActive && trailingPeak >= (mgmtConfig.trailingTriggerPct ?? 6)) {
-        trailingActive = true;
-      }
+      const trailingResult = updateVpPnlAndCheckExits(
+        vp._trailing_active || false,
+        vp._trailing_pending || false,
+        trailingPeak,
+        trailingCurrentPnl,
+        mgmtConfig
+      );
 
-      if (mgmtConfig.trailingTakeProfit && trailingActive) {
-        const dropFromPeak = trailingPeak - trailingCurrentPnl;
-        const effectiveDropPct = mgmtConfig.trailingDropPct ?? 2.5;
-        if (dropFromPeak >= effectiveDropPct && trailingCurrentPnl >= 0) {
-          if (trailingPending) {
-            trailingCloseReason = `trailing TP: peak ${trailingPeak.toFixed(2)}% → current ${trailingCurrentPnl.toFixed(2)}% (dropped ${dropFromPeak.toFixed(2)}% ≥ ${effectiveDropPct}%)`;
-          } else {
-            trailingPending = true;
-            updates._trailing_pending_since = new Date().toISOString();
-          }
-        } else {
-          trailingPending = false;
-          updates._trailing_pending_since = null;
-        }
-      }
+      updates._trailing_active = trailingResult.trailingActive;
+      updates._trailing_pending = trailingResult.trailingPending;
+      let trailingCloseReason = trailingResult.trailingCloseReason;
 
-      updates._trailing_active = trailingActive;
-      updates._trailing_pending = trailingPending;
+      if (trailingResult.trailingPending && !vp._trailing_pending) {
+        updates._trailing_pending_since = new Date().toISOString();
+      } else if (!trailingResult.trailingPending) {
+        updates._trailing_pending_since = null;
+      }
 
       const snapshots = (vp.snapshots || []) as Array<Record<string, unknown>>;
       snapshots.push({
@@ -403,7 +393,7 @@ export async function runVirtualManagementCycle(): Promise<VpResult[]> {
         unclaimed_fees_usd: pnl.unclaimedFeesUsd,
         sol_price: solPrice,
         active_bin: activeBin,
-        oor_minutes: effectiveOorMinutes,
+        oor_minutes: oorMinutes,
       });
       if (snapshots.length > 100) snapshots.splice(0, snapshots.length - 100);
       updates.snapshots = snapshots;
@@ -413,12 +403,12 @@ export async function runVirtualManagementCycle(): Promise<VpResult[]> {
       const vpAgeMinutes = vp.deployed_at
         ? Math.floor((Date.now() - new Date(vp.deployed_at).getTime()) / 60000)
         : 0;
-      const closeRule = getCloseRule(posForRule as any, mgmtConfig as any, effectiveOorMinutes);
+      const closeRule = getCloseRule(posForRule as any, mgmtConfig as any, oorMinutes);
       const closeReason = closeRule?.reason || trailingCloseReason;
       if (closeReason) {
-        updateVirtualPosition(vp.id, updates);
+        updateVpPosition(vp.id, updates);
         const finalPnl = await closeVpAndRecord(
-          vp, closeReason, binResult.bins, solPrice, activeBin, cycleCloseGasSol!, effectiveOorMinutes, poolParams
+          vp, closeReason, binResult.bins, solPrice, activeBin, cycleCloseGasSol!, oorMinutes, poolParams
         );
         if (!finalPnl) continue;
         results.push({
@@ -428,9 +418,9 @@ export async function runVirtualManagementCycle(): Promise<VpResult[]> {
         continue;
       }
 
-      updateVirtualPosition(vp.id, updates);
+      updateVpPosition(vp.id, updates);
 
-      const oorLabel = isOOR ? `OOR ${effectiveOorMinutes}m` : "IN";
+      const oorLabel = oor.oorSince ? `OOR ${oorMinutes}m` : "IN";
       results.push({
         id: vp.id,
         pair: vp.pair!,

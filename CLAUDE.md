@@ -25,7 +25,7 @@ core/                 Pure business logic (no direct API calls)
   signal-weights.ts   Signal weight management
   smart-wallets.ts    KOL/alpha wallet tracker
   live/
-    manage.ts         Live lifecycle management (runManagementCycle)
+    manage.ts         Live lifecycle management (runLiveManagementCycle)
     screen.ts         Screening cycle + tryStartScreening
     cycle-state.ts    Shared mutable state (busy flags, timers)
   vp/                 Virtual position management

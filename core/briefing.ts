@@ -3,8 +3,10 @@ import fs from "fs";
 import { log } from "../utils/logger.js";
 import { getPerformanceSummary } from "./lessons.js";
 
-const STATE_FILE = "./state.json";
-const LESSONS_FILE = "./lessons.json";
+import { LIVE_STATE_FILE, LESSONS_FILE } from "../config/paths.js";
+
+const STATE_FILE = LIVE_STATE_FILE;
+const LESSONS_PATH = LESSONS_FILE;
 
 interface StateData {
   positions?: Record<string, Record<string, unknown>>;
@@ -28,7 +30,7 @@ function loadJson<T>(file: string): T | null {
 
 export async function generateBriefing(): Promise<string> {
   const state = loadJson<StateData>(STATE_FILE) ?? { positions: {}, recentEvents: [] };
-  const lessonsData = loadJson<LessonsData>(LESSONS_FILE) ?? { lessons: [], performance: [] };
+  const lessonsData = loadJson<LessonsData>(LESSONS_PATH) ?? { lessons: [], performance: [] };
 
   const now = new Date();
   const last24h = new Date(now.getTime() - 24 * 60 * 60 * 1000);

@@ -3,8 +3,10 @@ import fs from "fs";
 import { log } from "../utils/logger.js";
 import type { BlacklistEntry, BlocklistEntry } from "../types/index.js";
 
-const BLACKLIST_FILE = "./token-blacklist.json";
-const BLOCKLIST_FILE = "./dev-blocklist.json";
+import { TOKEN_BLACKLIST_FILE, DEV_BLOCKLIST_FILE } from "../config/paths.js";
+
+const BLACKLIST_FILE = TOKEN_BLACKLIST_FILE;
+const BLOCKLIST_FILE = DEV_BLOCKLIST_FILE;
 
 // ─── Shared Helpers ────────────────────────────────────────────
 

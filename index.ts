@@ -1,7 +1,7 @@
 import "./utils/secure-env.js";
 
 // Re-export cycle functions for CLI and external callers
-export { runManagementCycle, runScreeningCycle, tryStartScreening } from "./core/index.js";
+export { runLiveManagementCycle, runScreeningCycle, tryStartScreening } from "./core/index.js";
 
 import fs from "fs";
 import cron from "node-cron";
@@ -14,7 +14,7 @@ import { getMyPositions, closePosition, getActiveBin, invalidatePositionsCache }
 import { getWalletBalances } from "./providers/solana/index.js";
 import { getTopCandidates } from "./providers/meteora/index.js";
 import { config, reloadScreeningThresholds, computeDeployAmount, computeBinsBelow } from "./config/index.js";
-import { evolveThresholds, getPerformanceSummary } from "./core/lessons.js";
+import { evolveThresholds, getPerformanceSummary } from "./core/index.js";
 import { executeTool, registerCronRestarter, registerScreeningTrigger } from "./llm/index.js";
 import {
   startPolling,
@@ -30,21 +30,39 @@ import {
   isEnabled as telegramEnabled,
   createLiveMessage,
 } from "./interfaces/index.js";
-import { generateBriefing, runManagementCycle, tryStartScreening, runScreeningCycle, getLoneCandidateSkipReason } from "./core/index.js";
+import {
+  generateBriefing,
+  runLiveManagementCycle,
+  tryStartScreening,
+  runScreeningCycle,
+  getLoneCandidateSkipReason,
+  getLastBriefingDate,
+  setLastBriefingDate,
+  getTrackedPosition,
+  getTrackedPositions,
+  setPositionInstruction,
+  resolveLivePendingPeak as resolvePendingPeak,
+  resolveLivePendingTrailingDrop as resolvePendingTrailingDrop,
+  queueLivePeakConfirmation as queuePeakConfirmation,
+  updateLivePnlAndCheckExits as updatePnlAndCheckExits,
+  queueLiveTrailingDropConfirmation as queueTrailingDropConfirmation,
+  getCloseRule,
+  recordPositionSnapshot,
+  recallForPool,
+  addPoolNote,
+  checkSmartWalletsOnPool,
+  appendDecision,
+  parseVirtualPositionAddress,
+  closeVpPosition as closeVpManual,
+  generateVpReport as generateDryRunReport,
+  readArchive,
+  compileVpStats,
+} from "./core/index.js";
 import { stripThink } from "./utils/text.js";
-import { getLastBriefingDate, setLastBriefingDate, getTrackedPosition, getTrackedPositions, setPositionInstruction, updatePnlAndCheckExits, queuePeakConfirmation, resolvePendingPeak, queueTrailingDropConfirmation, resolvePendingTrailingDrop } from "./core/state.js";
-import { getCloseRule } from "./core/index.js";
-import { recordPositionSnapshot, recallForPool, addPoolNote } from "./core/pool-memory.js";
-import { checkSmartWalletsOnPool } from "./core/smart-wallets.js";
 import { getTokenNarrative, getTokenInfo } from "./providers/jupiter/index.js";
-import { appendDecision } from "./core/index.js";
 import { bootstrapHiveMind, ensureAgentId, getHiveMindPullMode, isHiveMindEnabled, pullHiveMindLessons, pullHiveMindPresets, registerHiveMindAgent, startHiveMindBackgroundSync } from "./providers/hivemind/index.js";
-import { runVirtualManagementCycle } from "./core/vp/manage.js";
-import { parseVirtualPositionAddress } from "./core/vp/state.js";
-import { closeVpManual } from "./core/vp/manage.js";
-import { generateDryRunReport } from "./core/vp/report.js";
-import { readArchive, compileVpStats } from "./core/archive.js";
-import { managementBusy, setManagementBusy, screeningBusy, setScreeningBusy, timers, peakConfirmTimers, trailingDropConfirmTimers, TRAILING_PEAK_CONFIRM_DELAY_MS, TRAILING_PEAK_CONFIRM_TOLERANCE, TRAILING_DROP_CONFIRM_DELAY_MS, TRAILING_DROP_CONFIRM_TOLERANCE_PCT, pollTriggeredAt, setPollTriggeredAt } from "./core/live/cycle-state.js";
+import { managementBusy, setManagementBusy, screeningBusy, setScreeningBusy, timers } from "./core/index.js";
+import { peakConfirmTimers, trailingDropConfirmTimers, TRAILING_PEAK_CONFIRM_DELAY_MS, TRAILING_PEAK_CONFIRM_TOLERANCE, TRAILING_DROP_CONFIRM_DELAY_MS, TRAILING_DROP_CONFIRM_TOLERANCE_PCT, pollTriggeredAt, setPollTriggeredAt } from "./core/index.js";
 import type { LivePosition } from "./types/index.js";
 
 // ── Type helpers ──────────────────────────────────────────────
@@ -152,7 +170,7 @@ function scheduleTrailingDropConfirmation(positionAddress: string): void {
       );
       if (resolved?.confirmed) {
         log("state", `[Trailing recheck] Confirmed trailing exit for ${positionAddress} — triggering management`);
-        runManagementCycle({ silent: true }, manageDeps).catch((e: Error) => log("cron_error", `Trailing recheck management failed: ${e.message}`));
+        runLiveManagementCycle({ silent: true }, manageDeps).catch((e: Error) => log("cron_error", `Trailing recheck management failed: ${e.message}`));
       }
     } catch (error: any) {
       log("state_warn", `Trailing drop confirmation failed for ${positionAddress}: ${error.message}`);
@@ -203,7 +221,7 @@ export function startCronJobs(): void {
   const mgmtTask = cron.schedule(`*/${Math.max(1, config.schedule.managementIntervalMin)} * * * *`, async () => {
     if (managementBusy) return;
     timers.managementLastRun = Date.now();
-    await runManagementCycle({}, manageDeps);
+    await runLiveManagementCycle({}, manageDeps);
   });
 
   const screenTask = cron.schedule(`*/${Math.max(1, config.schedule.screeningIntervalMin)} * * * *`, async () => {
@@ -267,7 +285,7 @@ Summarize the current portfolio health, total fees earned, and performance of al
           if (sinceLastTrigger >= cooldownMs) {
             setPollTriggeredAt(Date.now());
             log("state", `[PnL poll] Exit alert: ${p.pair} — ${exit.reason} — triggering management`);
-            runManagementCycle({ silent: true }, manageDeps).catch((e: Error) => log("cron_error", `Poll-triggered management failed: ${e.message}`));
+            runLiveManagementCycle({ silent: true }, manageDeps).catch((e: Error) => log("cron_error", `Poll-triggered management failed: ${e.message}`));
           } else {
             log("state", `[PnL poll] Exit alert: ${p.pair} — ${exit.reason} — cooldown (${Math.round((cooldownMs - sinceLastTrigger) / 1000)}s left)`);
           }
@@ -280,7 +298,7 @@ Summarize the current portfolio health, total fees earned, and performance of al
           if (sinceLastTrigger >= cooldownMs) {
             setPollTriggeredAt(Date.now());
             log("state", `[PnL poll] Deterministic close rule: ${p.pair} — Rule ${closeRule.rule}: ${closeRule.reason} — triggering management`);
-            runManagementCycle({ silent: true }, manageDeps).catch((e: Error) => log("cron_error", `Poll-triggered management failed: ${e.message}`));
+            runLiveManagementCycle({ silent: true }, manageDeps).catch((e: Error) => log("cron_error", `Poll-triggered management failed: ${e.message}`));
           } else {
             log("state", `[PnL poll] Deterministic close rule: ${p.pair} — Rule ${closeRule.rule}: ${closeRule.reason} — cooldown (${Math.round((cooldownMs - sinceLastTrigger) / 1000)}s left)`);
           }
@@ -1443,7 +1461,8 @@ Focus on: hold duration, entry/exit timing, what win rates look like, whether sc
           return;
         }
         const fs: any = await import("fs");
-        const lessonsData: any = JSON.parse(fs.default.readFileSync("./lessons.json", "utf8"));
+        const { LESSONS_FILE } = await import("./config/paths.js");
+        const lessonsData: any = JSON.parse(fs.default.readFileSync(LESSONS_FILE, "utf8"));
         const result: any = evolveThresholds(lessonsData.performance, config);
         if (!result || Object.keys(result.changes).length === 0) {
           console.log("\nNo threshold changes needed — current settings already match performance data.\n");

@@ -12,7 +12,9 @@ user-config.json
 
 # Runtime state (position tracking, lessons — user-specific)
 state.json
+live_state.json
 dry-run-state.json
+vp_state.json
 dry-run-state-archive-*.json
 
 # Generated reports

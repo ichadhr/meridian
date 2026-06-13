@@ -49,7 +49,7 @@ interface PoolAgg {
  * @param opts.maxCloses Maximum positions to sample (default 10)
  * @returns Formatted digest or null if insufficient data
  */
-export async function generateVirtualDigest({
+export async function generateVpDigest({
   hours = 72,
   minCloses = 5,
   maxCloses = 10,

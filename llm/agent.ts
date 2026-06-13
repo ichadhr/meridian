@@ -6,9 +6,7 @@ import { getWalletBalances } from "../providers/solana/index.js";
 import { getMyPositions } from "../providers/meteora/index.js";
 import { log } from "../utils/logger.js";
 import { config } from "../config/index.js";
-import { getStateSummary } from "../core/state.js";
-import { getLessonsForPrompt, getPerformanceSummary } from "../core/lessons.js";
-import { getDecisionSummary } from "../core/decision-log.js";
+import { getStateSummary, getLessonsForPrompt, getPerformanceSummary, getDecisionSummary } from "../core/index.js";
 
 type AgentType = "SCREENER" | "MANAGER" | "GENERAL";
 
@@ -101,7 +99,7 @@ function getToolsForRole(agentType: AgentType, goal: string = ""): any[] {
 // To use LM Studio: set LLM_BASE_URL=http://localhost:1234/v1 and LLM_API_KEY=lm-studio in .env
 const client = new OpenAI({
   baseURL: process.env.LLM_BASE_URL || "https://openrouter.ai/api/v1",
-  apiKey: process.env.LLM_API_KEY || process.env.OPENROUTER_API_KEY,
+  apiKey: process.env.LLM_API_KEY || process.env.OPENROUTER_API_KEY || "dummy",
   timeout: 5 * 60 * 1000,
 });
 
@@ -173,7 +171,7 @@ export async function agentLoop(
   const { interactive = false, onToolStart = null, onToolFinish = null } = options;
   // Build dynamic system prompt with current portfolio state
   const [portfolio, positions] = await Promise.all([getWalletBalances(), getMyPositions()]);
-  const stateSummary = getStateSummary();
+  const stateSummary = await getStateSummary();
   const lessons = getLessonsForPrompt({ agentType });
   const perfSummary = getPerformanceSummary();
   const decisionSummary = getDecisionSummary();
@@ -181,12 +179,12 @@ export async function agentLoop(
   let virtualDigest: any = null;
   if (agentType === "SCREENER") {
     try {
-      const { getWeightsSummary } = await import("../core/signal-weights.js");
+      const { getWeightsSummary } = await import("../core/index.js");
       if (config.darwin?.enabled) weightsSummary = (getWeightsSummary as any)();
     } catch { /* signal-weights not critical */ }
     try {
-      const { generateVirtualDigest } = await import("../core/vp/digest.js");
-      virtualDigest = await (generateVirtualDigest as any)();
+      const { generateVpDigest } = await import("../core/index.js");
+      virtualDigest = await (generateVpDigest as any)();
     } catch { /* virtual-digest not critical */ }
   }
   const systemPrompt = buildSystemPrompt(agentType, portfolio, positions, stateSummary, lessons, perfSummary, weightsSummary, decisionSummary, virtualDigest);

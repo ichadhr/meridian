@@ -154,7 +154,7 @@ Only call this if you need the current price to calculate a specific bin range (
 
 PRIORITY ORDER for strategy and bins:
 1. User explicitly specifies → always follow exactly (user override is absolute)
-2. No user spec → use active strategy's lp_strategy and choose bins based on volatility
+2. No user spec → use config.strategy.strategy and choose bins based on volatility
 
 HARD RULES:
 - Never use 'curve'.
@@ -165,7 +165,7 @@ HARD RULES:
   use bins_below only, keep bins_above=0, and the upper bin will be pinned to the current active bin.
 
 Guidelines (only when user hasn't specified):
-- Strategy: use the active strategy's lp_strategy field (bid_ask or spot)
+- Strategy: use config.strategy.strategy (bid_ask or spot) from user-config.json
 - Bins: choose from configured minBinsBelow/maxBinsBelow by positive volatility. The hard lower floor is 35 bins.
 - Deposit: single-sided SOL only: set amount_y/amount_sol, keep amount_x=0.
 
@@ -192,7 +192,7 @@ WARNING: This executes a real on-chain transaction. Check DRY_RUN mode.`,
           strategy: {
             type: "string",
             enum: ["bid_ask", "spot"],
-            description: "DLMM strategy type. If user specifies, use exactly what they said. Otherwise use the active strategy's lp_strategy field."
+            description: "DLMM strategy type. If user specifies, use exactly what they said. Otherwise use config.strategy.strategy from user-config.json."
           },
           bins_below: {
             type: "number",
@@ -732,7 +732,7 @@ Use this immediately whenever the user gives a specific instruction about a posi
 - "close if it goes out of range"
 - "hold for at least 2 hours"
 
-The instruction is stored in state.json and injected into every management cycle prompt.
+The instruction is stored in live_state.json and injected into every management cycle prompt.
 Pass null or empty string to clear an existing instruction.`,
       parameters: {
         type: "object",

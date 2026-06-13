@@ -11,7 +11,9 @@ import { config } from "../config/index.js";
 import { loadJsonRecord, saveJsonRecord } from "../config/index.js";
 import type { PoolMemoryEntry, PoolDeploy, PoolSnapshot } from "../types/index.js";
 
-const POOL_MEMORY_FILE = "./pool-memory.json";
+import { POOL_MEMORY_FILE } from "../config/paths.js";
+
+const POOL_MEMORY_PATH = POOL_MEMORY_FILE;
 const MAX_NOTE_LENGTH = 280;
 
 function sanitizeStoredNote(text: unknown, maxLen = MAX_NOTE_LENGTH): string | null {
@@ -26,11 +28,11 @@ function sanitizeStoredNote(text: unknown, maxLen = MAX_NOTE_LENGTH): string | n
 }
 
 function load(): Record<string, PoolMemoryEntry> {
-  return loadJsonRecord<Record<string, PoolMemoryEntry>>(POOL_MEMORY_FILE, {});
+  return loadJsonRecord<Record<string, PoolMemoryEntry>>(POOL_MEMORY_PATH, {});
 }
 
 function save(data: Record<string, PoolMemoryEntry>): void {
-  saveJsonRecord(POOL_MEMORY_FILE, data);
+  saveJsonRecord(POOL_MEMORY_PATH, data);
 }
 
 function isOorCloseReason(reason: unknown): boolean {
