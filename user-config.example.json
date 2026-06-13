@@ -70,9 +70,21 @@
   "temperature": 0.373,
   "maxTokens": 4096,
   "maxSteps": 20,
-  "managementModel": "minimax/minimax-m2.5",
-  "screeningModel": "minimax/minimax-m2.5",
-  "generalModel": "minimax/minimax-m2.7",
+  "managementModel": {
+    "provider": "openrouter",
+    "model": "minimax/minimax-m2.5",
+    "fallback": [{ "provider": "openrouter", "model": "minimax/minimax-m2.7" }]
+  },
+  "screeningModel": {
+    "provider": "openrouter",
+    "model": "minimax/minimax-m2.5",
+    "fallback": [{ "provider": "openrouter", "model": "minimax/minimax-m2.7" }]
+  },
+  "generalModel": {
+    "provider": "openrouter",
+    "model": "minimax/minimax-m2.7",
+    "fallback": [{ "provider": "openrouter", "model": "minimax/minimax-m2.5" }]
+  },
 
   "darwinEnabled": true,
   "darwinWindowDays": 60,
