@@ -606,7 +606,6 @@ const toolMap: Record<string, ToolFn> = {
     const intervalChanged = applied.managementIntervalMin != null || applied.screeningIntervalMin != null;
     if (intervalChanged) {
       bus.emit("cron-config-changed");
-      log("config", `Cron restarted — management: ${config.schedule.managementIntervalMin}m, screening: ${config.schedule.screeningIntervalMin}m`);
     }
 
     // Skip repeated volatility-driven interval changes; they are operational tuning, not reusable lessons.

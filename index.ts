@@ -1315,7 +1315,7 @@ Focus on: hold duration, entry/exit timing, what win rates look like, whether sc
 } else if (isMain) {
   // Non-TTY: start immediately
   log("startup", "Non-TTY mode — starting cron cycles immediately.");
-  startCronJobs();
+  _launchCron();
   maybeRunMissedBriefing().catch(() => { });
   startPolling(telegramHandler);
   (async () => {

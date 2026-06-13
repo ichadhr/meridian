@@ -264,7 +264,10 @@ export function startCronJobs(): void {
  * Restart cron jobs (called by executor.ts when intervals change).
  */
 export function restartCronJobs(): void {
-  if (cronStarted) startCronJobs();
+  if (cronStarted) {
+    startCronJobs();
+    log("config", `Cron restarted — management: ${config.schedule.managementIntervalMin}m, screening: ${config.schedule.screeningIntervalMin}m`);
+  }
 }
 
 /**
