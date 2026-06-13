@@ -85,13 +85,22 @@ export interface ScheduleConfig {
   healthCheckIntervalMin: number;
 }
 
+export interface ModelConfig {
+  provider: string;
+  model: string;
+  fallback?: Array<{
+    provider: string;
+    model: string;
+  }>;
+}
+
 export interface LlmConfig {
   temperature: number;
   maxTokens: number;
   maxSteps: number;
-  managementModel: string;
-  screeningModel: string;
-  generalModel: string;
+  managementModel: ModelConfig;
+  screeningModel: ModelConfig;
+  generalModel: ModelConfig;
   thinkingManagement: boolean;
   thinkingScreening: boolean;
   thinkingGeneral: boolean;
