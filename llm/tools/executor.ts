@@ -211,7 +211,7 @@ async function validateDeployPoolThresholds(args: Record<string, unknown>): Prom
   return { pass: true };
 }
 
-// Restart cron jobs and trigger screening are now imported directly — no registration hacks needed
+// Cron restart is signaled via the shared event bus to avoid scheduler import cycle.
 
 function coerceBoolean(value: unknown, key: string): boolean {
   if (typeof value === "boolean") return value;

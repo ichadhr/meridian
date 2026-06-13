@@ -56,6 +56,7 @@ let _healthCheckFn: (() => Promise<void>) | null = null;
  */
 export function initScheduler(opts: { healthCheckFn: () => Promise<void> }): void {
   _healthCheckFn = opts.healthCheckFn;
+  bus.removeAllListeners("cron-config-changed");
   bus.on("cron-config-changed", () => restartCronJobs());
 }
 
