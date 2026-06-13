@@ -116,7 +116,7 @@ Sets defined in `agent.ts:6-7`. If you add a tool, also add it to the relevant s
 | outOfRangeWaitMinutes | management | 30 |
 | managementIntervalMin | schedule | 10 |
 | screeningIntervalMin | schedule | 30 |
-| managementModel / screeningModel / generalModel | llm | openrouter/healer-alpha |
+| managementModel / screeningModel / generalModel | llm | ModelConfig object (see Model Configuration below) |
 
 **`computeDeployAmount(walletSol)`** — scales position size with wallet balance (compounding). Formula: `clamp(deployable × positionSizePct, floor=deployAmountSol, ceil=maxDeployAmount)`.
 
@@ -207,9 +207,29 @@ const actualBaseFee = baseFactor > 0
 ## Model Configuration
 
 - Default model: `process.env.LLM_MODEL` or `openrouter/healer-alpha`
-- Fallback on 502/503/529: `stepfun/step-3.5-flash:free` (2nd attempt), then retry
+- **Multi-provider support:** Each role can use a different provider with its own failover chain
 - Per-role models: `managementModel`, `screeningModel`, `generalModel` in user-config.json
-- LM Studio: set `LLM_BASE_URL=http://localhost:1234/v1` and `LLM_API_KEY=lm-studio`
+
+**Provider setup:**
+1. Add `LLM_PROVIDER_{NAME}_BASE_URL` and `LLM_PROVIDER_{NAME}_APIKEY` to `.env`
+2. Reference provider name in `user-config.json` model config
+
+**Config format (object with failover):**
+```json
+"screeningModel": {
+  "provider": "anthropic",
+  "model": "claude-opus-4-5",
+  "fallback": [{ "provider": "openrouter", "model": "healer-alpha" }]
+}
+```
+
+**Config format (legacy string, still works):**
+```json
+"screeningModel": "openrouter/healer-alpha"
+```
+
+- Error classification: 429/502/503/529 → retry; persistent failure → failover; 401/403/400 → fatal
+- LM Studio: set `LLM_PROVIDER_LOCAL_BASE_URL=http://localhost:1234/v1` and `LLM_PROVIDER_LOCAL_APIKEY=lm-studio`
 - `maxOutputTokens` minimum: 2048 (free models may have lower limits causing empty responses)
 
 ---
