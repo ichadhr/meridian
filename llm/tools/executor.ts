@@ -243,6 +243,27 @@ function coerceStringArray(value: unknown, key: string): string[] {
   return value.map((entry: unknown) => coerceString(entry, key)).filter(Boolean);
 }
 
+/** Normalize a model config value (string or object) into ModelConfig for persistence. */
+function normalizeModelConfig(val: unknown): { provider: string; model: string; fallback: Array<{ provider: string; model: string }> } {
+  if (val && typeof val === "object" && !Array.isArray(val)) {
+    const obj = val as Record<string, unknown>;
+    return {
+      provider: typeof obj.provider === "string" ? obj.provider : "default",
+      model: typeof obj.model === "string" ? obj.model : "",
+      fallback: Array.isArray(obj.fallback) ? obj.fallback : [],
+    };
+  }
+  if (typeof val === "string" && val.trim()) {
+    const trimmed = val.trim();
+    const slashIdx = trimmed.indexOf("/");
+    if (slashIdx > 0) {
+      return { provider: trimmed.slice(0, slashIdx), model: trimmed.slice(slashIdx + 1), fallback: [] };
+    }
+    return { provider: "default", model: trimmed, fallback: [] };
+  }
+  return { provider: "default", model: "", fallback: [] };
+}
+
 function normalizeConfigValue(key: string, value: unknown): unknown {
   const booleanKeys = new Set([
     "excludeHighSupplyConcentration",
@@ -261,9 +282,6 @@ function normalizeConfigValue(key: string, value: unknown): unknown {
     "category",
     "discordSignalMode",
     "strategy",
-    "managementModel",
-    "screeningModel",
-    "generalModel",
     "hiveMindUrl",
     "hiveMindApiKey",
     "agentId",
@@ -498,6 +516,7 @@ const toolMap: Record<string, ToolFn> = {
 
     const changesObj = changes as Record<string, unknown>;
     const STRATEGY_BIN_KEYS = new Set(["binsBelow", "minBinsBelow", "maxBinsBelow", "defaultBinsBelow"]);
+    const MODEL_FIELDS = new Set(["managementModel", "screeningModel", "generalModel"]);
     for (const [key, val] of Object.entries(changesObj)) {
       const match = CONFIG_MAP[key] ? [key, CONFIG_MAP[key]] as const : CONFIG_MAP_LOWER[key.toLowerCase()];
       if (!match) { unknown.push(key); continue; }
@@ -510,6 +529,8 @@ const toolMap: Record<string, ToolFn> = {
             throw new Error(`${matchKey} must be a finite number`);
           }
           normalizedVal = Math.max(MIN_SAFE_BINS_BELOW, Math.round(numericVal));
+        } else if (MODEL_FIELDS.has(matchKey)) {
+          normalizedVal = normalizeModelConfig(val);
         } else {
           normalizedVal = normalizeConfigValue(matchKey, val as string);
         }
