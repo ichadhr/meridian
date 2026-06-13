@@ -30,6 +30,11 @@ import {
   setPollTriggeredAt,
   getLastBriefingDate,
   setLastBriefingDate,
+  resolveLivePendingPeak as resolvePendingPeak,
+  resolveLivePendingTrailingDrop as resolvePendingTrailingDrop,
+  queueLivePeakConfirmation as queuePeakConfirmation,
+  queueLiveTrailingDropConfirmation as queueTrailingDropConfirmation,
+  updateLivePnlAndCheckExits as updatePnlAndCheckExits,
 } from "../core/index.js";
 import { getMyPositions } from "../providers/meteora/index.js";
 import {
@@ -102,15 +107,6 @@ function scheduleTrailingDropConfirmation(positionAddress: string): void {
 
   trailingDropConfirmTimers.set(positionAddress, timer);
 }
-
-// Re-import from core for the helpers above (need the live/state resolvers)
-import {
-  resolveLivePendingPeak as resolvePendingPeak,
-  resolveLivePendingTrailingDrop as resolvePendingTrailingDrop,
-  queueLivePeakConfirmation as queuePeakConfirmation,
-  queueLiveTrailingDropConfirmation as queueTrailingDropConfirmation,
-  updateLivePnlAndCheckExits as updatePnlAndCheckExits,
-} from "../core/index.js";
 
 const manageDeps: ManageDeps = {
   shouldUsePnlRecheck,

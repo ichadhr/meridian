@@ -1,8 +1,5 @@
 import "./utils/secure-env.js";
 
-// Re-export cycle functions for CLI and external callers
-export { runLiveManagementCycle, runScreeningCycle, tryStartScreening } from "./core/index.js";
-
 import fs from "fs";
 import readline from "readline";
 import path from "path";
@@ -76,9 +73,6 @@ interface Candidate {
   mem: any;
   [key: string]: any;
 }
-
-// ── ManageDeps wiring (scheduler owns the implementations) ────
-const manageDeps = { shouldUsePnlRecheck: () => !config.api.lpAgentRelayEnabled, schedulePeakConfirmation: () => {}, scheduleTrailingDropConfirmation: () => {}, tryStartScreening };
 
 const entrypointPath: string | undefined = process.env.pm_exec_path || process.argv[1];
 const isMain: boolean = entrypointPath

@@ -508,7 +508,7 @@ switch (subcommand) {
 
   // ── screen ───────────────────────────────────────────────────────
   case "screen": {
-    const { runScreeningCycle } = await import("./index.js");
+    const { runScreeningCycle } = await import("./core/index.js");
     const report = await runScreeningCycle({ silent });
     out({ done: true, report: report || "No action taken" });
     break;
@@ -516,7 +516,7 @@ switch (subcommand) {
 
   // ── manage ───────────────────────────────────────────────────────
   case "manage": {
-    const { runLiveManagementCycle } = await import("./index.js");
+    const { runLiveManagementCycle } = await import("./core/index.js");
     const report = await runLiveManagementCycle({ silent }, {
       shouldUsePnlRecheck: () => false,
       schedulePeakConfirmation: () => {},
