@@ -47,7 +47,7 @@ import { studyTopLPers } from "./study.js";
 import { getTokenInfo, getTokenHolders, getTokenNarrative } from "../../providers/jupiter/token.js";
 import { getAdvancedInfo } from "../../providers/okx/index.js";
 import { config, reloadScreeningThresholds, MIN_SAFE_BINS_BELOW } from "../../config/index.js";
-import { restartCronJobs } from "../../scheduler/index.js";
+import { bus } from "../../utils/events.js";
 import { tryStartScreening } from "../../core/index.js";
 import fs from "fs";
 import path from "path";
@@ -605,7 +605,7 @@ const toolMap: Record<string, ToolFn> = {
     // Restart cron jobs if intervals changed
     const intervalChanged = applied.managementIntervalMin != null || applied.screeningIntervalMin != null;
     if (intervalChanged) {
-      restartCronJobs();
+      bus.emit("cron-config-changed");
       log("config", `Cron restarted — management: ${config.schedule.managementIntervalMin}m, screening: ${config.schedule.screeningIntervalMin}m`);
     }
 

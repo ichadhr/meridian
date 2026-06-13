@@ -9,6 +9,7 @@
 import cron from "node-cron";
 import { config } from "../config/index.js";
 import { log } from "../utils/logger.js";
+import { bus } from "../utils/events.js";
 import {
   generateBriefing,
   runLiveManagementCycle,
@@ -55,6 +56,7 @@ let _healthCheckFn: (() => Promise<void>) | null = null;
  */
 export function initScheduler(opts: { healthCheckFn: () => Promise<void> }): void {
   _healthCheckFn = opts.healthCheckFn;
+  bus.on("cron-config-changed", () => restartCronJobs());
 }
 
 // ═══════════════════════════════════════════
