@@ -2,7 +2,8 @@
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
-import type { Config } from "../types/index.js";
+import OpenAI from "openai";
+import type { Config, ModelConfig } from "../types/index.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(__dirname, "../..");
@@ -80,6 +81,86 @@ function strArray(key: string, def: string[]): string[] {
   return Array.isArray(v) ? v : def;
 }
 
+// ─── LLM Provider Registry ──────────────────────────────────
+
+const providerClients = new Map<string, OpenAI>();
+
+/** Scan env for LLM_PROVIDER_{NAME}_BASE_URL entries, return lowercase names. */
+export function discoverProviders(): string[] {
+  const prefix = "LLM_PROVIDER_";
+  const suffix = "_BASE_URL";
+  const names = new Set<string>();
+  for (const key of Object.keys(process.env)) {
+    if (key.startsWith(prefix) && key.endsWith(suffix)) {
+      const name = key.slice(prefix.length, -suffix.length).toLowerCase();
+      if (name) names.add(name);
+    }
+  }
+  return [...names];
+}
+
+/** Create OpenAI clients for all discovered providers + legacy default. */
+export function initProviders(): void {
+  for (const name of discoverProviders()) {
+    const upper = name.toUpperCase();
+    const baseUrl = process.env[`LLM_PROVIDER_${upper}_BASE_URL`];
+    const apiKey  = process.env[`LLM_PROVIDER_${upper}_APIKEY`];
+    if (!baseUrl) continue;
+    providerClients.set(name, new OpenAI({
+      baseURL: baseUrl,
+      apiKey: apiKey || "dummy",
+      timeout: 5 * 60 * 1000,
+    }));
+  }
+
+  // Legacy fallback: create "default" provider from LLM_BASE_URL / LLM_API_KEY
+  if (!providerClients.has("default")) {
+    const baseUrl = process.env.LLM_BASE_URL || "https://openrouter.ai/api/v1";
+    const apiKey  = process.env.LLM_API_KEY || process.env.OPENROUTER_API_KEY || "dummy";
+    providerClients.set("default", new OpenAI({ baseURL: baseUrl, apiKey, timeout: 5 * 60 * 1000 }));
+  }
+}
+
+/** Get a cached OpenAI client by provider name. */
+export function getClient(provider: string): OpenAI {
+  const client = providerClients.get(provider);
+  if (!client) {
+    throw new Error(
+      `Provider "${provider}" not configured — set LLM_PROVIDER_${provider.toUpperCase()}_BASE_URL in .env`,
+    );
+  }
+  return client;
+}
+
+/** Parse a model config value (string or object) into ModelConfig. */
+export function parseModelConfig(raw: unknown, defaultProvider: string, defaultModel: string): ModelConfig {
+  // Object format: { provider, model, fallback? }
+  if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+    const obj = raw as Record<string, unknown>;
+    const provider = typeof obj.provider === "string" ? obj.provider : defaultProvider;
+    const model = typeof obj.model === "string" ? obj.model : defaultModel;
+    const fallback = Array.isArray(obj.fallback)
+      ? obj.fallback
+          .filter((f: any) => f && typeof f === "object" && typeof f.provider === "string" && typeof f.model === "string")
+          .map((f: any) => ({ provider: f.provider, model: f.model }))
+      : [];
+    return { provider, model, fallback };
+  }
+
+  // String format: "provider/model" or just "model"
+  if (typeof raw === "string" && raw.trim()) {
+    const trimmed = raw.trim();
+    const slashIdx = trimmed.indexOf("/");
+    if (slashIdx > 0) {
+      return { provider: trimmed.slice(0, slashIdx), model: trimmed.slice(slashIdx + 1), fallback: [] };
+    }
+    return { provider: defaultProvider, model: trimmed, fallback: [] };
+  }
+
+  // Missing/empty — use defaults
+  return { provider: defaultProvider, model: defaultModel, fallback: [] };
+}
+
 const legacyBinsBelow = numericConfig(u.binsBelow);
 const configuredMinBinsBelow = numericConfig(u.minBinsBelow) ?? MIN_SAFE_BINS_BELOW;
 const configuredMaxBinsBelow = numericConfig(u.maxBinsBelow)
@@ -95,9 +176,6 @@ const strategyDefaultBinsBelow = Math.max(
 // Apply wallet/RPC from user-config if not already in env
 if (u.rpcUrl)    process.env.RPC_URL            ||= u.rpcUrl as string;
 if (u.walletKey) process.env.WALLET_PRIVATE_KEY ||= u.walletKey as string;
-if (u.llmModel)  process.env.LLM_MODEL          ||= u.llmModel as string;
-if (u.llmBaseUrl) process.env.LLM_BASE_URL      ||= u.llmBaseUrl as string;
-if (u.llmApiKey)  process.env.LLM_API_KEY       ||= u.llmApiKey as string;
 if (u.dryRun !== undefined) process.env.DRY_RUN ||= String(u.dryRun);
 if (u.publicApiKey) process.env.PUBLIC_API_KEY ||= u.publicApiKey as string;
 if (u.agentMeridianApiUrl) process.env.AGENT_MERIDIAN_API_URL ||= u.agentMeridianApiUrl as string;
@@ -205,9 +283,21 @@ export const config: Config = {
     temperature: num("temperature", 0.373),
     maxTokens:   num("maxTokens", 4096),
     maxSteps:    num("maxSteps", 20),
-    managementModel: str("managementModel", process.env.LLM_MODEL ?? "openrouter/healer-alpha"),
-    screeningModel:  str("screeningModel", process.env.LLM_MODEL ?? "openrouter/hunter-alpha"),
-    generalModel:    str("generalModel", process.env.LLM_MODEL ?? "openrouter/healer-alpha"),
+    managementModel: parseModelConfig(
+      u.managementModel,
+      "default",
+      process.env.LLM_MODEL ?? "openrouter/healer-alpha",
+    ),
+    screeningModel: parseModelConfig(
+      u.screeningModel,
+      "default",
+      process.env.LLM_MODEL ?? "openrouter/hunter-alpha",
+    ),
+    generalModel: parseModelConfig(
+      u.generalModel,
+      "default",
+      process.env.LLM_MODEL ?? "openrouter/healer-alpha",
+    ),
     thinkingManagement: bool("thinkingManagement", false),
     thinkingScreening:  bool("thinkingScreening", true),
     thinkingGeneral:    bool("thinkingGeneral", false),
