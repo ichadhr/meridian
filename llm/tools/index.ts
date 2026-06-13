@@ -8,4 +8,4 @@
  */
 
 export { tools, type ToolDefinition } from "./definitions.js";
-export { executeTool, registerCronRestarter, registerScreeningTrigger } from "./executor.js";
+export { executeTool } from "./executor.js";

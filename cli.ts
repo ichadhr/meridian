@@ -557,8 +557,13 @@ switch (subcommand) {
 
   // ── start ────────────────────────────────────────────────────────
   case "start": {
-    const { startCronJobs } = await import("./index.js");
+    const { startCronJobs, initScheduler } = await import("./scheduler/index.js");
+    const { agentLoop } = await import("./llm/index.js");
+    const { config } = await import("./config/index.js");
     process.stderr.write("[meridian] Starting autonomous agent...\n");
+    initScheduler({
+      healthCheckFn: async () => { await agentLoop(`\nHEALTH CHECK\n\nSummarize the current portfolio health, total fees earned, and performance of all open positions. Recommend any high-level adjustments if needed.\n      `, config.llm.maxSteps, [], "MANAGER"); },
+    });
     startCronJobs();
     break;
   }

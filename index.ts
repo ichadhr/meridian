@@ -4,7 +4,6 @@ import "./utils/secure-env.js";
 export { runLiveManagementCycle, runScreeningCycle, tryStartScreening } from "./core/index.js";
 
 import fs from "fs";
-import cron from "node-cron";
 import readline from "readline";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -15,7 +14,7 @@ import { getWalletBalances } from "./providers/solana/index.js";
 import { getTopCandidates } from "./providers/meteora/index.js";
 import { config, reloadScreeningThresholds, computeDeployAmount, computeBinsBelow, initProviders } from "./config/index.js";
 import { evolveThresholds, getPerformanceSummary } from "./core/index.js";
-import { executeTool, registerCronRestarter, registerScreeningTrigger } from "./llm/index.js";
+import { executeTool } from "./llm/index.js";
 import {
   startPolling,
   stopPolling,
@@ -36,17 +35,9 @@ import {
   tryStartScreening,
   runScreeningCycle,
   getLoneCandidateSkipReason,
-  getLastBriefingDate,
-  setLastBriefingDate,
   getTrackedPosition,
   getTrackedPositions,
   setPositionInstruction,
-  resolveLivePendingPeak as resolvePendingPeak,
-  resolveLivePendingTrailingDrop as resolvePendingTrailingDrop,
-  queueLivePeakConfirmation as queuePeakConfirmation,
-  updateLivePnlAndCheckExits as updatePnlAndCheckExits,
-  queueLiveTrailingDropConfirmation as queueTrailingDropConfirmation,
-  getCloseRule,
   recordPositionSnapshot,
   recallForPool,
   addPoolNote,
@@ -62,7 +53,7 @@ import { stripThink } from "./utils/text.js";
 import { getTokenNarrative, getTokenInfo } from "./providers/jupiter/index.js";
 import { bootstrapHiveMind, ensureAgentId, getHiveMindPullMode, isHiveMindEnabled, pullHiveMindLessons, pullHiveMindPresets, registerHiveMindAgent, startHiveMindBackgroundSync } from "./providers/hivemind/index.js";
 import { managementBusy, setManagementBusy, screeningBusy, setScreeningBusy, timers } from "./core/index.js";
-import { peakConfirmTimers, trailingDropConfirmTimers, TRAILING_PEAK_CONFIRM_DELAY_MS, TRAILING_PEAK_CONFIRM_TOLERANCE, TRAILING_DROP_CONFIRM_DELAY_MS, TRAILING_DROP_CONFIRM_TOLERANCE_PCT, pollTriggeredAt, setPollTriggeredAt } from "./core/index.js";
+import { startCronJobs, stopCronJobs, launchCron as _launchCron, pauseCron, resumeCron, cronStarted as _cronStarted, initScheduler, maybeRunMissedBriefing } from "./scheduler/index.js";
 import type { LivePosition } from "./types/index.js";
 
 // ── Type helpers ──────────────────────────────────────────────
@@ -86,8 +77,8 @@ interface Candidate {
   [key: string]: any;
 }
 
-// ── ManageDeps wiring ─────────────────────────────────────────
-const manageDeps = { shouldUsePnlRecheck, schedulePeakConfirmation, scheduleTrailingDropConfirmation, tryStartScreening };
+// ── ManageDeps wiring (scheduler owns the implementations) ────
+const manageDeps = { shouldUsePnlRecheck: () => !config.api.lpAgentRelayEnabled, schedulePeakConfirmation: () => {}, scheduleTrailingDropConfirmation: () => {}, tryStartScreening };
 
 const entrypointPath: string | undefined = process.env.pm_exec_path || process.argv[1];
 const isMain: boolean = entrypointPath
@@ -98,6 +89,9 @@ if (isMain) {
   log("startup", "DLMM LP Agent starting...");
   log("startup", `Mode: ${process.env.DRY_RUN === "true" ? "DRY RUN" : "LIVE"}`);
   initProviders();
+  initScheduler({
+    healthCheckFn: async () => { await agentLoop(`\nHEALTH CHECK\n\nSummarize the current portfolio health, total fees earned, and performance of all open positions. Recommend any high-level adjustments if needed.\n      `, config.llm.maxSteps, [], "MANAGER"); },
+  });
   ensureAgentId();
   bootstrapHiveMind().catch((error: Error) => log("hivemind_warn", `Bootstrap failed: ${error.message}`));
   startHiveMindBackgroundSync();
@@ -127,193 +121,6 @@ function buildPrompt(): string {
   const mgmt = formatCountdown(nextRunIn(timers.managementLastRun, config.schedule.managementIntervalMin));
   const scrn = formatCountdown(nextRunIn(timers.screeningLastRun, config.schedule.screeningIntervalMin));
   return `[manage: ${mgmt} | screen: ${scrn}]\n> `;
-}
-
-// ═══════════════════════════════════════════
-//  CYCLE STATE (imported from core/live/cycle-state.ts)
-// ═══════════════════════════════════════════
-
-function shouldUsePnlRecheck(): boolean {
-  return !config.api.lpAgentRelayEnabled;
-}
-
-function schedulePeakConfirmation(positionAddress: string): void {
-  if (!positionAddress || peakConfirmTimers.has(positionAddress)) return;
-
-  const timer = setTimeout(async () => {
-    peakConfirmTimers.delete(positionAddress);
-    try {
-      const result = await getMyPositions({ force: true, silent: true }).catch(() => null);
-      const position = result?.positions?.find((p: LivePosition) => p.position === positionAddress);
-      resolvePendingPeak(positionAddress, position?.pnl_pct ?? null, TRAILING_PEAK_CONFIRM_TOLERANCE);
-    } catch (error: any) {
-      log("state_warn", `Peak confirmation failed for ${positionAddress}: ${error.message}`);
-    }
-  }, TRAILING_PEAK_CONFIRM_DELAY_MS);
-
-  peakConfirmTimers.set(positionAddress, timer);
-}
-
-function scheduleTrailingDropConfirmation(positionAddress: string): void {
-  if (!positionAddress || trailingDropConfirmTimers.has(positionAddress)) return;
-
-  const timer = setTimeout(async () => {
-    trailingDropConfirmTimers.delete(positionAddress);
-    try {
-      const result = await getMyPositions({ force: true, silent: true }).catch(() => null);
-      const position = result?.positions?.find((p: LivePosition) => p.position === positionAddress);
-      const resolved: any = resolvePendingTrailingDrop(
-        positionAddress,
-        position?.pnl_pct ?? null,
-        config.management.trailingDropPct,
-        TRAILING_DROP_CONFIRM_TOLERANCE_PCT,
-      );
-      if (resolved?.confirmed) {
-        log("state", `[Trailing recheck] Confirmed trailing exit for ${positionAddress} — triggering management`);
-        runLiveManagementCycle({ silent: true }, manageDeps).catch((e: Error) => log("cron_error", `Trailing recheck management failed: ${e.message}`));
-      }
-    } catch (error: any) {
-      log("state_warn", `Trailing drop confirmation failed for ${positionAddress}: ${error.message}`);
-    }
-  }, TRAILING_DROP_CONFIRM_DELAY_MS);
-
-  trailingDropConfirmTimers.set(positionAddress, timer);
-}
-
-async function runBriefing(): Promise<void> {
-  log("cron", "Starting morning briefing");
-  try {
-    const briefing: string = await generateBriefing();
-    if (telegramEnabled()) {
-      await sendLongMessage(briefing, { parse_mode: "HTML" });
-    }
-    setLastBriefingDate();
-  } catch (error: any) {
-    log("cron_error", `Morning briefing failed: ${error.message}`);
-  }
-}
-
-async function maybeRunMissedBriefing(): Promise<void> {
-  const todayUtc: string = new Date().toISOString().slice(0, 10);
-  const lastSent: string | null = getLastBriefingDate();
-  if (lastSent === todayUtc) return;
-  const nowUtc: Date = new Date();
-  const briefingHourUtc: number = 1;
-  if (nowUtc.getUTCHours() < briefingHourUtc) return;
-  log("cron", `Missed briefing detected (last sent: ${lastSent || "never"}) — sending now`);
-  await runBriefing();
-}
-
-// ═══════════════════════════════════════════
-//  CRON TASKS
-// ═══════════════════════════════════════════
-let _cronTasks: any = [];
-
-function stopCronJobs(): void {
-  for (const task of _cronTasks) task.stop();
-  if (_cronTasks._pnlPollInterval) clearInterval(_cronTasks._pnlPollInterval);
-  _cronTasks = [];
-}
-
-export function startCronJobs(): void {
-  stopCronJobs(); // stop any running tasks before (re)starting
-
-  const mgmtTask = cron.schedule(`*/${Math.max(1, config.schedule.managementIntervalMin)} * * * *`, async () => {
-    if (managementBusy) return;
-    timers.managementLastRun = Date.now();
-    await runLiveManagementCycle({}, manageDeps);
-  });
-
-  const screenTask = cron.schedule(`*/${Math.max(1, config.schedule.screeningIntervalMin)} * * * *`, async () => {
-    await runScreeningCycle();
-  });
-
-  const healthTask = cron.schedule(`0 * * * *`, async () => {
-    if (managementBusy) return;
-    setManagementBusy(true);
-    log("cron", "Starting health check");
-    try {
-      await agentLoop(`
-HEALTH CHECK
-
-Summarize the current portfolio health, total fees earned, and performance of all open positions. Recommend any high-level adjustments if needed.
-      `, config.llm.maxSteps, [], "MANAGER");
-    } catch (error: any) {
-      log("cron_error", `Health check failed: ${error.message}`);
-    } finally {
-      setManagementBusy(false);
-    }
-  });
-
-  // Morning Briefing at 8:00 AM UTC+7 (1:00 AM UTC)
-  const briefingTask = cron.schedule(`0 1 * * *`, async () => {
-    await runBriefing();
-  }, { timezone: 'UTC' });
-
-  // Every 6h — catch up if briefing was missed (agent restart, crash, etc.)
-  const briefingWatchdog = cron.schedule(`0 */6 * * *`, async () => {
-    await maybeRunMissedBriefing();
-  }, { timezone: 'UTC' });
-
-  // Lightweight 30s PnL poller — updates trailing TP state between management cycles, no LLM
-  let _pnlPollBusy: boolean = false;
-  const pnlPollInterval: NodeJS.Timeout = setInterval(async () => {
-    if (managementBusy || screeningBusy || _pnlPollBusy) return;
-    if (getTrackedPositions(true).length === 0) return;
-    _pnlPollBusy = true;
-    try {
-      const result: any = await getMyPositions({ force: true, silent: true }).catch(() => null);
-      if (!result?.positions?.length) return;
-      for (const p of result.positions) {
-        if (
-          !p.pnl_pct_suspicious &&
-          queuePeakConfirmation(p.position, p.pnl_pct, { immediate: !shouldUsePnlRecheck() }) &&
-          shouldUsePnlRecheck()
-        ) {
-          schedulePeakConfirmation(p.position);
-        }
-        const exit: any = updatePnlAndCheckExits(p.position, p, config.management);
-        if (exit) {
-          if (exit.action === "TRAILING_TP" && exit.needs_confirmation && shouldUsePnlRecheck()) {
-            if (queueTrailingDropConfirmation(p.position, exit.peak_pnl_pct, exit.current_pnl_pct, config.management.trailingDropPct)) {
-              scheduleTrailingDropConfirmation(p.position);
-            }
-            continue;
-          }
-          const cooldownMs: number = config.schedule.managementIntervalMin * 60 * 1000;
-          const sinceLastTrigger: number = Date.now() - pollTriggeredAt;
-          if (sinceLastTrigger >= cooldownMs) {
-            setPollTriggeredAt(Date.now());
-            log("state", `[PnL poll] Exit alert: ${p.pair} — ${exit.reason} — triggering management`);
-            runLiveManagementCycle({ silent: true }, manageDeps).catch((e: Error) => log("cron_error", `Poll-triggered management failed: ${e.message}`));
-          } else {
-            log("state", `[PnL poll] Exit alert: ${p.pair} — ${exit.reason} — cooldown (${Math.round((cooldownMs - sinceLastTrigger) / 1000)}s left)`);
-          }
-          break;
-        }
-        const closeRule: AnyObj | null = getCloseRule(p, config.management, p.minutes_out_of_range ?? 0, p.fee_per_tvl_24h);
-        if (closeRule) {
-          const cooldownMs: number = config.schedule.managementIntervalMin * 60 * 1000;
-          const sinceLastTrigger: number = Date.now() - pollTriggeredAt;
-          if (sinceLastTrigger >= cooldownMs) {
-            setPollTriggeredAt(Date.now());
-            log("state", `[PnL poll] Deterministic close rule: ${p.pair} — Rule ${closeRule.rule}: ${closeRule.reason} — triggering management`);
-            runLiveManagementCycle({ silent: true }, manageDeps).catch((e: Error) => log("cron_error", `Poll-triggered management failed: ${e.message}`));
-          } else {
-            log("state", `[PnL poll] Deterministic close rule: ${p.pair} — Rule ${closeRule.rule}: ${closeRule.reason} — cooldown (${Math.round((cooldownMs - sinceLastTrigger) / 1000)}s left)`);
-          }
-          break;
-        }
-      }
-    } finally {
-      _pnlPollBusy = false;
-    }
-  }, 30_000);
-
-  _cronTasks = [mgmtTask, screenTask, healthTask, briefingTask, briefingWatchdog];
-  // Store interval ref so stopCronJobs can clear it
-  _cronTasks._pnlPollInterval = pnlPollInterval;
-  log("cron", `Cycles started — management every ${config.schedule.managementIntervalMin}m, screening every ${config.schedule.screeningIntervalMin}m`);
 }
 
 // ═══════════════════════════════════════════
@@ -388,7 +195,6 @@ function formatCandidates(candidates: any[]): string {
 //  INTERACTIVE REPL
 // ═══════════════════════════════════════════
 const isTTY: boolean = process.stdin.isTTY;
-let cronStarted: boolean = false;
 let busy: boolean = false;
 const _telegramQueue: TelegramMessage[] = []; // queued messages received while agent was busy
 const sessionHistory: AnyObj[] = []; // persists conversation across REPL turns
@@ -1111,18 +917,14 @@ async function telegramHandler(msg: TelegramMessage): Promise<void> {
   }
 
   if (text === "/pause") {
-    stopCronJobs();
-    cronStarted = false;
+    pauseCron();
     await sendMessage("⏸ Paused autonomous cycles. Telegram control still works. Use /resume to start again.").catch(() => {});
     return;
   }
 
   if (text === "/resume") {
-    if (!cronStarted) {
-      cronStarted = true;
-      timers.managementLastRun = Date.now();
-      timers.screeningLastRun = Date.now();
-      startCronJobs();
+    if (!_cronStarted) {
+      resumeCron();
       await sendMessage("▶️ Autonomous cycles resumed.").catch(() => {});
     } else {
       await sendMessage("Autonomous cycles are already running.").catch(() => {});
@@ -1193,9 +995,7 @@ function fmtPct(value: any): string {
   return Number.isFinite(n) ? `${n.toFixed(2)}%` : "?";
 }
 
-// Register restarter — when update_config changes intervals, running cron jobs get replaced
-registerCronRestarter(() => { if (cronStarted) startCronJobs(); });
-registerScreeningTrigger(async () => { tryStartScreening("post-close-executor", true); });
+// Restarter and screening trigger now handled by scheduler/index.ts and executor.ts directly
 
 if (isMain && isTTY) {
   const rl: readline.Interface = readline.createInterface({
@@ -1214,12 +1014,8 @@ if (isMain && isTTY) {
   }, 10_000);
 
   function launchCron(): void {
-    if (!cronStarted) {
-      cronStarted = true;
-      // Seed timers so countdown starts from now
-      timers.managementLastRun = Date.now();
-      timers.screeningLastRun = Date.now();
-      startCronJobs();
+    if (!_cronStarted) {
+      _launchCron();
       console.log("Autonomous cycles are now running.\n");
       rl.setPrompt(buildPrompt());
       rl.prompt(true);

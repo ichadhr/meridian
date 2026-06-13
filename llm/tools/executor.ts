@@ -47,6 +47,8 @@ import { studyTopLPers } from "./study.js";
 import { getTokenInfo, getTokenHolders, getTokenNarrative } from "../../providers/jupiter/token.js";
 import { getAdvancedInfo } from "../../providers/okx/index.js";
 import { config, reloadScreeningThresholds, MIN_SAFE_BINS_BELOW } from "../../config/index.js";
+import { restartCronJobs } from "../../scheduler/index.js";
+import { tryStartScreening } from "../../core/index.js";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -209,13 +211,7 @@ async function validateDeployPoolThresholds(args: Record<string, unknown>): Prom
   return { pass: true };
 }
 
-// Registered by index.js so update_config can restart cron jobs when intervals change
-let _cronRestarter: (() => void) | null = null;
-export function registerCronRestarter(fn: () => void): void { _cronRestarter = fn; }
-
-// Registered by index.js — triggers a screening cycle after a position closes
-let _screeningTrigger: (() => Promise<void>) | null = null;
-export function registerScreeningTrigger(fn: () => Promise<void>): void { _screeningTrigger = fn; }
+// Restart cron jobs and trigger screening are now imported directly — no registration hacks needed
 
 function coerceBoolean(value: unknown, key: string): boolean {
   if (typeof value === "boolean") return value;
@@ -608,8 +604,8 @@ const toolMap: Record<string, ToolFn> = {
 
     // Restart cron jobs if intervals changed
     const intervalChanged = applied.managementIntervalMin != null || applied.screeningIntervalMin != null;
-    if (intervalChanged && _cronRestarter) {
-      _cronRestarter();
+    if (intervalChanged) {
+      restartCronJobs();
       log("config", `Cron restarted — management: ${config.schedule.managementIntervalMin}m, screening: ${config.schedule.screeningIntervalMin}m`);
     }
 
@@ -745,7 +741,7 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
           }
         }
         // Trigger screening now that a slot is free — don't let SOL sit idle
-        _screeningTrigger?.();
+        tryStartScreening("post-close-executor", true);
       } else if (name === "claim_fees" && config.management.autoSwapAfterClaim && (result as any).base_mint) {
         try {
           const balances: any = await getWalletBalances();
