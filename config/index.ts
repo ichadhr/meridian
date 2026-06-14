@@ -362,6 +362,8 @@ export const config: Config = {
       rsiOversold: typeof ic.rsiOversold === "number" ? ic.rsiOversold : 30,
       rsiOverbought: typeof ic.rsiOverbought === "number" ? ic.rsiOverbought : 80,
       requireAllIntervals: typeof ic.requireAllIntervals === "boolean" ? ic.requireAllIntervals : false,
+      exitEnabled: typeof ic.exitEnabled === "boolean" ? ic.exitEnabled : false,
+      exitMinAgeMinutes: typeof ic.exitMinAgeMinutes === "number" ? ic.exitMinAgeMinutes : 20,
     };
   })(),
 };

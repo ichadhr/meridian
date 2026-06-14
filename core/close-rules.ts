@@ -40,6 +40,9 @@ export interface CloseRuleConfig {
   minAgeBeforeYieldCheck?: number;
   vpTrendExitCycles?: number;
   solMode?: boolean;
+  chartExitConfirmed?: boolean;
+  chartExitMinAgeMinutes?: number;
+  chartExitPreset?: string;
 }
 
 export interface CloseRuleResult {
@@ -137,6 +140,20 @@ export function getCloseRule(
       if (isTrendingDown) {
         return { action: "CLOSE", rule: 6, reason: `consecutive down-trend (${trendCycles} cycles)` };
       }
+    }
+  }
+
+  // Rule 7: Chart indicator exit (soft signal, lowest priority).
+  // Only fires if a confirmed exit signal was cached by the management cycle
+  // and the position is old enough to avoid churning right after deploy.
+  if (managementConfig.chartExitConfirmed) {
+    const minAgeMinutes = managementConfig.chartExitMinAgeMinutes ?? 20;
+    const ageMinutes = position.deployed_at
+      ? Math.floor((Date.now() - new Date(position.deployed_at).getTime()) / 60000)
+      : 0;
+    if (ageMinutes >= minAgeMinutes) {
+      const preset = managementConfig.chartExitPreset ?? "supertrend_break";
+      return { action: "CLOSE", rule: 7, reason: `chart indicator exit (${preset})` };
     }
   }
 

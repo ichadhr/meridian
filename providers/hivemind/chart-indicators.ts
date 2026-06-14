@@ -394,3 +394,33 @@ export async function confirmIndicatorPreset({
     intervals: results,
   };
 }
+
+/**
+ * Fetch exit indicator confirmations for a list of positions in parallel.
+ * Returns a map keyed by `keyFn(item)` → confirmed boolean.
+ * Skipped results (API unavailable) are treated as not confirmed.
+ * Errors are silently swallowed — missing data means no exit signal.
+ */
+export async function fetchExitConfirmations<T>(
+  items: T[],
+  keyFn: (item: T) => string,
+  mintFn: (item: T) => string | null | undefined,
+): Promise<Map<string, boolean>> {
+  const result = new Map<string, boolean>();
+  if (!config.indicators.enabled || !config.indicators.exitEnabled) {
+    return result;
+  }
+  await Promise.all(
+    items.map(async (item) => {
+      const mint = mintFn(item);
+      if (!mint) return;
+      try {
+        const r = await confirmIndicatorPreset({ mint, side: "exit" });
+        result.set(keyFn(item), !r.skipped && r.confirmed);
+      } catch {
+        // Graceful degradation
+      }
+    }),
+  );
+  return result;
+}

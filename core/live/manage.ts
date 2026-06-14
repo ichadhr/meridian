@@ -11,6 +11,7 @@ import { getMyPositions } from "../../providers/meteora/index.js";
 import { config } from "../../config/index.js";
 import { sendLongMessage, notifyOutOfRange, isEnabled as telegramEnabled, createLiveMessage, formatManagementReport, dryRunTag, type ManagementReportPosition, type ManagementReportAction } from "../../interfaces/index.js";
 import { getCloseRule } from "../close-rules.js";
+import { fetchExitConfirmations } from "../../providers/hivemind/chart-indicators.js";
 import { updateLivePnlAndCheckExits, queueLivePeakConfirmation, queueLiveTrailingDropConfirmation } from "./state.js";
 import { recordPositionSnapshot, recallForPool } from "../pool-memory.js";
 import { runVpManagementCycle } from "../vp/manage.js";
@@ -130,6 +131,13 @@ export async function runLiveManagementCycle(
     }
 
     // ── Deterministic rule checks (no LLM) ──────────────────────────
+    // Fetch chart exit indicators for each position (cached, passed to getCloseRule)
+    const chartExitMap = await fetchExitConfirmations(
+      liveLivePositionData,
+      (p) => p.position,
+      (p) => (p as any).base_mint ?? (p as any).mint,
+    );
+
     const actionMap: Map<string, AnyObj> = new Map();
     for (const p of liveLivePositionData) {
       if (exitMap.has(p.position)) {
@@ -141,7 +149,17 @@ export async function runLiveManagementCycle(
         continue;
       }
 
-      const closeRule: AnyObj | null = getCloseRule(p, config.management, p.minutes_out_of_range ?? 0, p.fee_per_tvl_24h);
+      const closeRule: AnyObj | null = getCloseRule(
+        p,
+        {
+          ...config.management,
+          chartExitConfirmed: chartExitMap.get(p.position) ?? false,
+          chartExitMinAgeMinutes: config.indicators.exitMinAgeMinutes,
+          chartExitPreset: config.indicators.exitPreset,
+        },
+        p.minutes_out_of_range ?? 0,
+        p.fee_per_tvl_24h,
+      );
       if (closeRule) {
         actionMap.set(p.position, closeRule);
         continue;

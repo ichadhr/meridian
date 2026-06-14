@@ -23,6 +23,7 @@ import { config } from "../../config/index.js";
 import { log } from "../../utils/logger.js";
 import { estimateCloseGasSol, samplePriorityFee } from "../../providers/solana/gas-estimator.js";
 import { getCloseRule } from "../close-rules.js";
+import { fetchExitConfirmations } from "../../providers/hivemind/chart-indicators.js";
 import { computePositionPnl, estimateSlippageLamports } from "../pnl.js";
 import type { PositionPnlResult, BinData } from "../pnl.js";
 import type { VpPosition, VpResult } from "../../types/index.js";
@@ -311,6 +312,13 @@ export async function runVpManagementCycle(): Promise<VpResult[]> {
   const results: VpResult[] = [];
   const binCache = new Map<string, Promise<BinsInRangeResult | null>>();
 
+  // Fetch chart exit indicators for each VP (cached, passed to getCloseRule)
+  const chartExitMap = await fetchExitConfirmations(
+    vpList,
+    (vp) => vp.id,
+    (vp) => vp.base_mint ?? undefined,
+  );
+
   for (const vp of vpList) {
     try {
       const cacheKey = `${vp.pool}:${vp.lower_bin}:${vp.upper_bin}`;
@@ -403,7 +411,16 @@ export async function runVpManagementCycle(): Promise<VpResult[]> {
       const vpAgeMinutes = vp.deployed_at
         ? Math.floor((Date.now() - new Date(vp.deployed_at).getTime()) / 60000)
         : 0;
-      const closeRule = getCloseRule(posForRule as any, mgmtConfig as any, oorMinutes);
+      const closeRule = getCloseRule(
+        posForRule as any,
+        {
+          ...mgmtConfig,
+          chartExitConfirmed: chartExitMap.get(vp.id) ?? false,
+          chartExitMinAgeMinutes: config.indicators.exitMinAgeMinutes,
+          chartExitPreset: config.indicators.exitPreset,
+        } as any,
+        oorMinutes,
+      );
       const closeReason = closeRule?.reason || trailingCloseReason;
       if (closeReason) {
         updateVpPosition(vp.id, updates);

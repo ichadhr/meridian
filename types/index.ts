@@ -152,6 +152,8 @@ export interface IndicatorsConfig {
   rsiOversold: number;
   rsiOverbought: number;
   requireAllIntervals: boolean;
+  exitEnabled: boolean;
+  exitMinAgeMinutes: number;
 }
 
 export interface Config {

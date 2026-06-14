@@ -309,6 +309,136 @@ describe("getCloseRule", () => {
     });
   });
 
+  describe("Rule 7: Chart indicator exit", () => {
+    const oldEnough = new Date(Date.now() - 30 * 60_000).toISOString(); // 30 min
+    const tooYoung = new Date(Date.now() - 5 * 60_000).toISOString(); // 5 min
+
+    it("closes when chart exit confirmed and position is old enough", () => {
+      const result = getCloseRule(
+        pos({ deployed_at: oldEnough }),
+        { ...baseConfig, chartExitConfirmed: true, chartExitMinAgeMinutes: 20, chartExitPreset: "supertrend_break" },
+        0,
+        highFee,
+      );
+      expect(result).toEqual({ action: "CLOSE", rule: 7, reason: "chart indicator exit (supertrend_break)" });
+    });
+
+    it("does NOT close when chart exit not confirmed", () => {
+      const result = getCloseRule(
+        pos({ deployed_at: oldEnough }),
+        { ...baseConfig, chartExitConfirmed: false, chartExitMinAgeMinutes: 20 },
+        0,
+        highFee,
+      );
+      expect(result).toBeNull();
+    });
+
+    it("does NOT close when position is too young", () => {
+      const result = getCloseRule(
+        pos({ deployed_at: tooYoung }),
+        { ...baseConfig, chartExitConfirmed: true, chartExitMinAgeMinutes: 20 },
+        0,
+        highFee,
+      );
+      expect(result).toBeNull();
+    });
+
+    it("uses default min age of 20 minutes when not specified", () => {
+      const result = getCloseRule(
+        pos({ deployed_at: new Date(Date.now() - 25 * 60_000).toISOString() }),
+        { ...baseConfig, chartExitConfirmed: true },
+        0,
+        highFee,
+      );
+      expect(result?.rule).toBe(7);
+    });
+
+    it("has lowest priority — Rule 1 (stop loss) takes precedence", () => {
+      const result = getCloseRule(
+        pos({ deployed_at: oldEnough, pnl_pct: -30 }), // triggers Rule 1
+        { ...baseConfig, chartExitConfirmed: true, chartExitMinAgeMinutes: 20 },
+        0,
+        highFee,
+      );
+      expect(result?.rule).toBe(1);
+    });
+
+    it("has lowest priority — Rule 5 (low yield) takes precedence", () => {
+      const oldEnoughForYield = new Date(Date.now() - 90 * 60_000).toISOString(); // 90 min (>60 min threshold)
+      const result = getCloseRule(
+        pos({ deployed_at: oldEnoughForYield, pnl_pct: 5 }),
+        { ...baseConfig, chartExitConfirmed: true, chartExitMinAgeMinutes: 20 },
+        0,
+        lowFee, // triggers Rule 5
+      );
+      expect(result?.rule).toBe(5);
+    });
+
+    it("has lowest priority — Rule 6 (trend) takes precedence", () => {
+      const snapshots = [
+        { pnl_pct: 0 }, { pnl_pct: -3 }, { pnl_pct: -6 }, { pnl_pct: -9 },
+      ];
+      const result = getCloseRule(
+        pos({ deployed_at: oldEnough, snapshots, pnl_pct: -9 }),
+        { ...baseConfig, chartExitConfirmed: true, chartExitMinAgeMinutes: 20 },
+        0,
+        highFee,
+      );
+      expect(result?.rule).toBe(6);
+    });
+
+    it("does NOT close when deployed_at is null", () => {
+      const result = getCloseRule(
+        pos({ deployed_at: null }),
+        { ...baseConfig, chartExitConfirmed: true, chartExitMinAgeMinutes: 20 },
+        0,
+        highFee,
+      );
+      expect(result).toBeNull();
+    });
+
+    it("does NOT close when deployed_at is undefined", () => {
+      const result = getCloseRule(
+        pos({ deployed_at: undefined }),
+        { ...baseConfig, chartExitConfirmed: true, chartExitMinAgeMinutes: 20 },
+        0,
+        highFee,
+      );
+      expect(result).toBeNull();
+    });
+
+    it("boundary: closes at exactly min age", () => {
+      const exactAge = new Date(Date.now() - 20 * 60_000).toISOString();
+      const result = getCloseRule(
+        pos({ deployed_at: exactAge }),
+        { ...baseConfig, chartExitConfirmed: true, chartExitMinAgeMinutes: 20 },
+        0,
+        highFee,
+      );
+      expect(result?.rule).toBe(7);
+    });
+
+    it("boundary: min age 0 allows immediate exit", () => {
+      const result = getCloseRule(
+        pos({ deployed_at: new Date().toISOString() }),
+        { ...baseConfig, chartExitConfirmed: true, chartExitMinAgeMinutes: 0 },
+        0,
+        highFee,
+      );
+      expect(result?.rule).toBe(7);
+    });
+
+    it("uses default preset name when not specified", () => {
+      const result = getCloseRule(
+        pos({ deployed_at: oldEnough }),
+        { ...baseConfig, chartExitConfirmed: true, chartExitMinAgeMinutes: 20 },
+        0,
+        highFee,
+      );
+      expect(result?.reason).toBe("chart indicator exit (supertrend_break)");
+    });
+  });
+
   describe("Default: STAY", () => {
     it("returns null when no rules trigger", () => {
       const result = getCloseRule(
