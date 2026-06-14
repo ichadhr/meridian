@@ -352,9 +352,10 @@ export async function runVpManagementCycle(): Promise<VpResult[]> {
       });
 
       const upperBin = vp.upper_bin ?? null;
-      const oor = isVpOutOfRange(activeBin, upperBin)
-        ? markVpOutOfRange(activeBin, upperBin, vp._oor_since as string | null)
-        : markVpInRange(activeBin, upperBin, vp._oor_since as string | null);
+      const lowerBin = vp.lower_bin ?? null;
+      const oor = isVpOutOfRange(activeBin, lowerBin, upperBin)
+        ? markVpOutOfRange(activeBin, lowerBin, upperBin, vp._oor_since as string | null)
+        : markVpInRange(activeBin, lowerBin, upperBin, vp._oor_since as string | null);
       const oorMinutes = minutesVpOutOfRange(oor.oorSince);
 
       const updates: Record<string, unknown> = {

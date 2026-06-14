@@ -21,7 +21,7 @@ import { recallForPool } from "./pool-memory.js";
 import { appendDecision } from "./decision-log.js";
 import { getActiveStrategy } from "./strategy-library.js";
 import { stripThink, sanitizeUntrustedPromptText } from "../utils/text.js";
-import { screeningBusy, setScreeningBusy, screeningLastTriggered, setScreeningLastTriggered, timers, SCREENING_COOLDOWN_MS } from "./cycle-state.js";
+import { screeningBusy, setScreeningBusy, screeningLastTriggered, setScreeningLastTriggered, timers, SCREENING_COOLDOWN_MS } from "./coordination-state.js";
 
 // ── Types ─────────────────────────────────────────────────────
 type AnyObj = Record<string, any>;

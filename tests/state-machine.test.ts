@@ -13,6 +13,10 @@ import {
   resolveLivePendingTrailingDrop as resolvePendingTrailingDrop,
   getLivePosition as getTrackedPosition,
   getLivePositions as getTrackedPositions,
+  isVpOutOfRange,
+  markVpOutOfRange,
+  markVpInRange,
+  minutesVpOutOfRange,
 } from "../core/index.js";
 
 describe("State machine — trailing TP", () => {
@@ -278,5 +282,111 @@ describe("State machine — position lifecycle", () => {
     // Should have been open before close, closed after
     expect(hadOpen).toBe(true);
     expect(hasOpen).toBe(false);
+  });
+});
+
+describe("VP state machine — OOR tracking (both bounds)", () => {
+  describe("isVpOutOfRange", () => {
+    it("returns false when activeBin is in range", () => {
+      expect(isVpOutOfRange(100, 90, 110)).toBe(false);
+    });
+
+    it("returns true when activeBin is above upperBin (upside OOR)", () => {
+      expect(isVpOutOfRange(120, 90, 110)).toBe(true);
+    });
+
+    it("returns true when activeBin is below lowerBin (downside OOR)", () => {
+      expect(isVpOutOfRange(80, 90, 110)).toBe(true);
+    });
+
+    it("returns false when both bounds are null", () => {
+      expect(isVpOutOfRange(100, null, null)).toBe(false);
+    });
+
+    it("only checks lower bound when upperBin is null", () => {
+      expect(isVpOutOfRange(80, 90, null)).toBe(true);
+      expect(isVpOutOfRange(100, 90, null)).toBe(false);
+      expect(isVpOutOfRange(200, 90, null)).toBe(false);
+    });
+
+    it("only checks upper bound when lowerBin is null", () => {
+      expect(isVpOutOfRange(200, null, 110)).toBe(true);
+      expect(isVpOutOfRange(100, null, 110)).toBe(false);
+      expect(isVpOutOfRange(80, null, 110)).toBe(false);
+    });
+
+    it("boundary: activeBin exactly at lowerBin is in range", () => {
+      expect(isVpOutOfRange(90, 90, 110)).toBe(false);
+    });
+
+    it("boundary: activeBin exactly at upperBin is in range", () => {
+      expect(isVpOutOfRange(110, 90, 110)).toBe(false);
+    });
+  });
+
+  describe("markVpOutOfRange", () => {
+    it("sets oorSince when activeBin is above upperBin", () => {
+      const result = markVpOutOfRange(120, 90, 110, null);
+      expect(result.oorSince).not.toBeNull();
+      expect(result.changed).toBe(true);
+    });
+
+    it("sets oorSince when activeBin is below lowerBin (downside)", () => {
+      const result = markVpOutOfRange(80, 90, 110, null);
+      expect(result.oorSince).not.toBeNull();
+      expect(result.changed).toBe(true);
+    });
+
+    it("returns existing oorSince when already OOR (idempotent)", () => {
+      const existing = "2026-01-01T00:00:00.000Z";
+      const result = markVpOutOfRange(120, 90, 110, existing);
+      expect(result.oorSince).toBe(existing);
+      expect(result.changed).toBe(false);
+    });
+
+    it("clears oorSince when activeBin is in range", () => {
+      const result = markVpOutOfRange(100, 90, 110, "2026-01-01T00:00:00.000Z");
+      expect(result.oorSince).toBeNull();
+      expect(result.changed).toBe(true);
+    });
+  });
+
+  describe("markVpInRange", () => {
+    it("returns null when activeBin is in range", () => {
+      const result = markVpInRange(100, 90, 110, "2026-01-01T00:00:00.000Z");
+      expect(result.oorSince).toBeNull();
+      expect(result.changed).toBe(true);
+    });
+
+    it("does NOT clear oorSince when still above upperBin", () => {
+      const existing = "2026-01-01T00:00:00.000Z";
+      const result = markVpInRange(120, 90, 110, existing);
+      expect(result.oorSince).toBeNull();
+      expect(result.changed).toBe(false);
+    });
+
+    it("does NOT clear oorSince when still below lowerBin (downside)", () => {
+      const existing = "2026-01-01T00:00:00.000Z";
+      const result = markVpInRange(80, 90, 110, existing);
+      expect(result.oorSince).toBeNull();
+      expect(result.changed).toBe(false);
+    });
+  });
+
+  describe("minutesVpOutOfRange", () => {
+    it("returns 0 when oorSince is null", () => {
+      expect(minutesVpOutOfRange(null)).toBe(0);
+    });
+
+    it("returns positive minutes when oorSince is in the past", () => {
+      const thirtyMinAgo = new Date(Date.now() - 30 * 60_000).toISOString();
+      const minutes = minutesVpOutOfRange(thirtyMinAgo);
+      expect(minutes).toBeGreaterThanOrEqual(29);
+      expect(minutes).toBeLessThanOrEqual(31);
+    });
+
+    it("returns 0 when oorSince is invalid", () => {
+      expect(minutesVpOutOfRange("not-a-date")).toBe(0);
+    });
   });
 });

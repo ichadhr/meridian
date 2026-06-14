@@ -172,7 +172,7 @@ export {
   screeningLastTriggered,
   setScreeningLastTriggered,
   SCREENING_COOLDOWN_MS,
-} from "./cycle-state.js";
+} from "./coordination-state.js";
 
 // Live trailing TP timers
 export {
@@ -184,4 +184,4 @@ export {
   TRAILING_DROP_CONFIRM_TOLERANCE_PCT,
   pollTriggeredAt,
   setPollTriggeredAt,
-} from "./live/cycle-state.js";
+} from "./live/trailing-timers.js";

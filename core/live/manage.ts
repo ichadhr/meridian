@@ -16,7 +16,7 @@ import { updateLivePnlAndCheckExits, queueLivePeakConfirmation, queueLiveTrailin
 import { recordPositionSnapshot, recallForPool } from "../pool-memory.js";
 import { runVpManagementCycle } from "../vp/manage.js";
 import { stripThink } from "../../utils/text.js";
-import { managementBusy, setManagementBusy, timers } from "../cycle-state.js";
+import { managementBusy, setManagementBusy, timers } from "../coordination-state.js";
 import type { LivePosition, VpResult } from "../../types/index.js";
 
 // ── Types ─────────────────────────────────────────────────────

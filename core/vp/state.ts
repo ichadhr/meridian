@@ -311,18 +311,20 @@ export function recordVpClose(
 // ─── OOR Pure Functions ─────────────────────────────────────────────────────
 
 /** Pure: determine if position is out of range. No disk I/O. */
-export function isVpOutOfRange(activeBin: number, upperBin: number | null): boolean {
-  if (upperBin == null) return false;
-  return activeBin > upperBin;
+export function isVpOutOfRange(activeBin: number, lowerBin: number | null, upperBin: number | null): boolean {
+  if (lowerBin != null && activeBin < lowerBin) return true;
+  if (upperBin != null && activeBin > upperBin) return true;
+  return false;
 }
 
 /** Pure: transition position to OOR state. Idempotent — returns existing oorSince if already OOR. No disk I/O. */
 export function markVpOutOfRange(
   activeBin: number,
+  lowerBin: number | null,
   upperBin: number | null,
   currentOorSince: string | null,
 ): { oorSince: string | null; changed: boolean } {
-  if (!isVpOutOfRange(activeBin, upperBin)) {
+  if (!isVpOutOfRange(activeBin, lowerBin, upperBin)) {
     return { oorSince: null, changed: currentOorSince !== null };
   }
   if (currentOorSince) {
@@ -334,10 +336,11 @@ export function markVpOutOfRange(
 /** Pure: transition position back in range. Idempotent — returns null if already in range. No disk I/O. */
 export function markVpInRange(
   activeBin: number,
+  lowerBin: number | null,
   upperBin: number | null,
   currentOorSince: string | null,
 ): { oorSince: null; changed: boolean } {
-  if (isVpOutOfRange(activeBin, upperBin)) {
+  if (isVpOutOfRange(activeBin, lowerBin, upperBin)) {
     return { oorSince: null, changed: false };
   }
   return { oorSince: null, changed: currentOorSince !== null };
