@@ -88,7 +88,9 @@ interface TelegramMessage {
 interface Candidate {
   pool: AnyObj;
   sw: any;
+  swFailed?: boolean;
   n: any;
+  nFailed?: boolean;
   ti: any;
   mem: any;
   [key: string]: any;
@@ -535,7 +537,9 @@ async function deployLatestCandidate(index: number): Promise<{ result: any; cand
     const context: Candidate = {
       pool: candidate,
       sw: smartWallets.status === "fulfilled" ? smartWallets.value : null,
+      swFailed: smartWallets.status === "rejected",
       n: narrative.status === "fulfilled" ? narrative.value : null,
+      nFailed: narrative.status === "rejected",
       ti: tokenInfo.status === "fulfilled" ? (tokenInfo.value as any)?.results?.[0] : null,
       mem: null,
     };

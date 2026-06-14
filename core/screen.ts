@@ -29,7 +29,9 @@ type AnyObj = Record<string, any>;
 interface Candidate {
   pool: AnyObj;
   sw: any;
+  swFailed?: boolean;
   n: any;
+  nFailed?: boolean;
   ti: any;
   mem: any;
   [key: string]: any;
@@ -70,7 +72,7 @@ const REQUIRED_FAILURE_ALERT_THRESHOLD = 3;
 
 // ── Helpers ───────────────────────────────────────────────────
 
-export function getLoneCandidateSkipReason({ pool, sw, n, ti }: Candidate = {} as Candidate): string | null {
+export function getLoneCandidateSkipReason({ pool, sw, swFailed, n, nFailed, ti }: Candidate = {} as Candidate): string | null {
   if (!pool) return "missing candidate data";
   const smartWalletCount: number = Math.max(sw?.in_pool?.length ?? 0, Number(pool.gmgn_smart_wallets ?? 0) || 0);
   const tokenInfo: any = ti || {};
@@ -90,7 +92,11 @@ export function getLoneCandidateSkipReason({ pool, sw, n, ti }: Candidate = {} a
   if (Number.isFinite(botPct) && botPct > config.screening.maxBotHoldersPct) {
     return `bot holders ${botPct}% above maximum ${config.screening.maxBotHoldersPct}%`;
   }
-  if (!hasNarrative && smartWalletCount === 0) return "only candidate has no narrative and no smart-wallet confirmation";
+  // Only skip for missing narrative/smart-wallet data if the tools actually succeeded
+  // and returned nothing. If a tool failed, treat it as UNKNOWN, not as missing.
+  const narrativeMissing = !nFailed && !hasNarrative;
+  const smartWalletsMissing = !swFailed && smartWalletCount === 0;
+  if (narrativeMissing && smartWalletsMissing) return "only candidate has no narrative and no smart-wallet confirmation";
   return null;
 }
 
@@ -226,7 +232,9 @@ export async function runScreeningCycle({ silent = false }: { silent?: boolean }
       allCandidates.push({
         pool,
         sw: smartWallets.status === "fulfilled" ? smartWallets.value : null,
+        swFailed: smartWallets.status === "rejected",
         n: narrative.status === "fulfilled" ? narrative.value : null,
+        nFailed: narrative.status === "rejected",
         ti,
         mem: recallForPool(pool.pool),
       });
@@ -328,7 +336,7 @@ export async function runScreeningCycle({ silent = false }: { silent?: boolean }
     }
 
     // Build compact candidate blocks
-    const candidateBlocks: string[] = passing.map(({ pool, sw, n, ti, mem }: Candidate, i: number) => {
+    const candidateBlocks: string[] = passing.map(({ pool, sw, swFailed, n, nFailed, ti, mem }: Candidate, i: number) => {
       const botPct: any = ti?.audit?.bot_holders_pct ?? "?";
       const top10Pct: any = ti?.audit?.top_holders_pct ?? "?";
       const feesSol: any = ti?.global_fees_sol ?? "?";
@@ -366,10 +374,14 @@ export async function runScreeningCycle({ silent = false }: { silent?: boolean }
         okxParts ? `  okx: ${okxParts}` : okxUnavailable ? `  okx: unavailable` : null,
         okxTags  ? `  tags: ${okxTags}` : null,
         pool.price_vs_ath_pct != null ? `  ath: price_vs_ath=${pool.price_vs_ath_pct}%${pool.top_cluster_trend ? `, top_cluster=${pool.top_cluster_trend}` : ""}` : null,
-        `  smart_wallets: ${sw?.in_pool?.length ?? 0} present${sw?.in_pool?.length ? ` → CONFIDENCE BOOST (${sw.in_pool.map((w: any) => w.name).join(", ")})` : ""}`,
+        swFailed
+          ? `  smart_wallets: [FAILED — tool error, do not invent]`
+          : `  smart_wallets: ${sw?.in_pool?.length ?? 0} present${sw?.in_pool?.length ? ` → CONFIDENCE BOOST (${sw.in_pool.map((w: any) => w.name).join(", ")})` : ""}`,
         activeBin != null ? `  active_bin: ${activeBin}` : null,
         priceChange != null ? `  1h: price${priceChange >= 0 ? "+" : ""}${priceChange}%, net_buyers=${netBuyers ?? "?"}` : null,
-        n?.narrative ? `  narrative_untrusted: ${sanitizeUntrustedPromptText(n.narrative, 500)}` : `  narrative_untrusted: none`,
+        nFailed
+          ? `  narrative_untrusted: [FAILED — tool error, do not invent]`
+          : n?.narrative ? `  narrative_untrusted: ${sanitizeUntrustedPromptText(n.narrative, 500)}` : `  narrative_untrusted: none`,
         mem ? `  memory_untrusted: ${sanitizeUntrustedPromptText(mem, 500)}` : null,
       ].filter(Boolean).join("\n");
 
@@ -466,6 +478,9 @@ STEPS:
    <short flat list of top candidate names and why they were skipped>
 IMPORTANT:
 - Never write "unknown" for OKX. Use real values, omit missing fields, or write exactly "OKX: unavailable".
+- [FAILED] markers mean the data source returned an error. Do NOT invent values for failed fields. Treat them as UNKNOWN, not as negative evidence.
+- "none" / "unavailable" / "0 present" means the tool succeeded but found nothing. This is a legitimate signal.
+- Optional tool failure alone is NOT a reason to skip a candidate.
 - Keep the whole report compact and highly scannable for Telegram.
     `, config.llm.maxSteps, [], "SCREENER", config.llm.screeningModel, 2048, {
       onToolStart: async ({ name }: { name: string }) => {
