@@ -3,6 +3,13 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { log } from "../../utils/logger.js";
 import { USER_CONFIG_FILE } from "../../config/paths.js";
+import {
+  formatDeployNotification,
+  formatCloseNotification,
+  formatSwapNotification,
+  formatOutOfRange,
+} from "../messages.js";
+import { dryRunTag, dryRunTitle } from "../tags.js";
 
 
 const TOKEN = process.env.TELEGRAM_BOT_TOKEN || null;
@@ -173,7 +180,8 @@ function formatMarkdownToTelegramHtml(text: string): string {
     .replace(/>/g, "&gt;")
     .replace(/\*\*(.+?)\*\*/g, "<b>$1</b>")
     .replace(/\*([^*\n]+?)\*/g, "<i>$1</i>")
-    .replace(/`([^`\n]+?)`/g, "<code>$1</code>");
+    .replace(/`([^`\n]+?)`/g, "<code>$1</code>")
+    .replace(/\\([*`_])/g, "$1"); // unescape markdown-escaped chars (e.g. \* → *)
 }
 
 export async function sendLongMessage(text: string, { parse_mode }: { parse_mode?: string } = {}): Promise<void> {
@@ -346,7 +354,7 @@ export async function createLiveMessage(title: string, intro = "Starting..."): P
     flushPromise: Promise<void> | null;
     flushRequested: boolean;
   } = {
-    title,
+    title: dryRunTitle(title),
     intro,
     toolLines: [],
     footer: "",
@@ -381,7 +389,7 @@ export async function createLiveMessage(title: string, intro = "Starting..."): P
     await postTelegram("editMessageText", { message_id: state.messageId, ...params });
   }
 
-  function scheduleFlush(delay = 300): void {
+  function scheduleFlush(delay = 1000): void {
     if (state.flushTimer) {
       state.flushRequested = true;
       return;
@@ -554,24 +562,7 @@ export async function notifyDeploy({
   baseFee?: number;
 }): Promise<void> {
   if (hasActiveLiveMessage()) return;
-  const priceStr = priceRange
-    ? `Price range: ${priceRange.min < 0.0001 ? priceRange.min.toExponential(3) : priceRange.min.toFixed(6)} – ${priceRange.max < 0.0001 ? priceRange.max.toExponential(3) : priceRange.max.toFixed(6)}\n`
-    : "";
-  const coverageStr = rangeCoverage
-    ? `Range cover: ${fmtPct(rangeCoverage.downside_pct)} downside | ${fmtPct(rangeCoverage.upside_pct)} upside | ${fmtPct(rangeCoverage.width_pct)} total\n`
-    : "";
-  const poolStr = (binStep || baseFee)
-    ? `Bin step: ${binStep ?? "?"}  |  Base fee: ${baseFee != null ? baseFee + "%" : "?"}\n`
-    : "";
-  await sendHTML(
-    `✅ <b>Deployed</b> ${pair}\n` +
-    `Amount: ${amountSol} SOL\n` +
-    priceStr +
-    coverageStr +
-    poolStr +
-    `Position: <code>${position?.slice(0, 8)}...</code>\n` +
-    `Tx: <code>${tx?.slice(0, 16)}...</code>`,
-  );
+  await sendLongMessage(dryRunTag(formatDeployNotification({ pair, amountSol, position, tx, priceRange, rangeCoverage, binStep, baseFee })));
 }
 
 export async function notifyClose({
@@ -584,11 +575,7 @@ export async function notifyClose({
   pnlPct: number;
 }): Promise<void> {
   if (hasActiveLiveMessage()) return;
-  const sign = pnlUsd >= 0 ? "+" : "";
-  await sendHTML(
-    `🔒 <b>Closed</b> ${pair}\n` +
-    `PnL: ${sign}$${(pnlUsd ?? 0).toFixed(2)} (${sign}${(pnlPct ?? 0).toFixed(2)}%)`,
-  );
+  await sendLongMessage(dryRunTag(formatCloseNotification(pair, pnlUsd, pnlPct)));
 }
 
 export async function notifySwap({
@@ -605,11 +592,7 @@ export async function notifySwap({
   tx?: string;
 }): Promise<void> {
   if (hasActiveLiveMessage()) return;
-  await sendHTML(
-    `🔄 <b>Swapped</b> ${inputSymbol} → ${outputSymbol}\n` +
-    `In: ${amountIn ?? "?"} | Out: ${amountOut ?? "?"}\n` +
-    `Tx: <code>${tx?.slice(0, 16)}...</code>`,
-  );
+  await sendLongMessage(dryRunTag(formatSwapNotification({ inputSymbol, outputSymbol, amountIn, amountOut, tx })));
 }
 
 export async function notifyOutOfRange({
@@ -620,17 +603,11 @@ export async function notifyOutOfRange({
   minutesOOR: number;
 }): Promise<void> {
   if (hasActiveLiveMessage()) return;
-  await sendHTML(
-    `⚠️ <b>Out of Range</b> ${pair}\n` +
-    `Been OOR for ${minutesOOR} minutes`,
-  );
+  await sendLongMessage(dryRunTag(formatOutOfRange(pair, minutesOOR)));
 }
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-function fmtPct(value: unknown): string {
-  const n = Number(value);
-  return Number.isFinite(n) ? `${n.toFixed(2)}%` : "?";
-}
+

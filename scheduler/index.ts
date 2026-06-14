@@ -127,7 +127,7 @@ async function runBriefing(): Promise<void> {
   try {
     const briefing: string = await generateBriefing();
     if (telegramEnabled()) {
-      await sendLongMessage(briefing, { parse_mode: "HTML" });
+      await sendLongMessage(briefing);
     }
     setLastBriefingDate();
   } catch (error: any) {

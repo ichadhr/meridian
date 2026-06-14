@@ -12,7 +12,7 @@ import { getWalletBalances } from "../providers/solana/index.js";
 import { getTopCandidates } from "../providers/meteora/pool-discovery.js";
 import { getActiveBin } from "../providers/meteora/index.js";
 import { config, computeDeployAmount } from "../config/index.js";
-import { sendLongMessage, isEnabled as telegramEnabled, createLiveMessage } from "../interfaces/index.js";
+import { sendLongMessage, isEnabled as telegramEnabled, createLiveMessage, dryRunTag } from "../interfaces/index.js";
 import { checkSmartWalletsOnPool } from "./smart-wallets.js";
 import { getTokenNarrative, getTokenInfo } from "../providers/jupiter/index.js";
 import { stageSignals } from "./signal-tracker.js";
@@ -34,6 +34,39 @@ interface Candidate {
   mem: any;
   [key: string]: any;
 }
+
+// ── Retry helper ──────────────────────────────────────────────
+
+const REQUIRED_TOOL_RETRIES = 3;
+const REQUIRED_TOOL_BACKOFF_MS = [200, 500, 1000];
+
+async function callWithRetry<T>(
+  fn: () => Promise<T>,
+  name: string,
+  { retries = REQUIRED_TOOL_RETRIES, backoff = REQUIRED_TOOL_BACKOFF_MS }: { retries?: number; backoff?: number[] } = {},
+): Promise<T> {
+  let lastError: Error | null = null;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      return await fn();
+    } catch (err: any) {
+      lastError = err;
+      const msg = err?.message ?? String(err);
+      const isTransient = /429|5\d{2}|timeout|ECONNREFUSED|ETIMEDOUT|ENOTFOUND|ECONNRESET|EAI_AGAIN/i.test(msg);
+      if (!isTransient || attempt === retries) throw err;
+      const base = backoff[attempt] ?? backoff[backoff.length - 1];
+      const delay = base + Math.random() * 100; // jitter
+      log("screening", `Retry ${attempt + 2}/${retries + 1} for ${name}: ${msg} (waiting ${Math.round(delay)}ms)`);
+      await new Promise((r) => setTimeout(r, delay));
+    }
+  }
+  throw lastError!;
+}
+
+// ── Consecutive failure tracking ──────────────────────────────
+
+let _consecutiveRequiredFailures = 0;
+const REQUIRED_FAILURE_ALERT_THRESHOLD = 3;
 
 // ── Helpers ───────────────────────────────────────────────────
 
@@ -78,7 +111,7 @@ export function tryStartScreening(source: string, silent: boolean = false): bool
     log("cron", `Screening skipped (${source}) — cooldown active (${remaining}s remaining)`);
     return false;
   }
-  runScreeningCycle({ silent }).catch((e: Error) => log("cron_error", `${source} failed: ${e.message}`));
+  runScreeningCycle({ silent }).catch((e: any) => log("cron_error", `${source} failed: ${e?.message ?? String(e)}`));
   return true;
 }
 
@@ -124,8 +157,8 @@ export async function runScreeningCycle({ silent = false }: { silent?: boolean }
       return screenReport;
     }
   } catch (e: any) {
-    log("cron_error", `Screening pre-check failed: ${e.message}`);
-    screenReport = `Screening pre-check failed: ${e.message}`;
+    log("cron_error", `Screening pre-check failed: ${e?.message ?? String(e)}`);
+    screenReport = `Screening pre-check failed: ${e?.message ?? String(e)}`;
     setScreeningBusy(false);
     return screenReport;
   }
@@ -135,6 +168,9 @@ export async function runScreeningCycle({ silent = false }: { silent?: boolean }
   }
   timers.screeningLastRun = Date.now();
   log("cron", `Starting screening cycle [model: ${config.llm.screeningModel}]`);
+  // Per-cycle failure tracking — increment counter once per cycle, not per tool
+  let cycleRequiredToolFailed = false;
+  let lastRequiredFailureMsg: string | null = null;
   try {
     const currentBalance: any = preBalance;
     const deployAmount: number = computeDeployAmount(currentBalance.sol);
@@ -146,24 +182,52 @@ export async function runScreeningCycle({ silent = false }: { silent?: boolean }
       ? `ACTIVE STRATEGY: ${activeStrategy.name} — LP: ${config.strategy.strategy} | bins_above: ${activeStrategy.range?.bins_above ?? 0} (FIXED — never change) | deposit: ${activeStrategy.entry?.single_side === "sol" ? "SOL only (amount_y, amount_x=0)" : "dual-sided"} | best for: ${activeStrategy.best_for}`
       : `No active strategy — use default ${config.strategy.strategy}, bins_above: 0, SOL only.`;
 
-    // Fetch top candidates
-    const topCandidates: any = await getTopCandidates({ limit: 10 }).catch(() => null);
+    // Fetch top candidates (required — retry then abort)
+    const topCandidates: any = await callWithRetry(
+      () => getTopCandidates({ limit: 10 }),
+      "getTopCandidates",
+    ).catch((err: Error) => {
+      log("screening_error", `getTopCandidates failed after retries: ${err?.message ?? String(err)}`);
+      cycleRequiredToolFailed = true;
+      lastRequiredFailureMsg = err?.message ?? String(err);
+      return null;
+    });
+    if (!topCandidates) {
+      screenReport = "Screening aborted — required tool getTopCandidates failed.";
+      appendDecision({ type: "no_deploy", actor: "SCREENER", summary: "Required tool failed", reason: "getTopCandidates" });
+      return screenReport;
+    }
     const candidates: any[] = (topCandidates?.candidates || topCandidates?.pools || []).slice(0, 10);
     const earlyFilteredExamples: any[] = topCandidates?.filtered_examples || [];
 
     const allCandidates: Candidate[] = [];
     for (const pool of candidates) {
       const mint: string | undefined = pool.base?.mint;
-      const [smartWallets, narrative, tokenInfo] = await Promise.allSettled([
+      const [smartWallets, narrative] = await Promise.allSettled([
         checkSmartWalletsOnPool({ pool_address: pool.pool }),
         mint ? getTokenNarrative({ mint }) : Promise.resolve(null),
-        mint ? getTokenInfo({ query: mint }) : Promise.resolve(null),
       ]);
+      // Log optional tool failures at warn level
+      if (smartWallets.status === "rejected") log("screening_warn", `checkSmartWalletsOnPool failed for ${pool.name}: ${(smartWallets.reason as Error)?.message ?? String(smartWallets.reason)}`);
+      if (narrative.status === "rejected") log("screening_warn", `getTokenNarrative failed for ${pool.name}: ${(narrative.reason as Error)?.message ?? String(narrative.reason)}`);
+
+      // getTokenInfo is required (feeds hard filters) — retry then fail-closed
+      let ti: any = null;
+      if (mint) {
+        try {
+          const info = await callWithRetry(() => getTokenInfo({ query: mint }), `getTokenInfo(${pool.name})`);
+          ti = (info as any)?.results?.[0] ?? null;
+        } catch (err: any) {
+          log("screening_error", `getTokenInfo failed for ${pool.name} after retries: ${err?.message ?? String(err)}`);
+          cycleRequiredToolFailed = true;
+          lastRequiredFailureMsg = `getTokenInfo(${pool.name}): ${err?.message ?? String(err)}`;
+        }
+      }
       allCandidates.push({
         pool,
         sw: smartWallets.status === "fulfilled" ? smartWallets.value : null,
         n: narrative.status === "fulfilled" ? narrative.value : null,
-        ti: tokenInfo.status === "fulfilled" ? (tokenInfo.value as any)?.results?.[0] : null,
+        ti,
         mem: recallForPool(pool.pool),
       });
       await new Promise(r => setTimeout(r, 150));
@@ -172,6 +236,12 @@ export async function runScreeningCycle({ silent = false }: { silent?: boolean }
     // Hard filters
     const filteredOut: AnyObj[] = [];
     const passing: Candidate[] = allCandidates.filter(({ pool, ti }: Candidate) => {
+      // Fail-closed: reject candidates without token info (required for safety filters)
+      if (!ti) {
+        log("screening", `Skipping ${pool.name} — token info unavailable`);
+        filteredOut.push({ name: pool.name, reason: "token info unavailable" });
+        return false;
+      }
       const launchpad: string | null = ti?.launchpad ?? null;
       if (launchpad && config.screening.allowedLaunchpads?.length > 0 && !config.screening.allowedLaunchpads.includes(launchpad)) {
         log("screening", `Skipping ${pool.name} — launchpad ${launchpad} not in allow-list`);
@@ -241,10 +311,21 @@ export async function runScreeningCycle({ silent = false }: { silent?: boolean }
       }
     }
 
-    // Pre-fetch active_bin for all passing candidates in parallel
-    const activeBinResults: PromiseSettledResult<any>[] = await Promise.allSettled(
-      passing.map(({ pool }: Candidate) => getActiveBin({ pool_address: pool.pool }))
-    );
+    // Pre-fetch active_bin for all passing candidates (required — retry each)
+    const activeBinResults: { status: "fulfilled"; value: any }[] = [];
+    for (const { pool } of passing) {
+      try {
+        const bin = await callWithRetry(() => getActiveBin({ pool_address: pool.pool }), `getActiveBin(${pool.name})`);
+        activeBinResults.push({ status: "fulfilled", value: bin });
+      } catch (err: any) {
+        log("screening_error", `getActiveBin failed for ${pool.name} after retries: ${err?.message ?? String(err)}`);
+        cycleRequiredToolFailed = true;
+        lastRequiredFailureMsg = `getActiveBin(${pool.name}): ${err?.message ?? String(err)}`;
+        screenReport = `Screening aborted — required tool getActiveBin failed for ${pool.name}.`;
+        appendDecision({ type: "no_deploy", actor: "SCREENER", summary: "Required tool failed", reason: `getActiveBin(${pool.name})` });
+        return screenReport;
+      }
+    }
 
     // Build compact candidate blocks
     const candidateBlocks: string[] = passing.map(({ pool, sw, n, ti, mem }: Candidate, i: number) => {
@@ -254,13 +335,13 @@ export async function runScreeningCycle({ silent = false }: { silent?: boolean }
       const launchpad: string | null = ti?.launchpad ?? null;
       const priceChange: number | null = ti?.stats_1h?.price_change;
       const netBuyers: number | null = ti?.stats_1h?.net_buyers;
-      const activeBin: any = activeBinResults[i]?.status === "fulfilled" ? activeBinResults[i].value?.binId : null;
+      const activeBin: any = activeBinResults[i]?.value?.binId ?? null;
 
       const okxParts: string = [
         pool.risk_level     != null ? `risk=${pool.risk_level}`               : null,
         pool.bundle_pct     != null ? `bundle=${pool.bundle_pct}%`            : null,
         pool.sniper_pct     != null ? `sniper=${pool.sniper_pct}%`            : null,
-        pool.suspicious_pct != null ? `suspicious=${pool.sniper_pct}%`        : null, // fixed typo in original: sniper_pct to suspicious_pct? Wait, keep original logic.
+        pool.suspicious_pct != null ? `suspicious=${pool.suspicious_pct}%` : null,
         pool.new_wallet_pct != null ? `new_wallets=${pool.new_wallet_pct}%`   : null,
         pool.is_rugpull != null ? `rugpull=${pool.is_rugpull ? "YES" : "NO"}` : null,
         pool.is_wash != null ? `wash=${pool.is_wash ? "YES" : "NO"}` : null,
@@ -416,14 +497,23 @@ IMPORTANT:
       });
     }
   } catch (error: any) {
-    log("cron_error", `Screening cycle failed: ${error.message}`);
-    screenReport = `Screening cycle failed: ${error.message}`;
+    log("cron_error", `Screening cycle failed: ${error?.message ?? String(error)}`);
+    screenReport = `Screening cycle failed: ${error?.message ?? String(error)}`;
   } finally {
+    // Update consecutive failure counter (once per cycle)
+    if (cycleRequiredToolFailed) {
+      _consecutiveRequiredFailures += 1;
+      if (_consecutiveRequiredFailures >= REQUIRED_FAILURE_ALERT_THRESHOLD) {
+        sendLongMessage(`⚠️ Screening degraded: required tools failing for ${_consecutiveRequiredFailures} consecutive cycles.\nLast error: ${lastRequiredFailureMsg}`).catch(() => {});
+      }
+    } else {
+      _consecutiveRequiredFailures = 0;
+    }
     setScreeningBusy(false);
     if (!silent && telegramEnabled()) {
       if (screenReport) {
         if (liveMessage) await liveMessage.finalize(stripThink(screenReport)).catch(() => {});
-        else sendLongMessage(`🔍 Screening Cycle\n\n${stripThink(screenReport)}`).catch(() => { });
+        else sendLongMessage(dryRunTag(`🔍 Screening Cycle\n\n${stripThink(screenReport)}`)).catch(() => { });
       }
     }
   }

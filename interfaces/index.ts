@@ -8,6 +8,13 @@
 
 import * as telegram from "./telegram/index.js";
 
+// --- Message tags (shared across all platforms) ---
+// Primitives (sendMessage, sendLongMessage, createLiveMessage) do NOT auto-tag.
+// Callers must wrap with dryRunTag/dryRunTitle, or use notify* helpers which wrap internally.
+// When integrating a new platform, refactor this gate to centralize tagging (opt-out pattern).
+
+export { dryRunTag, dryRunTitle } from "./tags.js";
+
 // --- Types ---
 
 export interface DeployNotification {
@@ -89,3 +96,35 @@ export {
   startPolling,
   stopPolling,
 } from "./telegram/index.js";
+
+// --- Message formatters (platform-agnostic) ---
+
+export {
+  formatHelpText,
+  formatWalletStatus,
+  formatConfigSnapshot,
+  formatPositions,
+  formatPositionDetail,
+  formatVirtualPositions,
+  formatCloseResult,
+  formatCloseAllResult,
+  formatSetNote,
+  formatSetConfig,
+  formatDeployResult,
+  formatPause,
+  formatResume,
+  formatQueued,
+  formatQueueFull,
+  formatError,
+  formatDeployNotification,
+  formatCloseNotification,
+  formatSwapNotification,
+  formatOutOfRange,
+  formatManagementReport,
+  buildConfigSnapshotInput,
+  cur,
+  fmtPct,
+  escapeMarkdown,
+} from "./messages.js";
+
+export type { ConfigSnapshotInput, ManagementReportPosition, ManagementReportAction } from "./messages.js";

@@ -9,7 +9,7 @@ import { agentLoop } from "../../llm/index.js";
 import { log } from "../../utils/logger.js";
 import { getMyPositions } from "../../providers/meteora/index.js";
 import { config } from "../../config/index.js";
-import { sendLongMessage, notifyOutOfRange, isEnabled as telegramEnabled, createLiveMessage } from "../../interfaces/index.js";
+import { sendLongMessage, notifyOutOfRange, isEnabled as telegramEnabled, createLiveMessage, formatManagementReport, dryRunTag, type ManagementReportPosition, type ManagementReportAction } from "../../interfaces/index.js";
 import { getCloseRule } from "../close-rules.js";
 import { updateLivePnlAndCheckExits, queueLivePeakConfirmation, queueLiveTrailingDropConfirmation } from "./state.js";
 import { recordPositionSnapshot, recallForPool } from "../pool-memory.js";
@@ -153,32 +153,25 @@ export async function runLiveManagementCycle(
       actionMap.set(p.position, { action: "STAY" });
     }
 
-    // ── Build JS report (live positions only) ──
-    const totalValue: number = liveLivePositionData.reduce((s, p) => s + (p.total_value_usd ?? 0), 0);
-    const totalUnclaimed: number = liveLivePositionData.reduce((s, p) => s + (p.unclaimed_fees_usd ?? 0), 0);
-
-    const reportLines: string[] = liveLivePositionData.map((p: LivePosition) => {
-      const act: AnyObj = actionMap.get(p.position)!;
-      const inRange = p.in_range === true ? "🟢 IN" : p.in_range === false ? `🔴 OOR ${p.minutes_out_of_range ?? 0}m` : "??";
-      const val = config.management.solMode ? `◎ ${p.total_value_usd ?? "?"}` : `$ ${p.total_value_usd ?? "?"}`;
-      const unclaimed = config.management.solMode ? `◎ ${p.unclaimed_fees_usd ?? "?"}` : `$ ${p.unclaimed_fees_usd ?? "?"}`;
-      const statusLabel = act.action === "INSTRUCTION" ? "HOLD (instruction)" : act.action;
-      let line = `**${p.pair}** | Age: ${p.age_minutes ?? "?"}m | Val: ${val} | Unclaimed: ${unclaimed} | PnL: ${p.pnl_pct ?? "?"}% | Yield: ${p.fee_per_tvl_24h ?? "?"}% | ${inRange} | ${statusLabel}`;
-      if (p.instruction) line += `\nNote: "${p.instruction}"`;
-      if (act.action === "CLOSE" && act.rule === "exit") line += `\n⚡ Trailing TP: ${act.reason}`;
-      if (act.action === "CLOSE" && act.rule && act.rule !== "exit") line += `\nRule ${act.rule}: ${act.reason}`;
-      if (act.action === "CLAIM") line += `\n→ Claiming fees`;
-      return line;
-    });
-
-    const needsAction = [...actionMap.values()].filter((a: AnyObj) => a.action !== "STAY");
-    const actionSummary: string = needsAction.length > 0
-      ? needsAction.map((a: AnyObj) => a.action === "INSTRUCTION" ? "EVAL instruction" : `${a.action}${a.reason ? ` (${a.reason})` : ""}`).join(", ")
-      : "no action";
+    // ── Build management report (live positions only) ──
+    const reportPositions: ManagementReportPosition[] = liveLivePositionData.map((p: LivePosition) => ({
+      position: p.position,
+      pair: p.pair,
+      age_minutes: p.age_minutes ?? null,
+      total_value_usd: p.total_value_usd ?? null,
+      unclaimed_fees_usd: p.unclaimed_fees_usd ?? null,
+      pnl_pct: p.pnl_pct ?? null,
+      fee_per_tvl_24h: p.fee_per_tvl_24h ?? null,
+      in_range: p.in_range ?? null,
+      minutes_out_of_range: p.minutes_out_of_range ?? 0,
+      instruction: p.instruction ?? undefined,
+    }));
+    const reportActionMap = new Map<string, ManagementReportAction>(
+      [...actionMap.entries()].map(([k, v]) => [k, v as ManagementReportAction])
+    );
+    mgmtReport = formatManagementReport(reportPositions, reportActionMap, config.management.solMode);
 
     const cur: string = config.management.solMode ? "◎" : "$";
-    mgmtReport = reportLines.join("\n\n") +
-      `\n\nSummary: 💼 ${liveLivePositionData.length} positions | ${cur} ${totalValue.toFixed(4)} | fees: ${cur} ${totalUnclaimed.toFixed(4)} | ${actionSummary}`;
 
     // ── Call LLM only if action needed (live positions only) ─────────
     const actionLivePositions: LivePosition[] = liveLivePositionData.filter((p: LivePosition) => {
@@ -285,7 +278,7 @@ After executing, write a brief one-line result per position.
     if (!silent && telegramEnabled()) {
       if (mgmtReport) {
         if (liveMessage) await liveMessage.finalize(stripThink(mgmtReport)).catch(() => {});
-        else sendLongMessage(`🔄 Management Cycle\n\n${stripThink(mgmtReport)}`).catch(() => { });
+        else sendLongMessage(dryRunTag(`🔄 Management Cycle\n\n${stripThink(mgmtReport)}`)).catch(() => { });
       }
       for (const p of positions) {
         if (p.in_range === false && p.minutes_out_of_range >= config.management.outOfRangeWaitMinutes) {

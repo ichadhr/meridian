@@ -25,6 +25,7 @@ import {
   notifyOutOfRange,
   isEnabled as telegramEnabled,
   createLiveMessage,
+  dryRunTag,
 } from "./interfaces/index.js";
 import {
   generateBriefing,
@@ -52,6 +53,25 @@ import { bootstrapHiveMind, ensureAgentId, getHiveMindPullMode, isHiveMindEnable
 import { managementBusy, setManagementBusy, screeningBusy, setScreeningBusy, timers } from "./core/index.js";
 import { startCronJobs, stopCronJobs, launchCron as _launchCron, pauseCron, resumeCron, cronStarted as _cronStarted, initScheduler, maybeRunMissedBriefing } from "./scheduler/index.js";
 import type { LivePosition } from "./types/index.js";
+import {
+  formatHelpText,
+  formatWalletStatus,
+  formatConfigSnapshot,
+  formatPositions,
+  formatPositionDetail,
+  formatVirtualPositions,
+  formatCloseResult,
+  formatCloseAllResult,
+  formatSetNote,
+  formatSetConfig,
+  formatDeployResult,
+  formatPause,
+  formatResume,
+  formatQueued,
+  formatQueueFull,
+  escapeMarkdown,
+  buildConfigSnapshotInput,
+} from "./interfaces/index.js";
 
 // ── Type helpers ──────────────────────────────────────────────
 type AnyObj = Record<string, any>;
@@ -223,35 +243,7 @@ function describeLatestCandidates(limit: number = 5): string {
   return `Latest candidates (${_latestCandidates.length}) — updated ${age}\n\n${lines.join("\n")}`;
 }
 
-function formatWalletStatus(wallet: any, positions: any): string {
-  const deployAmount: number = computeDeployAmount(wallet.sol);
-  const hive: string = isHiveMindEnabled() ? "on" : "off";
-  return [
-    `Wallet: ${wallet.sol} SOL ($ ${wallet.sol_usd})`,
-    `SOL price: $ ${wallet.sol_price}`,
-    `Open positions: ${positions.total_positions}/${config.risk.maxPositions}`,
-    `Next deploy amount: ${deployAmount} SOL`,
-    `Dry run: ${process.env.DRY_RUN === "true" ? "yes" : "no"}`,
-    `HiveMind: ${hive}`,
-  ].join("\n");
-}
 
-function formatConfigSnapshot(): string {
-  return [
-    "Config snapshot",
-    "",
-    `Strategy: ${config.strategy.strategy} | binsBelow: ${config.strategy.minBinsBelow}-${config.strategy.maxBinsBelow} | default ${config.strategy.defaultBinsBelow}`,
-    `Deploy: ${config.management.deployAmountSol} SOL | gasReserve: ${config.management.gasReserve} | maxPositions: ${config.risk.maxPositions}`,
-    `Stop loss: ${config.management.stopLossPct}% | take profit: ${config.management.takeProfitPct}%`,
-    `Trailing: ${config.management.trailingTakeProfit ? "on" : "off"} | trigger ${config.management.trailingTriggerPct}% | drop ${config.management.trailingDropPct}%`,
-    `OOR: ${config.management.outOfRangeWaitMinutes}m | cooldown ${config.management.oorCooldownTriggerCount}x / ${config.management.oorCooldownHours}h`,
-    `Repeat deploy cooldown: ${config.management.repeatDeployCooldownEnabled ? "on" : "off"} | ${config.management.repeatDeployCooldownTriggerCount}x / ${config.management.repeatDeployCooldownHours}h | min fee earned ${config.management.repeatDeployCooldownMinFeeEarnedPct}% | ${config.management.repeatDeployCooldownScope}`,
-    `Yield floor: ${config.management.minFeePerTvl24h}% | min age ${config.management.minAgeBeforeYieldCheck}m`,
-    `Screening: ${config.screening.category} / ${config.screening.timeframe} | TVL ${config.screening.minTvl}-${config.screening.maxTvl}`,
-    `Intervals: manage ${config.schedule.managementIntervalMin}m | screen ${config.schedule.screeningIntervalMin}m`,
-    `HiveMind: ${isHiveMindEnabled() ? "enabled" : "disabled"}${config.hiveMind.agentId ? ` | ${config.hiveMind.agentId}` : ""}`,
-  ].join("\n");
-}
 
 function parseConfigValue(raw: any): any {
   const value: string = String(raw ?? "").trim();
@@ -453,7 +445,7 @@ async function applySettingsMenuCallback(msg: TelegramMessage): Promise<void> {
   }
   if (action === "show") {
     await answerCallbackQuery(msg.callbackQueryId!);
-    await editMessageWithButtons(formatConfigSnapshot(), msg.messageId!, [[settingButton("Back", "cfg:page:main")]]);
+    await editMessageWithButtons(formatConfigSnapshot(buildConfigSnapshotInput(config, isHiveMindEnabled())), msg.messageId!, [[settingButton("Back", "cfg:page:main")]]);
     return;
   }
   if (action === "page") {
@@ -506,34 +498,7 @@ async function applySettingsMenuCallback(msg: TelegramMessage): Promise<void> {
   await showSettingsMenu({ messageId: msg.messageId!, page });
 }
 
-function formatHelpText(): string {
-  return [
-    "Telegram commands",
-    "",
-    "/help — show commands",
-    "/status — wallet + positions snapshot",
-    "/wallet — wallet, deploy amount, HiveMind status",
-    "/positions — list open positions",
-    "/vp — list virtual (dry-run) positions",
-    "/vp report — generate dry-run HTML report",
-    "/pool <n> — detailed info for one open position",
-    "/close <n> — close one position by index",
-    "/closeall — close all open positions",
-    "/set <n> <note> — set note/instruction on position",
-    "/config — show important runtime config",
-    "/settings — button menu for common config",
-    "/setcfg <key> <value> — update persisted config",
-    "/screen — refresh deterministic candidate list",
-    "/candidates — show latest cached candidates",
-    "/deploy <n> — deploy candidate by cached index",
-    "/briefing — morning briefing",
-    "/hive — HiveMind sync status",
-    "/hive pull — manual HiveMind pull now",
-    "/pause — stop cron cycles",
-    "/resume — start cron cycles again",
-    "/stop — shut down agent",
-  ].join("\n");
-}
+
 
 async function runDeterministicScreen(limit: number = 5): Promise<string> {
   const top: any = await getTopCandidates({ limit });
@@ -651,9 +616,9 @@ async function telegramHandler(msg: TelegramMessage): Promise<void> {
   if (managementBusy || screeningBusy || busy) {
     if (_telegramQueue.length < 5) {
       _telegramQueue.push(msg);
-      sendMessage(`⏳ Queued (${_telegramQueue.length} in queue): "${text.slice(0, 60)}"`).catch(() => {});
+      sendMessage(formatQueued(_telegramQueue.length, text)).catch(() => {});
     } else {
-      sendMessage("Queue is full (5 messages). Wait for the agent to finish.").catch(() => {});
+      sendMessage(formatQueueFull()).catch(() => {});
     }
     return;
   }
@@ -661,7 +626,7 @@ async function telegramHandler(msg: TelegramMessage): Promise<void> {
   if (text === "/briefing") {
     try {
       const briefing: string = await generateBriefing();
-      await sendLongMessage(briefing, { parse_mode: "HTML" });
+      await sendLongMessage(briefing);
     } catch (e: any) {
       await sendMessage(`Error: ${e.message}`).catch(() => {});
     }
@@ -679,7 +644,13 @@ async function telegramHandler(msg: TelegramMessage): Promise<void> {
       const suffix: string = text === "/status" && positions.total_positions
         ? `\n\nUse /positions for the numbered list.`
         : "";
-      await sendMessage(`${formatWalletStatus(wallet, positions)}${suffix}`).catch(() => {});
+      await sendMessage(`${formatWalletStatus(wallet, positions, {
+        solMode: config.management.solMode,
+        maxPositions: config.risk.maxPositions,
+        deployAmount: computeDeployAmount(wallet.sol),
+        dryRun: process.env.DRY_RUN === "true",
+        hiveEnabled: isHiveMindEnabled(),
+      })}${suffix}`).catch(() => {});
     } catch (e: any) {
       await sendMessage(`Error: ${e.message}`).catch(() => {});
     }
@@ -687,25 +658,14 @@ async function telegramHandler(msg: TelegramMessage): Promise<void> {
   }
 
   if (text === "/config") {
-    await sendMessage(formatConfigSnapshot()).catch(() => {});
+    await sendMessage(formatConfigSnapshot(buildConfigSnapshotInput(config, isHiveMindEnabled()))).catch(() => {});
     return;
   }
 
   if (text === "/positions") {
     try {
       const { positions, total_positions }: { positions: LivePosition[]; total_positions: number } = await getMyPositions({ force: true });
-      if (total_positions === 0) { await sendMessage("No open positions."); return; }
-      const cur: string = config.management.solMode ? "◎" : "$";
-      const lines: string[] = positions.map((p: LivePosition, i: number) => {
-        const pnlUsd: number = p.pnl_usd ?? 0;
-        const pnl: string = pnlUsd >= 0 ? `+${cur} ${pnlUsd}` : `-${cur} ${Math.abs(pnlUsd)}`;
-        const age: string = p.age_minutes != null ? `${p.age_minutes}m` : "?";
-        // Step 7 (meridian-wie): null in_range = "no fresh PnL".
-        // True → 🟢 IN. False → 🔴 OOR. Null → ?? (no red bullet).
-        const oor: string = p.in_range === false ? " 🔴 OOR" : p.in_range === true ? " 🟢 IN" : " ??";
-        return `${i + 1}. ${p.pair} | ${cur} ${p.total_value_usd} | PnL: ${pnl} | fees: ${cur} ${p.unclaimed_fees_usd} | ${age}${oor}`;
-      });
-      await sendMessage(`📊 Open Positions (${total_positions}):\n\n${lines.join("\n")}\n\n/close <n> to close | /set <n> <note> to set instruction`);
+      await sendMessage(dryRunTag(formatPositions(positions, total_positions, config.management.solMode)));
     } catch (e: any) { await sendMessage(`Error: ${e.message}`).catch(() => {}); }
     return;
   }
@@ -723,23 +683,9 @@ async function telegramHandler(msg: TelegramMessage): Promise<void> {
         const sent: boolean = await sendDocument(filePath, { caption: "📄 Dry-run VP report" });
         if (!sent) await sendMessage("❌ Failed to upload HTML report — check logs.");
       } else {
-        // Use getMyPositions({force:true}) so the display has FRESH PnL
-        // (via Step 3 fresh path) and live in_range — not the stale cached
-        // fields. Filter to VPs only.
         const { positions }: { positions: LivePosition[] } = await getMyPositions({ force: true });
         const vps: LivePosition[] = positions.filter((p: LivePosition) => p.position?.startsWith("vp:"));
-        if (vps.length === 0) { await sendMessage("No open virtual positions."); return; }
-        const cur: string = config.management.solMode ? "◎" : "$";
-        const lines: string[] = vps.map((pos: LivePosition) => {
-          const vpId: string = pos.position.slice(3); // strip "vp:" prefix
-          const pnl: string = pos.pnl_pct != null ? `${pos.pnl_pct.toFixed(2)}%` : "?";
-          const fees: string = pos.unclaimed_fees_usd != null ? `${cur} ${pos.unclaimed_fees_usd.toFixed(2)}` : "?";
-          // Step 7 (meridian-wie): null in_range = "no fresh PnL" (RPC outage).
-          // True → 🟢 IN. False → 🔴 OOR. Null → ?? (no red bullet).
-          const oor: string = pos.in_range === true ? "🟢 IN" : pos.in_range === false ? "🔴 OOR" : "??";
-          return `${vpId} | ${pos.pair} | PnL: ${pnl} | fees: ${fees} | ${oor}`;
-        });
-        await sendMessage(`📊 Virtual Positions (${vps.length}):\n\n${lines.join("\n")}`);
+        await sendMessage(formatVirtualPositions(vps, config.management.solMode));
       }
     } catch (e: any) { await sendMessage(`Error: ${e.message}`).catch(() => {}); }
     return;
@@ -752,18 +698,7 @@ async function telegramHandler(msg: TelegramMessage): Promise<void> {
       const { positions }: { positions: LivePosition[] } = await getMyPositions({ force: true });
       if (idx < 0 || idx >= positions.length) { await sendMessage("Invalid number. Use /positions first."); return; }
       const pos: LivePosition = positions[idx];
-        await sendMessage([
-          `${idx + 1}. ${pos.pair}`,
-          `Pool: ${pos.pool}`,
-          `Position: ${pos.position}`,
-          `Range: ${pos.lower_bin} → ${pos.upper_bin} | active ${pos.active_bin}`,
-          `PnL: ${pos.pnl_pct ?? "?"}% | fees: ${config.management.solMode ? "◎" : "$"} ${pos.unclaimed_fees_usd ?? "?"}`,
-          `Value: ${config.management.solMode ? "◎" : "$"} ${pos.total_value_usd ?? "?"}`,
-          // Step 7 (meridian-wie): null in_range = "no fresh PnL" (RPC outage).
-          // True → 🟢 IN RANGE. False → 🔴 OOR <time>m. Null → ?? (no red bullet).
-          `Age: ${pos.age_minutes ?? "?"}m | ${pos.in_range === true ? "🟢 IN RANGE" : pos.in_range === false ? `🔴 OOR ${pos.minutes_out_of_range ?? 0}m` : "?? (no fresh PnL)"}`,
-          pos.instruction ? `Note: ${pos.instruction}` : null,
-      ].filter(Boolean).join("\n"));
+      await sendMessage(formatPositionDetail(pos, idx, config.management.solMode));
     } catch (e: any) {
       await sendMessage(`Error: ${e.message}`).catch(() => {});
     }
@@ -792,20 +727,11 @@ async function telegramHandler(msg: TelegramMessage): Promise<void> {
       const { positions }: { positions: LivePosition[] } = await getMyPositions({ force: true });
       if (idx < 0 || idx >= positions.length) { await sendMessage("Invalid number. Use /positions first."); return; }
       const pos: LivePosition = positions[idx];
-      await sendMessage(`Closing ${pos.pair}...`);
+      await sendMessage(`Closing ${escapeMarkdown(pos.pair)}...`);
       const result: any = await closeTelegramPosition(pos);
+      await sendMessage(dryRunTag(formatCloseResult(pos, result, config.management.solMode)));
       if (result.success) {
-        if (result.is_virtual) {
-          await sendMessage(`✅ Closed VP ${pos.pair}\nPnL: ${result.pnl_pct?.toFixed(2) ?? "?"}% | ${config.management.solMode ? "◎" : "$"}${result.pnl_usd?.toFixed(4) ?? "?"}`);
-        } else {
-          const closeTxs: any = result.close_txs?.length ? result.close_txs : result.txs;
-          const claimNote: string = result.claim_txs?.length ? `\nClaim txs: ${result.claim_txs.join(", ")}` : "";
-          await sendMessage(`✅ Closed ${pos.pair}\nPnL: ${config.management.solMode ? "◎" : "$"} ${result.pnl_usd ?? "?"} | close txs: ${closeTxs?.join(", ") || "n/a"}${claimNote}`);
-        }
-        // Screening trigger — slot freed, don't let SOL sit idle
         tryStartScreening("telegram-close", true);
-      } else {
-        await sendMessage(`❌ Close failed: ${JSON.stringify(result)}`);
       }
     } catch (e: any) { await sendMessage(`Error: ${e.message}`).catch(() => {}); }
     return;
@@ -816,23 +742,16 @@ async function telegramHandler(msg: TelegramMessage): Promise<void> {
       const { positions }: { positions: LivePosition[] } = await getMyPositions({ force: true });
       if (!positions.length) { await sendMessage("No open positions."); return; }
       await sendMessage(`Closing ${positions.length} position(s)...`);
-      const results: string[] = [];
+      const results: Array<{ pair: string; success: boolean; pnl_pct?: number; error?: string; is_virtual?: boolean }> = [];
       for (const pos of positions) {
         try {
           const result: any = await closeTelegramPosition(pos);
-          if (result.success) {
-            const tag: string = result.is_virtual ? " (VP)" : "";
-            const pnl: string = result.pnl_pct != null ? ` PnL ${result.pnl_pct.toFixed(2)}%` : "";
-            results.push(`${pos.pair}${tag}: closed${pnl}`);
-          } else {
-            results.push(`${pos.pair}: failed (${result.error || "unknown"})`);
-          }
+          results.push({ pair: pos.pair, success: result.success, pnl_pct: result.pnl_pct, error: result.error, is_virtual: result.is_virtual });
         } catch (error: any) {
-          results.push(`${pos.pair}: failed (${error.message})`);
+          results.push({ pair: pos.pair, success: false, error: error.message });
         }
       }
-      await sendMessage(`Close-all finished.\n\n${results.join("\n")}`).catch(() => {});
-      // Screening trigger — slot(s) freed
+      await sendMessage(dryRunTag(formatCloseAllResult(results))).catch(() => {});
       tryStartScreening("telegram-closeall", true);
     } catch (e: any) {
       await sendMessage(`Error: ${e.message}`).catch(() => {});
@@ -849,7 +768,7 @@ async function telegramHandler(msg: TelegramMessage): Promise<void> {
       if (idx < 0 || idx >= positions.length) { await sendMessage("Invalid number. Use /positions first."); return; }
       const pos: LivePosition = positions[idx];
       setPositionInstruction(pos.position, note);
-      await sendMessage(`✅ Note set for ${pos.pair}:\n"${note}"`);
+      await sendMessage(formatSetNote(pos.pair, note));
     } catch (e: any) { await sendMessage(`Error: ${e.message}`).catch(() => {}); }
     return;
   }
@@ -864,10 +783,10 @@ async function telegramHandler(msg: TelegramMessage): Promise<void> {
         reason: "Telegram slash command /setcfg",
       });
       if (!result?.success) {
-        await sendMessage(`Config update failed.\nUnknown: ${(result?.unknown || []).join(", ") || "none"}`).catch(() => {});
+        await sendMessage(formatSetConfig(key, value, result?.unknown)).catch(() => {});
         return;
       }
-      await sendMessage(`✅ Updated ${key} = ${JSON.stringify(value)}`).catch(() => {});
+      await sendMessage(formatSetConfig(key, value)).catch(() => {});
     } catch (e: any) {
       await sendMessage(`Error: ${e.message}`).catch(() => {});
     }
@@ -893,17 +812,7 @@ async function telegramHandler(msg: TelegramMessage): Promise<void> {
     try {
       const idx: number = parseInt(deployMatch[1]) - 1;
       const { candidate, result, deployAmount, binsBelow } = await deployLatestCandidate(idx);
-      const coverage: string = result.range_coverage
-        ? `Range: ${fmtPct(result.range_coverage.downside_pct)} downside | ${fmtPct(result.range_coverage.upside_pct)} upside`
-        : `Strategy: ${config.strategy.strategy} | binsBelow: ${binsBelow}`;
-      await sendMessage([
-        `✅ Deployed ${candidate.name}`,
-        `Pool: ${candidate.pool}`,
-        `Amount: ${deployAmount} SOL`,
-        coverage,
-        `Position: ${result.position || "n/a"}`,
-        result.txs?.length ? `Tx: ${result.txs[0]}` : null,
-      ].filter(Boolean).join("\n")).catch(() => {});
+      await sendMessage(dryRunTag(formatDeployResult(candidate, result, deployAmount, binsBelow, config.strategy.strategy))).catch(() => {});
     } catch (e: any) {
       await sendMessage(`Error: ${e.message}`).catch(() => {});
     }
@@ -912,16 +821,16 @@ async function telegramHandler(msg: TelegramMessage): Promise<void> {
 
   if (text === "/pause") {
     pauseCron();
-    await sendMessage("⏸ Paused autonomous cycles. Telegram control still works. Use /resume to start again.").catch(() => {});
+    await sendMessage(formatPause()).catch(() => {});
     return;
   }
 
   if (text === "/resume") {
     if (!_cronStarted) {
       resumeCron();
-      await sendMessage("▶️ Autonomous cycles resumed.").catch(() => {});
+      await sendMessage(formatResume(false)).catch(() => {});
     } else {
-      await sendMessage("Autonomous cycles are already running.").catch(() => {});
+      await sendMessage(formatResume(true)).catch(() => {});
     }
     return;
   }
@@ -984,10 +893,7 @@ async function telegramHandler(msg: TelegramMessage): Promise<void> {
   }
 }
 
-function fmtPct(value: any): string {
-  const n: number = Number(value);
-  return Number.isFinite(n) ? `${n.toFixed(2)}%` : "?";
-}
+
 
 // Restarter and screening trigger now handled by scheduler/index.ts and executor.ts directly
 
