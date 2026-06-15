@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { executeTool } from "../llm/tools/executor.js";
+import { executeTool } from "../../llm/tools/executor.js";
 
 describe("executeTool", () => {
   const originalDryRun = process.env.DRY_RUN;

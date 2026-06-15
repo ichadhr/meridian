@@ -5,7 +5,7 @@ const mockFetch = vi.fn();
 vi.stubGlobal("fetch", mockFetch);
 
 // Mock provider modules - must be before imports
-vi.mock("../providers/meteora/index.js", () => ({
+vi.mock("../../providers/meteora/index.js", () => ({
   getMyPositions: vi.fn(),
   getActiveBin: vi.fn(),
   deployPosition: vi.fn(),
@@ -20,30 +20,30 @@ vi.mock("../providers/meteora/index.js", () => ({
   getTopCandidates: vi.fn(),
 }));
 
-vi.mock("../providers/solana/index.js", () => ({
+vi.mock("../../providers/solana/index.js", () => ({
   getWalletBalances: vi.fn(),
 }));
 
-vi.mock("../providers/okx/index.js", () => ({
+vi.mock("../../providers/okx/index.js", () => ({
   getAdvancedInfo: vi.fn(),
 }));
 
-vi.mock("../providers/jupiter/index.js", () => ({
+vi.mock("../../providers/jupiter/index.js", () => ({
   swapToken: vi.fn(),
   getTokenInfo: vi.fn(),
   getTokenHolders: vi.fn(),
   getTokenNarrative: vi.fn(),
 }));
 
-vi.mock("../core/vp/state.js", () => ({
+vi.mock("../../core/vp/state.js", () => ({
   parseVirtualPositionAddress: vi.fn(),
 }));
 
-vi.mock("../core/vp/manage.js", () => ({
+vi.mock("../../core/vp/manage.js", () => ({
   closeVpPosition: vi.fn(),
 }));
 
-vi.mock("../core/lessons.js", () => ({
+vi.mock("../../core/lessons.js", () => ({
   addLesson: vi.fn(),
   clearAllLessons: vi.fn(),
   clearPerformance: vi.fn(),
@@ -54,16 +54,16 @@ vi.mock("../core/lessons.js", () => ({
   listLessons: vi.fn(),
 }));
 
-vi.mock("../core/state.js", () => ({
+vi.mock("../../core/state.js", () => ({
   setPositionInstruction: vi.fn(),
 }));
 
-vi.mock("../core/pool-memory.js", () => ({
+vi.mock("../../core/pool-memory.js", () => ({
   getPoolMemory: vi.fn(),
   addPoolNote: vi.fn(),
 }));
 
-vi.mock("../core/strategy-library.js", () => ({
+vi.mock("../../core/strategy-library.js", () => ({
   addStrategy: vi.fn(),
   listStrategies: vi.fn(),
   getStrategy: vi.fn(),
@@ -71,7 +71,7 @@ vi.mock("../core/strategy-library.js", () => ({
   removeStrategy: vi.fn(),
 }));
 
-vi.mock("../core/token-blacklist.js", () => ({
+vi.mock("../../core/token-blacklist.js", () => ({
   addToBlacklist: vi.fn(),
   removeFromBlacklist: vi.fn(),
   listBlacklist: vi.fn(),
@@ -80,38 +80,38 @@ vi.mock("../core/token-blacklist.js", () => ({
   listBlockedDevs: vi.fn(),
 }));
 
-vi.mock("../core/smart-wallets.js", () => ({
+vi.mock("../../core/smart-wallets.js", () => ({
   addSmartWallet: vi.fn(),
   removeSmartWallet: vi.fn(),
   listSmartWallets: vi.fn(),
   checkSmartWalletsOnPool: vi.fn(),
 }));
 
-vi.mock("../core/decision-log.js", () => ({
+vi.mock("../../core/decision-log.js", () => ({
   getRecentDecisions: vi.fn(),
 }));
 
-vi.mock("../utils/logger.js", () => ({
+vi.mock("../../utils/logger.js", () => ({
   log: vi.fn(),
   logAction: vi.fn(),
 }));
 
-vi.mock("../interfaces/index.js", () => ({
+vi.mock("../../interfaces/index.js", () => ({
   notifyDeploy: vi.fn(),
   notifyClose: vi.fn(),
   notifySwap: vi.fn(),
 }));
 
-vi.mock("../llm/tools/study.js", () => ({
+vi.mock("../../llm/tools/study.js", () => ({
   studyTopLPers: vi.fn(),
 }));
 
 // Import AFTER mocks
-import { executeTool } from "../llm/tools/executor.js";
-import { getMyPositions } from "../providers/meteora/index.js";
-import { getWalletBalances } from "../providers/solana/index.js";
-import { getAdvancedInfo } from "../providers/okx/index.js";
-import { config } from "../config/index.js";
+import { executeTool } from "../../llm/tools/executor.js";
+import { getMyPositions } from "../../providers/meteora/index.js";
+import { getWalletBalances } from "../../providers/solana/index.js";
+import { getAdvancedInfo } from "../../providers/okx/index.js";
+import { config } from "../../config/index.js";
 
 const mockGetMyPositions = vi.mocked(getMyPositions);
 const mockGetWalletBalances = vi.mocked(getWalletBalances);

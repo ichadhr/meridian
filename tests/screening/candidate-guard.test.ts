@@ -1,12 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
 // Mock LLM module to avoid OpenAI client initialization
-vi.mock("../llm/index.js", () => ({
+vi.mock("../../llm/index.js", () => ({
   agentLoop: vi.fn(),
 }));
 
-import { getLoneCandidateSkipReason } from "../core/index.js";
-import { config } from "../config/index.js";
+import { getLoneCandidateSkipReason } from "../../core/index.js";
+import { config } from "../../config/index.js";
 
 function candidate(overrides: Record<string, any> = {}) {
   return {

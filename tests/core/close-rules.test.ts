@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { getCloseRule } from "../core/index.js";
-import type { CloseRulePosition, CloseRuleConfig } from "../core/index.js";
+import { getCloseRule } from "../../core/index.js";
+import type { CloseRulePosition, CloseRuleConfig } from "../../core/index.js";
 
 const baseConfig: CloseRuleConfig = {
   stopLossPct: -20,

@@ -24,13 +24,13 @@ import {
   formatSwapNotification,
   formatOutOfRange,
   formatManagementReport,
-} from "../interfaces/messages.js";
+} from "../../interfaces/messages.js";
 import type {
   ConfigSnapshotInput,
   ManagementReportPosition,
   ManagementReportAction,
-} from "../interfaces/messages.js";
-import type { LivePosition } from "../types/index.js";
+} from "../../interfaces/messages.js";
+import type { LivePosition } from "../../types/index.js";
 
 // ── Helpers / Factories ──────────────────────────────────────────
 

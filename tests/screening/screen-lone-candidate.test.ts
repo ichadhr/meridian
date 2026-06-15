@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { getLoneCandidateSkipReason } from "../core/index.js";
+import { getLoneCandidateSkipReason } from "../../core/index.js";
 
 interface TestCandidate {
   pool: any;

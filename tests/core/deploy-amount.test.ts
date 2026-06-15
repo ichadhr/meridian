@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { computeDeployAmount, config } from "../config/index.js";
+import { computeDeployAmount, config } from "../../config/index.js";
 
 describe("computeDeployAmount", () => {
   const original = {

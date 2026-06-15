@@ -17,7 +17,7 @@ import {
   markVpOutOfRange,
   markVpInRange,
   minutesVpOutOfRange,
-} from "../core/index.js";
+} from "../../core/index.js";
 
 describe("State machine — trailing TP", () => {
   const POS = "test-pos-001";
