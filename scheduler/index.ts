@@ -173,7 +173,7 @@ export function startCronJobs(): void {
   });
 
   const screenTask = cron.schedule(`*/${Math.max(1, config.schedule.screeningIntervalMin)} * * * *`, async () => {
-    await runScreeningCycle();
+    tryStartScreening("cron");
   });
 
   const healthTask = cron.schedule(`0 * * * *`, async () => {

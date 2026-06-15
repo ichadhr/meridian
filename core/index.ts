@@ -169,8 +169,8 @@ export {
   screeningBusy,
   setScreeningBusy,
   timers,
-  screeningLastTriggered,
-  setScreeningLastTriggered,
+  screeningLastStarted,
+  setScreeningLastStarted,
   SCREENING_COOLDOWN_MS,
 } from "./coordination-state.js";
 

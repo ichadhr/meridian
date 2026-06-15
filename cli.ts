@@ -509,7 +509,7 @@ switch (subcommand) {
   // ── screen ───────────────────────────────────────────────────────
   case "screen": {
     const { runScreeningCycle } = await import("./core/index.js");
-    const report = await runScreeningCycle({ silent });
+    const report = await runScreeningCycle({ silent, force: true });
     out({ done: true, report: report || "No action taken" });
     break;
   }

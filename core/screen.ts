@@ -21,7 +21,7 @@ import { recallForPool } from "./pool-memory.js";
 import { appendDecision } from "./decision-log.js";
 import { getActiveStrategy } from "./strategy-library.js";
 import { stripThink, sanitizeUntrustedPromptText } from "../utils/text.js";
-import { screeningBusy, setScreeningBusy, screeningLastTriggered, setScreeningLastTriggered, timers, SCREENING_COOLDOWN_MS } from "./coordination-state.js";
+import { screeningBusy, setScreeningBusy, screeningLastStarted, setScreeningLastStarted, timers, SCREENING_COOLDOWN_MS } from "./coordination-state.js";
 
 // ── Types ─────────────────────────────────────────────────────
 type AnyObj = Record<string, any>;
@@ -112,23 +112,30 @@ export function tryStartScreening(source: string, silent: boolean = false): bool
     log("cron", `Screening skipped (${source}) — already running`);
     return false;
   }
-  if (Date.now() - screeningLastTriggered < SCREENING_COOLDOWN_MS) {
-    const remaining: number = Math.ceil((SCREENING_COOLDOWN_MS - (Date.now() - screeningLastTriggered)) / 1000);
+  if (Date.now() - screeningLastStarted < SCREENING_COOLDOWN_MS) {
+    const remaining: number = Math.ceil((SCREENING_COOLDOWN_MS - (Date.now() - screeningLastStarted)) / 1000);
     log("cron", `Screening skipped (${source}) — cooldown active (${remaining}s remaining)`);
     return false;
   }
-  runScreeningCycle({ silent }).catch((e: any) => log("cron_error", `${source} failed: ${e?.message ?? String(e)}`));
+  runScreeningCycle({ silent, source }).catch((e: any) => log("cron_error", `${source} failed: ${e?.message ?? String(e)}`));
   return true;
 }
 
 // ── Screening Cycle ───────────────────────────────────────────
 
-export async function runScreeningCycle({ silent = false }: { silent?: boolean } = {}): Promise<string | null> {
+export async function runScreeningCycle({ silent = false, source, force = false }: { silent?: boolean; source?: string; force?: boolean } = {}): Promise<string | null> {
   if (screeningBusy) {
-    log("cron", "Screening skipped — previous cycle still running");
+    log("cron", `Screening skipped${source ? ` (${source})` : ""} — previous cycle still running`);
     return null;
   }
+  if (!force && Date.now() - screeningLastStarted < SCREENING_COOLDOWN_MS) {
+    const remaining: number = Math.ceil((SCREENING_COOLDOWN_MS - (Date.now() - screeningLastStarted)) / 1000);
+    log("cron", `Screening skipped${source ? ` (${source})` : ""} — cooldown active (${remaining}s remaining)`);
+    return null;
+  }
+
   setScreeningBusy(true);
+  setScreeningLastStarted(Date.now());
 
   // Hard guards — don't even run the agent if preconditions aren't met
   let prePositions: any, preBalance: any;
@@ -145,7 +152,6 @@ export async function runScreeningCycle({ silent = false }: { silent?: boolean }
         summary: "Screening skipped",
         reason: `Max positions reached (${prePositions.total_positions}/${config.risk.maxPositions})`,
       });
-      setScreeningBusy(false);
       return screenReport;
     }
     const minRequired: number = config.management.deployAmountSol + config.management.gasReserve;
@@ -159,16 +165,13 @@ export async function runScreeningCycle({ silent = false }: { silent?: boolean }
         summary: "Screening skipped",
         reason: `Insufficient SOL (${preBalance.sol.toFixed(3)} < ${minRequired})`,
       });
-      setScreeningBusy(false);
       return screenReport;
     }
   } catch (e: any) {
     log("cron_error", `Screening pre-check failed: ${e?.message ?? String(e)}`);
     screenReport = `Screening pre-check failed: ${e?.message ?? String(e)}`;
-    setScreeningBusy(false);
     return screenReport;
   }
-  setScreeningLastTriggered(Date.now());
   if (!silent && telegramEnabled()) {
     liveMessage = await createLiveMessage("🔍 Screening Cycle", "Scanning candidates...");
   }

@@ -1230,7 +1230,7 @@ Focus on: hold duration, entry/exit timing, what win rates look like, whether sc
   startPolling(telegramHandler);
   (async () => {
     try {
-      await runScreeningCycle({ silent: false });
+      tryStartScreening("startup", false);
     } catch (e: any) {
       log("startup_error", e.message);
     }
