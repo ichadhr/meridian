@@ -18,12 +18,10 @@
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "lint": "eslint . --max-warnings 0 && tsc --noEmit",
-    "test:unit": "vitest run",
-    "test": "vitest run && npm run test:all",
+    "test": "vitest run --project unit",
+    "test:live": "vitest run --project live",
+    "test:all": "vitest run",
     "test:syntax": "find . -path ./node_modules -prune -o -name '*.js' -exec node --check {} \\;",
-    "test:screen": "npx tsx test/test-screening.ts",
-    "test:agent": "DRY_RUN=true npx tsx test/test-agent.ts",
-    "test:all": "npx tsx test/test-agent.ts && npx tsx test/test-cache-30s.ts && npx tsx test/test-close-vp-manual.ts && npx tsx test/test-compute-position-pnl.ts && npx tsx test/test-dry-run-cache.ts && npx tsx test/test-screening.ts && npx tsx test/test-state-mismatch.ts && npx tsx test/test-vp-pnl.ts && npx tsx test/test-lessons.ts && npx tsx test/test-signal-weights.ts && npx tsx test/test-chart-indicators.ts && npx tsx test/test-smart-wallets.ts && npx tsx test/test-secure-env.ts && npx tsx test/test-blacklist.ts",
     "postinstall": "npx tsx scripts/patch-anchor.ts && npm rebuild bigint-buffer"
   },
   "knip": {
