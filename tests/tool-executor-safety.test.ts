@@ -15,6 +15,9 @@ vi.mock("../providers/meteora/index.js", () => ({
   closePosition: vi.fn(),
   searchPools: vi.fn(),
   invalidatePositionsCache: vi.fn(),
+  discoverPools: vi.fn(),
+  getPoolDetail: vi.fn(),
+  getTopCandidates: vi.fn(),
 }));
 
 vi.mock("../providers/solana/index.js", () => ({
@@ -27,18 +30,9 @@ vi.mock("../providers/okx/index.js", () => ({
 
 vi.mock("../providers/jupiter/index.js", () => ({
   swapToken: vi.fn(),
-}));
-
-vi.mock("../providers/jupiter/token.js", () => ({
   getTokenInfo: vi.fn(),
   getTokenHolders: vi.fn(),
   getTokenNarrative: vi.fn(),
-}));
-
-vi.mock("../providers/meteora/pool-discovery.js", () => ({
-  discoverPools: vi.fn(),
-  getPoolDetail: vi.fn(),
-  getTopCandidates: vi.fn(),
 }));
 
 vi.mock("../core/vp/state.js", () => ({

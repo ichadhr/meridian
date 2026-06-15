@@ -11,7 +11,7 @@ import { getMyPositions } from "../../providers/meteora/index.js";
 import { config } from "../../config/index.js";
 import { sendLongMessage, notifyOutOfRange, isEnabled as telegramEnabled, createLiveMessage, formatManagementReport, dryRunTag, type ManagementReportPosition, type ManagementReportAction } from "../../interfaces/index.js";
 import { getCloseRule } from "../close-rules.js";
-import { fetchExitConfirmations } from "../../providers/hivemind/chart-indicators.js";
+import { fetchExitConfirmations } from "../../providers/hivemind/index.js";
 import { updateLivePnlAndCheckExits, queueLivePeakConfirmation, queueLiveTrailingDropConfirmation } from "./state.js";
 import { recordPositionSnapshot, recallForPool } from "../pool-memory.js";
 import { runVpManagementCycle } from "../vp/manage.js";

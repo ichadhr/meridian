@@ -1,4 +1,4 @@
-import { discoverPools, getPoolDetail, getTopCandidates } from "../../providers/meteora/pool-discovery.js";
+import { discoverPools, getPoolDetail, getTopCandidates } from "../../providers/meteora/index.js";
 import {
   getActiveBin,
   deployPosition,
@@ -44,7 +44,7 @@ import {
 import { swapToken } from "../../providers/jupiter/index.js";
 import { getWalletBalances } from "../../providers/solana/index.js";
 import { studyTopLPers } from "./study.js";
-import { getTokenInfo, getTokenHolders, getTokenNarrative } from "../../providers/jupiter/token.js";
+import { getTokenInfo, getTokenHolders, getTokenNarrative } from "../../providers/jupiter/index.js";
 import { getAdvancedInfo } from "../../providers/okx/index.js";
 import { config, reloadScreeningThresholds, MIN_SAFE_BINS_BELOW } from "../../config/index.js";
 import { bus } from "../../utils/events.js";

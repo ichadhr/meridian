@@ -5,6 +5,43 @@ import { log } from "../../utils/logger.js";
 import { config } from "../../config/index.js";
 import { getWallet } from "./wallet.js";
 
+const MAX_ATTEMPTS = 4; // 1 initial + 3 retries
+const RETRY_BACKOFF_MS = [200, 500, 1000]; // jittered, for retries 1..3
+
+/**
+ * Internal: fetch from Helius with retry on transient errors.
+ * Throws on final failure.
+ */
+async function fetchBalancesFromHelius(walletAddress: string, heliusKey: string): Promise<any> {
+  const url = `https://api.helius.xyz/v1/wallet/${walletAddress}/balances?api-key=${heliusKey}`;
+  let lastError: Error | null = null;
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    try {
+      const res = await fetch(url);
+      if (!res.ok) {
+        const transient = res.status === 408 || res.status === 429 || res.status >= 500;
+        if (!transient || attempt === MAX_ATTEMPTS - 1) {
+          throw new Error(`Helius API error: ${res.status} ${res.statusText}`);
+        }
+        const delay = RETRY_BACKOFF_MS[attempt] + Math.random() * 100;
+        log("wallet_warn", `Helius retry ${attempt + 1}/${MAX_ATTEMPTS - 1}: ${res.status} (waiting ${Math.round(delay)}ms)`);
+        await new Promise((r) => setTimeout(r, delay));
+        continue;
+      }
+      return await res.json();
+    } catch (err: any) {
+      lastError = err;
+      const msg = err?.message ?? String(err);
+      const isTransient = /408|429|5\d{2}|timeout|ECONNREFUSED|ETIMEDOUT|ENOTFOUND|ECONNRESET|EAI_AGAIN/i.test(msg);
+      if (!isTransient || attempt === MAX_ATTEMPTS - 1) throw err;
+      const delay = RETRY_BACKOFF_MS[attempt] + Math.random() * 100;
+      log("wallet_warn", `Helius retry ${attempt + 1}/${MAX_ATTEMPTS - 1}: ${msg} (waiting ${Math.round(delay)}ms)`);
+      await new Promise((r) => setTimeout(r, delay));
+    }
+  }
+  throw lastError ?? new Error("Helius fetch failed after retries");
+}
+
 export async function getWalletBalances(): Promise<{
   wallet: string | null;
   sol: number;
@@ -47,14 +84,7 @@ export async function getWalletBalances(): Promise<{
   }
 
   try {
-    const url = `https://api.helius.xyz/v1/wallet/${walletAddress}/balances?api-key=${HELIUS_KEY}`;
-    const res = await fetch(url);
-
-    if (!res.ok) {
-      throw new Error(`Helius API error: ${res.status} ${res.statusText}`);
-    }
-
-    const data = await res.json();
+    const data = await fetchBalancesFromHelius(walletAddress, HELIUS_KEY);
     const balances = data.balances || [];
 
     const solEntry = balances.find(

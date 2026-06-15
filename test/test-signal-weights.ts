@@ -170,7 +170,7 @@ function suite(): void {
   }
 
   console.log(`\n${pass + fail} tests: ${pass} passed, ${fail} failed`);
-  if (fail > 0) process.exit(1);
+  process.exit(fail > 0 ? 1 : 0);
 }
 
 suite();

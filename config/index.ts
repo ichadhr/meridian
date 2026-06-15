@@ -99,8 +99,11 @@ export function discoverProviders(): string[] {
   return [...names];
 }
 
+let providersInitialized = false;
+
 /** Create OpenAI clients for all discovered providers + legacy default. */
 export function initProviders(): void {
+  if (providersInitialized) return;
   for (const name of discoverProviders()) {
     const upper = name.toUpperCase();
     const baseUrl = process.env[`LLM_PROVIDER_${upper}_BASE_URL`];
@@ -119,10 +122,14 @@ export function initProviders(): void {
     const apiKey  = process.env.LLM_API_KEY || process.env.OPENROUTER_API_KEY || "dummy";
     providerClients.set("default", new OpenAI({ baseURL: baseUrl, apiKey, timeout: 5 * 60 * 1000 }));
   }
+  providersInitialized = true;
 }
 
 /** Get a cached OpenAI client by provider name. */
 export function getClient(provider: string): OpenAI {
+  if (!providersInitialized) {
+    initProviders();
+  }
   const client = providerClients.get(provider);
   if (!client) {
     throw new Error(

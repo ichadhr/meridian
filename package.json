@@ -3,18 +3,18 @@
   "version": "1.0.0",
   "type": "module",
   "description": "Autonomous DLMM LP agent for Meteora on Solana",
-  "main": "index.js",
+  "main": "dist/index.js",
   "bin": {
-    "meridian": "cli.js"
+    "meridian": "dist/cli.js"
   },
   "scripts": {
-    "setup": "node setup.js",
+    "setup": "node dist/setup.js",
     "env:encrypt": "npx tsx scripts/secure-env.ts encrypt",
-    "start": "node index.js",
+    "start": "node dist/index.js",
     "pm2:start": "pm2 start ecosystem.config.cjs",
     "pm2:restart": "pm2 restart meridian --update-env",
     "pm2:logs": "pm2 logs meridian --lines 100",
-    "dev": "DRY_RUN=true node index.js",
+    "dev": "DRY_RUN=true node dist/index.js",
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "lint": "eslint . --max-warnings 0 && tsc --noEmit",

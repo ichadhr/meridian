@@ -651,4 +651,4 @@ test("Slippage 10: walk loop skips bin with priceQ64=0 (active is valid)", () =>
 
 // ════════════════════════════════════════════════════════════
 console.log(`\n${passed + failed} tests: ${passed} passed, ${failed} failed`);
-if (failed > 0) process.exitCode = 1;
+process.exit(failed > 0 ? 1 : 0);

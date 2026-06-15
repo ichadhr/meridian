@@ -9,7 +9,7 @@ import { agentLoop } from "../llm/index.js";
 import { log } from "../utils/logger.js";
 import { getMyPositions } from "./state.js";
 import { getWalletBalances } from "../providers/solana/index.js";
-import { getTopCandidates } from "../providers/meteora/pool-discovery.js";
+import { getTopCandidates } from "../providers/meteora/index.js";
 import { getActiveBin } from "../providers/meteora/index.js";
 import { config, computeDeployAmount } from "../config/index.js";
 import { sendLongMessage, isEnabled as telegramEnabled, createLiveMessage, dryRunTag } from "../interfaces/index.js";

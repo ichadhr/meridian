@@ -2,7 +2,7 @@ module.exports = {
   apps: [
     {
       name: "meridian",
-      script: "index.js",
+      script: "dist/index.js",
       cwd: __dirname,
       interpreter: "node",
       instances: 1,

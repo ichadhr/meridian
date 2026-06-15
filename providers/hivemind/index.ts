@@ -5,7 +5,7 @@ export {
   agentMeridianJson,
 } from "./api.js";
 export type { AgentMeridianRetryOptions, AgentMeridianRequestOptions } from "./api.js";
-export { confirmIndicatorPreset } from "./chart-indicators.js";
+export { confirmIndicatorPreset, fetchExitConfirmations } from "./chart-indicators.js";
 export type { IndicatorPresetResult } from "./chart-indicators.js";
 export {
   bootstrapHiveMind,

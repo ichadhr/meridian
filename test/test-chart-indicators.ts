@@ -2,7 +2,7 @@
  * Test: Chart Indicators evaluation presets (chart-indicators.ts)
  */
 
-import { confirmIndicatorPreset } from "../providers/hivemind/chart-indicators.js";
+import { confirmIndicatorPreset } from "../providers/hivemind/index.js";
 import { config } from "../config/index.js";
 
 let pass = 0;
