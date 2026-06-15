@@ -41,20 +41,49 @@ import {
   checkSmartWalletsOnPool,
   getRecentDecisions,
 } from "../../core/index.js";
+import { getInstalledSkillBinaries, getBinaryPath, getSkillsForCycle, loadCredentials } from "../skill-loader.js";
 import { swapToken } from "../../providers/jupiter/index.js";
 import { getWalletBalances } from "../../providers/solana/index.js";
 import { studyTopLPers } from "./study.js";
 import { getTokenInfo, getTokenHolders, getTokenNarrative } from "../../providers/jupiter/index.js";
-import { getAdvancedInfo } from "../../providers/okx/index.js";
 import { config, reloadScreeningThresholds, MIN_SAFE_BINS_BELOW } from "../../config/index.js";
 import { bus } from "../../utils/events.js";
-import { tryStartScreening } from "../../core/index.js";
+import { tryStartScreening, normalizeTimeframe, scaleScreeningToTimeframe } from "../../core/index.js";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
-import { execSync, spawn } from "child_process";
+import { promisify } from "util";
+import { execSync, spawn, execFile } from "child_process";
+const execFileAsync = promisify(execFile);
 
 import { USER_CONFIG_FILE } from "../../config/paths.js";
+
+// ─── Skill Environment Sanitizer ──────────────────────────────
+// Only passes safe base vars + skill-declared credentials to external binaries.
+// Never leaks WALLET_PRIVATE_KEY, RPC_URL, OPENROUTER_API_KEY, etc.
+const SKILL_ENV_ALLOWLIST = new Set([
+  "PATH", "HOME", "USER", "LOGNAME", "SHELL",
+  "TMPDIR", "TEMP", "TMP",
+  "USERPROFILE", "HOMEDRIVE", "HOMEPATH",
+  "NODE_ENV", "DRY_RUN", "LANG", "LC_ALL",
+]);
+
+function buildSkillEnv(skillName: string): Record<string, string> {
+  const env: Record<string, string> = {};
+  // Safe base vars
+  for (const key of SKILL_ENV_ALLOWLIST) {
+    if (process.env[key] != null) env[key] = process.env[key]!;
+  }
+  // Skill-declared credentials (skip empty/whitespace-only)
+  const creds = loadCredentials()[skillName];
+  if (creds?.required && Array.isArray(creds.required)) {
+    for (const envVar of creds.required) {
+      const val = process.env[envVar];
+      if (val != null && val.trim() !== "") env[envVar] = val;
+    }
+  }
+  return env;
+}
 
 const POOL_DISCOVERY_BASE: string = "https://pool-discovery-api.datapi.meteora.ag";
 const MIN_VOLATILITY_TIMEFRAME: string = "30m";
@@ -407,6 +436,43 @@ const toolMap: Record<string, ToolFn> = {
     }
     return { error: "invalid mode" };
   },
+  execute_skill: async (args: Record<string, unknown>): Promise<ToolResult> => {
+    const command = args.command as string;
+    if (!command) return { error: "command is required" };
+
+    const parts = command.trim().split(/\s+/);
+    const binary = parts[0];
+    const allowedBinaries = getInstalledSkillBinaries();
+    if (!allowedBinaries.includes(binary)) {
+      return { error: `Binary '${binary}' not allowed or not installed.` };
+    }
+
+    const binaryPath = getBinaryPath(binary);
+    if (!binaryPath) {
+      return { error: `Binary path for '${binary}' could not be resolved.` };
+    }
+
+    try {
+      let runBinary = binaryPath;
+      let runArgs = parts.slice(1);
+      if (binaryPath.endsWith(".js")) {
+        runBinary = process.execPath;
+        runArgs = [binaryPath, ...runArgs];
+      }
+      const { stdout } = await execFileAsync(runBinary, runArgs, {
+        timeout: 15_000,
+        env: buildSkillEnv(binary),
+        maxBuffer: 10 * 1024 * 1024
+      });
+      try {
+        return JSON.parse(stdout);
+      } catch {
+        return { success: true, stdout };
+      }
+    } catch (err: any) {
+      return { success: false, error: err.message, stdout: err.stdout, stderr: err.stderr };
+    }
+  },
   update_config: ({ changes, reason = "" }: Record<string, unknown>): ToolResult => {
     // Flat key → config section mapping (covers everything in config.js)
     const CONFIG_MAP: Record<string, [string, string] | [string, string, string[]]> = {
@@ -459,6 +525,14 @@ const toolMap: Record<string, ToolFn> = {
       trailingTriggerPct: ["management", "trailingTriggerPct"],
       trailingDropPct: ["management", "trailingDropPct"],
       pnlSanityMaxDiffPct: ["management", "pnlSanityMaxDiffPct"],
+      // pnl fetcher / poller
+      pnlSource: ["pnl", "source", ["pnlSource"]],
+      pnlRpcUrl: ["pnl", "rpcUrl", ["pnlRpcUrl"]],
+      pnlPollIntervalSec: ["pnl", "pollIntervalSec", ["pnlPollIntervalSec"]],
+      pnlDepositCacheTtlSec: ["pnl", "depositCacheTtlSec", ["pnlDepositCacheTtlSec"]],
+      // gmgn fee source
+      gmgnFeeSource: ["gmgn", "feeSource", ["gmgnFeeSource"]],
+      gmgnApiKey: ["gmgn", "apiKey", ["gmgnApiKey"]],
       solMode: ["management", "solMode"],
       minSolToOpen: ["management", "minSolToOpen"],
       deployAmountSol: ["management", "deployAmountSol"],
@@ -549,6 +623,16 @@ const toolMap: Record<string, ToolFn> = {
       return { success: false, unknown, reason };
     }
 
+    if (applied.timeframe != null && applied.minFeeActiveTvlRatio == null && applied.minVolume == null) {
+      const tf = normalizeTimeframe(applied.timeframe as string);
+      applied.timeframe = tf;
+      const scaled = scaleScreeningToTimeframe(tf);
+      applied.minFeeActiveTvlRatio = scaled.minFeeActiveTvlRatio;
+      applied.minVolume = scaled.minVolume;
+      (applied as any)._timeframeScaled = true;
+      log("config", `timeframe ${tf} → auto-scaled minFeeActiveTvlRatio=${scaled.minFeeActiveTvlRatio}, minVolume=${scaled.minVolume}`);
+    }
+
     let userConfig: Record<string, any> = {};
     if (fs.existsSync(USER_CONFIG_FILE)) {
       try {
@@ -560,6 +644,7 @@ const toolMap: Record<string, ToolFn> = {
 
     // Apply to live config immediately after the persisted config is known-good.
     for (const [key, val] of Object.entries(applied)) {
+      if (key.startsWith("_")) continue;
       const [section, field] = CONFIG_MAP[key] as [string, string];
       const cfgSection = (config as any)[section];
       const before = cfgSection[field];
@@ -584,6 +669,7 @@ const toolMap: Record<string, ToolFn> = {
     }
 
     for (const [key, val] of Object.entries(applied)) {
+      if (key.startsWith("_")) continue;
       const configEntry = CONFIG_MAP[key];
       const persistPath = configEntry?.[2];
       if (Array.isArray(persistPath) && persistPath.length > 0) {
@@ -603,14 +689,14 @@ const toolMap: Record<string, ToolFn> = {
     fs.writeFileSync(USER_CONFIG_FILE, JSON.stringify(userConfig, null, 2));
 
     // Restart cron jobs if intervals changed
-    const intervalChanged = applied.managementIntervalMin != null || applied.screeningIntervalMin != null;
+    const intervalChanged = applied.managementIntervalMin != null || applied.screeningIntervalMin != null || applied.pnlPollIntervalSec != null;
     if (intervalChanged) {
       bus.emit("cron-config-changed");
     }
 
     // Skip repeated volatility-driven interval changes; they are operational tuning, not reusable lessons.
     const lessonsKeys = Object.keys(applied).filter(
-      k => k !== "managementIntervalMin" && k !== "screeningIntervalMin"
+      k => k !== "managementIntervalMin" && k !== "screeningIntervalMin" && k !== "pnlPollIntervalSec"
     );
     if (lessonsKeys.length > 0) {
       const summary = lessonsKeys.map(k => `${k}=${applied[k]}`).join(", ");
@@ -779,6 +865,31 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
   }
 }
 
+async function executeSkillCommand(command: string): Promise<any> {
+  const parts = command.trim().split(/\s+/);
+  const binary = parts[0];
+  const binaryPath = getBinaryPath(binary);
+  if (!binaryPath) return null;
+
+  try {
+    let runBinary = binaryPath;
+    let runArgs = parts.slice(1);
+    if (binaryPath.endsWith(".js")) {
+      runBinary = process.execPath;
+      runArgs = [binaryPath, ...runArgs];
+    }
+    const { stdout } = await execFileAsync(runBinary, runArgs, {
+      timeout: 15_000,
+      env: buildSkillEnv(binary),
+      maxBuffer: 10 * 1024 * 1024
+    });
+    return JSON.parse(stdout);
+  } catch (err: any) {
+    log("error", `Safety skill execution failed: ${err.message}`);
+    return null;
+  }
+}
+
 /**
  * Run safety checks before executing write operations.
  */
@@ -788,45 +899,64 @@ async function runSafetyChecks(name: string, args: Record<string, unknown>): Pro
       const poolThresholds = await validateDeployPoolThresholds(args);
       if (!poolThresholds.pass) return poolThresholds;
 
-      // OKX dev-rug + honeypot check. Fail-open on OKX errors so an OKX
-      // outage doesn't block all deploys — operator sees the warning. Skipped
-      // in DRY_RUN to preserve OKX API quota on simulated deploys.
+      // Pluggable safety skills (e.g. okx-security check-token <mint_address>)
       if (process.env.DRY_RUN === "true") {
-        log("okx_safety_skip", "DRY_RUN — OKX rug/honeypot check bypassed");
+        log("safety_skip", "DRY_RUN — Safety skills check bypassed");
       } else if (!args.base_mint) {
-        log("okx_safety_skip", "base_mint not provided — OKX rug/honeypot check bypassed");
+        log("safety_skip", "base_mint not provided — Safety skills check bypassed");
       } else {
-        let advanced: any;
-        try {
-          advanced = await getAdvancedInfo(args.base_mint as string);
-        } catch (err: any) {
-          if (config.screening.okxFailClosed) {
-            return {
-              pass: false,
-              reason: `OKX getAdvancedInfo failed for ${(args.base_mint as string).slice(0, 8)}: ${err.message} — refusing deploy (fail-closed per config).`,
-            };
+        const safetySkills = getSkillsForCycle("safety");
+        for (const skill of safetySkills) {
+          if (!skill.binaryPath) continue;
+
+          let pattern = "{binary} check-token {mint}";
+          const skillJsonPath = path.join(skill.dirPath, "skill.json");
+          if (fs.existsSync(skillJsonPath)) {
+            try {
+              const sj = JSON.parse(fs.readFileSync(skillJsonPath, "utf8"));
+              if (sj.securityCommandPattern) {
+                pattern = sj.securityCommandPattern;
+              } else if (sj.commands && sj.commands.security) {
+                pattern = sj.commands.security;
+              }
+            } catch {}
           }
-          log("okx_safety_warn", `OKX getAdvancedInfo failed for ${(args.base_mint as string).slice(0, 8)}: ${err.message} — proceeding without rug check`);
-        }
-        if (advanced) {
-          const maxRugCount = config.screening.maxDevRugCount ?? 2;
-          const rugCount = advanced.dev_rug_count ?? 0;
-          if (rugCount >= maxRugCount) {
-            log("okx_safety_block", `Token ${(args.base_mint as string).slice(0, 8)} has ${rugCount} prior rugs (threshold: ${maxRugCount})`);
-            return {
-              pass: false,
-              reason: `Token ${(args.base_mint as string).slice(0, 8)} has ${rugCount} prior rugs by the dev (OKX, threshold: ${maxRugCount}). Refusing deploy.`,
-            };
+
+          const cmd = pattern
+            .replace("{binary}", skill.name)
+            .replace("{mint}", args.base_mint as string);
+
+          log("safety_check", `Running safety check via skill '${skill.name}': ${cmd}`);
+          try {
+            const result = await executeSkillCommand(cmd);
+            if (result) {
+              const isHoneypot = result.is_honeypot === true || result.honeypot === true;
+              const maxRugCount = config.screening.maxDevRugCount ?? 2;
+              const rugCount = result.dev_rug_count ?? 0;
+              const isRug = result.is_rug === true || result.rug === true || rugCount >= maxRugCount;
+
+              if (isHoneypot) {
+                return {
+                  pass: false,
+                  reason: `Token ${(args.base_mint as string).slice(0, 8)} flagged as honeypot by skill '${skill.name}'. Refusing deploy.`,
+                };
+              }
+              if (isRug) {
+                return {
+                  pass: false,
+                  reason: `Token ${(args.base_mint as string).slice(0, 8)} flagged as rug risk (${rugCount} rugs) by skill '${skill.name}'. Refusing deploy.`,
+                };
+              }
+            }
+          } catch (err: any) {
+            log("warn", `Safety skill '${skill.name}' failed: ${err.message}`);
+            if (config.screening.okxFailClosed) {
+              return {
+                pass: false,
+                reason: `Safety skill '${skill.name}' execution failed: ${err.message} (failClosed=true). Refusing deploy.`,
+              };
+            }
           }
-          if (advanced.is_honeypot) {
-            log("okx_safety_block", `Token ${(args.base_mint as string).slice(0, 8)} is flagged as honeypot (OKX)`);
-            return {
-              pass: false,
-              reason: `Token ${(args.base_mint as string).slice(0, 8)} is flagged as honeypot (OKX). Refusing deploy.`,
-            };
-          }
-        } else {
-          log("okx_safety_skip", `OKX returned no data for ${(args.base_mint as string).slice(0, 8)} — proceeding without rug check`);
         }
       }
 
