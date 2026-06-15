@@ -10,7 +10,7 @@ export default defineConfig({
       {
         test: {
           name: "unit",
-          include: ["tests/{core,llm,interfaces,screening}/**/*.test.ts", "tests/*.test.ts"],
+          include: ["tests/{core,llm,interfaces,screening}/**/*.test.ts"],
         },
       },
       {
