@@ -77,37 +77,62 @@ export async function fetchDlmmPnlForPool(poolAddress: string, walletAddress: st
 }
 
 // ─── Jupiter prices via price/v3 (never cached for tokens) ───────
-async function getJupiterPrices(mints: (string | null | undefined)[]): Promise<Record<string, number | null>> {
+const PRICE_CHUNK_SIZE = 100;
+
+/** Fetch token prices in chunks and merge results. */
+async function fetchPriceChunks(mints: string[]): Promise<Record<string, number | null>> {
+  const out: Record<string, number | null> = {};
+  const chunks: string[][] = [];
+  for (let i = 0; i < mints.length; i += PRICE_CHUNK_SIZE) {
+    chunks.push(mints.slice(i, i + PRICE_CHUNK_SIZE));
+  }
+
+  const results = await Promise.allSettled(
+    chunks.map(async (chunk) => {
+      const ids = chunk.join(",");
+      const res = await fetch(`${JUPITER_PRICE_API}?ids=${ids}`, {
+        signal: AbortSignal.timeout(5_000),
+      });
+      if (!res.ok) {
+        log("pnl_price", `Jupiter price/v3 error: ${res.status} (${chunk.length} mints)`);
+        return {};
+      }
+      const data = await res.json() as Record<string, any>;
+      const batch: Record<string, number | null> = {};
+      for (const mint of chunk) {
+        batch[mint] = maybeNum(data?.[mint]?.usdPrice);
+      }
+      return batch;
+    }),
+  );
+
+  for (const result of results) {
+    if (result.status === "fulfilled") {
+      Object.assign(out, result.value);
+    }
+  }
+  return out;
+}
+
+export async function getJupiterPrices(mints: (string | null | undefined)[]): Promise<Record<string, number | null>> {
   const list = unique(mints.map((m) => String(m || "").trim()));
   if (!list.length) return {};
 
   const solMint = config.tokens.SOL;
   const tokenMints = list.filter((m) => m !== solMint);
+
+  // Pre-fill every requested mint with null so callers always get an entry
   const out: Record<string, number | null> = {};
+  for (const mint of list) out[mint] = null;
 
   // Use fetchSolPrice for SOL (cached, validated, Helius fallback)
   const solPrice = await fetchSolPrice();
   if (solPrice != null) out[solMint] = solPrice;
 
-  // Fetch token prices via price/v3
+  // Fetch token prices via price/v3 (batched to avoid URL length limits)
   if (tokenMints.length > 0) {
-    try {
-      const ids = tokenMints.join(",");
-      const res = await fetch(`${JUPITER_PRICE_API}?ids=${ids}`, {
-        signal: AbortSignal.timeout(5_000),
-      });
-      if (res.ok) {
-        const data = await res.json() as Record<string, any>;
-        for (const mint of tokenMints) {
-          const entry = data?.[mint];
-          out[mint] = maybeNum(entry?.usdPrice);
-        }
-      } else {
-        log("pnl_price", `Jupiter price/v3 error: ${res.status}`);
-      }
-    } catch (e: any) {
-      log("pnl_price", `Jupiter price/v3 fetch failed: ${e.message}`);
-    }
+    const tokenPrices = await fetchPriceChunks(tokenMints);
+    Object.assign(out, tokenPrices);
   }
 
   return out;
