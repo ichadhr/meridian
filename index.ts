@@ -48,6 +48,7 @@ import {
   compileVpStats,
 } from "./core/index.js";
 import { stripThink } from "./utils/text.js";
+import { toError } from "./utils/errors.js";
 import { getTokenNarrative, getTokenInfo } from "./providers/jupiter/index.js";
 import { bootstrapHiveMind, ensureAgentId, getHiveMindPullMode, isHiveMindEnabled, pullHiveMindLessons, pullHiveMindPresets, registerHiveMindAgent, startHiveMindBackgroundSync } from "./providers/hivemind/index.js";
 import { managementBusy, setManagementBusy, screeningBusy, setScreeningBusy, timers } from "./core/index.js";
@@ -72,9 +73,10 @@ import {
   escapeMarkdown,
   buildConfigSnapshotInput,
 } from "./interfaces/index.js";
+import { buildPrompt } from "./cli/format.js";
+import { renderSettingsMenu, settingButton, settingValue, stepButtons, type AnyObj } from "./cli/menu.js";
 
 // ── Type helpers ──────────────────────────────────────────────
-type AnyObj = Record<string, any>;
 
 interface TelegramMessage {
   text?: string;
@@ -119,25 +121,6 @@ if (isMain) {
 
 const TP_PCT: number = config.management.takeProfitPct;
 const DEPLOY: number = config.management.deployAmountSol;
-
-function nextRunIn(lastRun: number | null, intervalMin: number): number {
-  if (!lastRun) return intervalMin * 60;
-  const elapsed = (Date.now() - lastRun) / 1000;
-  return Math.max(0, intervalMin * 60 - elapsed);
-}
-
-function formatCountdown(seconds: number): string {
-  if (seconds <= 0) return "now";
-  const m = Math.floor(seconds / 60);
-  const s = Math.floor(seconds % 60);
-  return m > 0 ? `${m}m ${s}s` : `${s}s`;
-}
-
-function buildPrompt(): string {
-  const mgmt = formatCountdown(nextRunIn(timers.managementLastRun, config.schedule.managementIntervalMin));
-  const scrn = formatCountdown(nextRunIn(timers.screeningLastRun, config.schedule.screeningIntervalMin));
-  return `[manage: ${mgmt} | screen: ${scrn}]\n> `;
-}
 
 // ═══════════════════════════════════════════
 //  GRACEFUL SHUTDOWN
@@ -259,158 +242,14 @@ function parseConfigValue(raw: any): any {
   return value;
 }
 
-function settingValue(key: string): any {
-  const values: AnyObj = {
-    solMode: config.management.solMode,
-    lpAgentRelayEnabled: config.api.lpAgentRelayEnabled,
-    chartIndicatorsEnabled: config.indicators.enabled,
-    trailingTakeProfit: config.management.trailingTakeProfit,
-    useDiscordSignals: config.screening.useDiscordSignals,
-    blockPvpSymbols: config.screening.blockPvpSymbols,
-    strategy: config.strategy.strategy,
-    minBinsBelow: config.strategy.minBinsBelow,
-    maxBinsBelow: config.strategy.maxBinsBelow,
-    defaultBinsBelow: config.strategy.defaultBinsBelow,
-    deployAmountSol: config.management.deployAmountSol,
-    gasReserve: config.management.gasReserve,
-    maxPositions: config.risk.maxPositions,
-    maxDeployAmount: config.risk.maxDeployAmount,
-    takeProfitPct: config.management.takeProfitPct,
-    stopLossPct: config.management.stopLossPct,
-    trailingTriggerPct: config.management.trailingTriggerPct,
-    trailingDropPct: config.management.trailingDropPct,
-    repeatDeployCooldownEnabled: config.management.repeatDeployCooldownEnabled,
-    repeatDeployCooldownTriggerCount: config.management.repeatDeployCooldownTriggerCount,
-    repeatDeployCooldownHours: config.management.repeatDeployCooldownHours,
-    repeatDeployCooldownMinFeeEarnedPct: config.management.repeatDeployCooldownMinFeeEarnedPct,
-    managementIntervalMin: config.schedule.managementIntervalMin,
-    screeningIntervalMin: config.schedule.screeningIntervalMin,
-    indicatorEntryPreset: config.indicators.entryPreset,
-    indicatorExitPreset: config.indicators.exitPreset,
-    rsiLength: config.indicators.rsiLength,
-    indicatorIntervals: config.indicators.intervals,
-    requireAllIntervals: config.indicators.requireAllIntervals,
-  };
-  return values[key];
-}
-
 function fmtSettingValue(value: any): string {
   if (Array.isArray(value)) return value.join(",");
   if (typeof value === "boolean") return value ? "on" : "off";
   return String(value);
 }
 
-function settingButton(label: string, data: string): AnyObj {
-  return { text: label, callback_data: data };
-}
-
 function toggleButton(key: string, label: string): AnyObj {
   return settingButton(`${label}: ${fmtSettingValue(settingValue(key))}`, `cfg:toggle:${key}`);
-}
-
-function stepButtons(key: string, label: string, step: number, { digits = 2 }: { digits?: number } = {}): AnyObj[] {
-  const value: number = Number(settingValue(key));
-  const shown: string = Number.isFinite(value) ? value.toFixed(digits).replace(/\.?0+$/, "") : "?";
-  return [
-    settingButton(`- ${label}`, `cfg:step:${key}:${-step}`),
-    settingButton(`${label}: ${shown}`, `cfg:noop`),
-    settingButton(`+ ${label}`, `cfg:step:${key}:${step}`),
-  ];
-}
-
-function renderSettingsMenu(page: string = "main"): { text: string; keyboard: AnyObj[][] } {
-  const title: string = page === "main" ? "Settings menu" : `Settings: ${page}`;
-  const summary: string = [
-    title,
-    "",
-    `Mode: ${config.management.solMode ? "SOL" : "USD"} | Relay: ${config.api.lpAgentRelayEnabled ? "on" : "off"}`,
-    `Strategy: ${config.strategy.strategy} | bins ${config.strategy.minBinsBelow}-${config.strategy.maxBinsBelow} | deploy ${config.management.deployAmountSol} SOL`,
-    `TP/SL: ${config.management.takeProfitPct}% / ${config.management.stopLossPct}% | trailing ${config.management.trailingTakeProfit ? "on" : "off"}`,
-    `Indicators: ${config.indicators.enabled ? "on" : "off"} | entry ${config.indicators.entryPreset} | ${fmtSettingValue(config.indicators.intervals)}`,
-  ].join("\n");
-
-  const nav: AnyObj[][] = [
-    [
-      settingButton("Main", "cfg:page:main"),
-      settingButton("Risk", "cfg:page:risk"),
-      settingButton("Screen", "cfg:page:screen"),
-      settingButton("Indicators", "cfg:page:indicators"),
-    ],
-  ];
-
-  const footer: AnyObj[][] = [
-    [
-      settingButton("Refresh", `cfg:page:${page}`),
-      settingButton("Close", "cfg:close"),
-    ],
-  ];
-
-  let rows: AnyObj[][];
-  if (page === "risk") {
-    rows = [
-      stepButtons("deployAmountSol", "Deploy", 0.1),
-      stepButtons("gasReserve", "Gas", 0.05),
-      stepButtons("maxPositions", "Max pos", 1, { digits: 0 }),
-      stepButtons("maxDeployAmount", "Max SOL", 1, { digits: 0 }),
-      stepButtons("takeProfitPct", "TP %", 1, { digits: 0 }),
-      stepButtons("stopLossPct", "SL %", 5, { digits: 0 }),
-      [toggleButton("trailingTakeProfit", "Trailing TP")],
-      stepButtons("trailingTriggerPct", "Trail trigger", 0.5, { digits: 1 }),
-      stepButtons("trailingDropPct", "Trail drop", 0.5, { digits: 1 }),
-      [toggleButton("repeatDeployCooldownEnabled", "Repeat cooldown")],
-      stepButtons("repeatDeployCooldownTriggerCount", "Repeat count", 1, { digits: 0 }),
-      stepButtons("repeatDeployCooldownHours", "Repeat hrs", 1, { digits: 0 }),
-      stepButtons("repeatDeployCooldownMinFeeEarnedPct", "Fee earned %", 0.1, { digits: 1 }),
-    ];
-  } else if (page === "screen") {
-    rows = [
-      [toggleButton("useDiscordSignals", "Discord signals"), toggleButton("blockPvpSymbols", "PVP hard block")],
-      [
-        settingButton(`Strategy: spot`, "cfg:set:strategy:spot"),
-        settingButton(`Strategy: bid_ask`, "cfg:set:strategy:bid_ask"),
-      ],
-      stepButtons("minBinsBelow", "Min bins", 1, { digits: 0 }),
-      stepButtons("maxBinsBelow", "Max bins", 1, { digits: 0 }),
-      stepButtons("defaultBinsBelow", "Default bins", 1, { digits: 0 }),
-      stepButtons("managementIntervalMin", "Manage min", 1, { digits: 0 }),
-      stepButtons("screeningIntervalMin", "Screen min", 5, { digits: 0 }),
-    ];
-  } else if (page === "indicators") {
-    rows = [
-      [toggleButton("chartIndicatorsEnabled", "Chart indicators"), toggleButton("requireAllIntervals", "Require all TF")],
-      [
-        settingButton("TF: 5m", "cfg:set:indicatorIntervals:5_MINUTE"),
-        settingButton("TF: 15m", "cfg:set:indicatorIntervals:15_MINUTE"),
-        settingButton("TF: both", "cfg:set:indicatorIntervals:both"),
-      ],
-      [
-        settingButton("Entry: ST", "cfg:set:indicatorEntryPreset:supertrend_break"),
-        settingButton("Entry: RSI", "cfg:set:indicatorEntryPreset:rsi_reversal"),
-        settingButton("Entry: ST/RSI", "cfg:set:indicatorEntryPreset:supertrend_or_rsi"),
-      ],
-      [
-        settingButton("Exit: ST", "cfg:set:indicatorExitPreset:supertrend_break"),
-        settingButton("Exit: RSI", "cfg:set:indicatorExitPreset:rsi_reversal"),
-        settingButton("Exit: BB+RSI", "cfg:set:indicatorExitPreset:bb_plus_rsi"),
-      ],
-      stepButtons("rsiLength", "RSI len", 1, { digits: 0 }),
-    ];
-  } else {
-    rows = [
-      [toggleButton("solMode", "SOL mode"), toggleButton("lpAgentRelayEnabled", "LPAgent relay")],
-      [toggleButton("chartIndicatorsEnabled", "Chart indicators"), toggleButton("trailingTakeProfit", "Trailing TP")],
-      [
-        settingButton("Risk / deploy", "cfg:page:risk"),
-        settingButton("Screening", "cfg:page:screen"),
-      ],
-      [
-        settingButton("Indicators", "cfg:page:indicators"),
-        settingButton("Show config", "cfg:show"),
-      ],
-    ];
-  }
-
-  return { text: summary, keyboard: [...nav, ...rows, ...footer] };
 }
 
 async function showSettingsMenu({ messageId = null, page = "main" }: { messageId?: number | null; page?: string } = {}): Promise<void> {
@@ -608,8 +447,8 @@ async function telegramHandler(msg: TelegramMessage): Promise<void> {
   if (msg?.isCallback && text.startsWith("cfg:")) {
     try {
       await applySettingsMenuCallback(msg);
-    } catch (e: any) {
-      await answerCallbackQuery(msg.callbackQueryId!, e.message).catch(() => {});
+    } catch (e) {
+      await answerCallbackQuery(msg.callbackQueryId!, toError(e).message).catch(() => {});
     }
     return;
   }
@@ -631,8 +470,8 @@ async function telegramHandler(msg: TelegramMessage): Promise<void> {
     try {
       const briefing: string = await generateBriefing();
       await sendLongMessage(briefing);
-    } catch (e: any) {
-      await sendMessage(`Error: ${e.message}`).catch(() => {});
+    } catch (e) {
+      await sendMessage(`Error: ${toError(e).message}`).catch(() => {});
     }
     return;
   }
@@ -655,8 +494,8 @@ async function telegramHandler(msg: TelegramMessage): Promise<void> {
         dryRun: process.env.DRY_RUN === "true",
         hiveEnabled: isHiveMindEnabled(),
       })}${suffix}`).catch(() => {});
-    } catch (e: any) {
-      await sendMessage(`Error: ${e.message}`).catch(() => {});
+    } catch (e) {
+      await sendMessage(`Error: ${toError(e).message}`).catch(() => {});
     }
     return;
   }
@@ -670,7 +509,7 @@ async function telegramHandler(msg: TelegramMessage): Promise<void> {
     try {
       const { positions, total_positions }: { positions: LivePosition[]; total_positions: number } = await getMyPositions({ force: true });
       await sendMessage(dryRunTag(formatPositions(positions, total_positions, config.management.solMode)));
-    } catch (e: any) { await sendMessage(`Error: ${e.message}`).catch(() => {}); }
+    } catch (e) { await sendMessage(`Error: ${toError(e).message}`).catch(() => {}); }
     return;
   }
 
@@ -691,7 +530,7 @@ async function telegramHandler(msg: TelegramMessage): Promise<void> {
         const vps: LivePosition[] = positions.filter((p: LivePosition) => p.position?.startsWith("vp:"));
         await sendMessage(formatVirtualPositions(vps, config.management.solMode));
       }
-    } catch (e: any) { await sendMessage(`Error: ${e.message}`).catch(() => {}); }
+    } catch (e) { await sendMessage(`Error: ${toError(e).message}`).catch(() => {}); }
     return;
   }
 
@@ -703,8 +542,8 @@ async function telegramHandler(msg: TelegramMessage): Promise<void> {
       if (idx < 0 || idx >= positions.length) { await sendMessage("Invalid number. Use /positions first."); return; }
       const pos: LivePosition = positions[idx];
       await sendMessage(formatPositionDetail(pos, idx, config.management.solMode));
-    } catch (e: any) {
-      await sendMessage(`Error: ${e.message}`).catch(() => {});
+    } catch (e) {
+      await sendMessage(`Error: ${toError(e).message}`).catch(() => {});
     }
     return;
   }
@@ -737,7 +576,7 @@ async function telegramHandler(msg: TelegramMessage): Promise<void> {
       if (result.success) {
         tryStartScreening("telegram-close", true);
       }
-    } catch (e: any) { await sendMessage(`Error: ${e.message}`).catch(() => {}); }
+    } catch (e) { await sendMessage(`Error: ${toError(e).message}`).catch(() => {}); }
     return;
   }
 
@@ -751,14 +590,14 @@ async function telegramHandler(msg: TelegramMessage): Promise<void> {
         try {
           const result: any = await closeTelegramPosition(pos);
           results.push({ pair: pos.pair, success: result.success, pnl_pct: result.pnl_pct, error: result.error, is_virtual: result.is_virtual });
-        } catch (error: any) {
-          results.push({ pair: pos.pair, success: false, error: error.message });
+        } catch (error) {
+          results.push({ pair: pos.pair, success: false, error: toError(error).message });
         }
       }
       await sendMessage(dryRunTag(formatCloseAllResult(results))).catch(() => {});
       tryStartScreening("telegram-closeall", true);
-    } catch (e: any) {
-      await sendMessage(`Error: ${e.message}`).catch(() => {});
+    } catch (e) {
+      await sendMessage(`Error: ${toError(e).message}`).catch(() => {});
     }
     return;
   }
@@ -773,7 +612,7 @@ async function telegramHandler(msg: TelegramMessage): Promise<void> {
       const pos: LivePosition = positions[idx];
       setPositionInstruction(pos.position, note);
       await sendMessage(formatSetNote(pos.pair, note));
-    } catch (e: any) { await sendMessage(`Error: ${e.message}`).catch(() => {}); }
+    } catch (e) { await sendMessage(`Error: ${toError(e).message}`).catch(() => {}); }
     return;
   }
 
@@ -791,8 +630,8 @@ async function telegramHandler(msg: TelegramMessage): Promise<void> {
         return;
       }
       await sendMessage(formatSetConfig(key, value)).catch(() => {});
-    } catch (e: any) {
-      await sendMessage(`Error: ${e.message}`).catch(() => {});
+    } catch (e) {
+      await sendMessage(`Error: ${toError(e).message}`).catch(() => {});
     }
     return;
   }
@@ -800,8 +639,8 @@ async function telegramHandler(msg: TelegramMessage): Promise<void> {
   if (text === "/screen") {
     try {
       await sendMessage(await runDeterministicScreen(5)).catch(() => {});
-    } catch (e: any) {
-      await sendMessage(`Error: ${e.message}`).catch(() => {});
+    } catch (e) {
+      await sendMessage(`Error: ${toError(e).message}`).catch(() => {});
     }
     return;
   }
@@ -817,8 +656,8 @@ async function telegramHandler(msg: TelegramMessage): Promise<void> {
       const idx: number = parseInt(deployMatch[1]) - 1;
       const { candidate, result, deployAmount, binsBelow } = await deployLatestCandidate(idx);
       await sendMessage(dryRunTag(formatDeployResult(candidate, result, deployAmount, binsBelow, config.strategy.strategy))).catch(() => {});
-    } catch (e: any) {
-      await sendMessage(`Error: ${e.message}`).catch(() => {});
+    } catch (e) {
+      await sendMessage(`Error: ${toError(e).message}`).catch(() => {});
     }
     return;
   }
@@ -864,8 +703,8 @@ async function telegramHandler(msg: TelegramMessage): Promise<void> {
         `Presets: ${Array.isArray(presets) ? presets.length : (pullMode === "manual" ? "manual" : 0)}`,
         isManualPull ? "Manual pull: completed" : null,
       ].join("\n")).catch(() => {});
-    } catch (e: any) {
-      await sendMessage(`HiveMind error: ${e.message}`).catch(() => {});
+    } catch (e) {
+      await sendMessage(`HiveMind error: ${toError(e).message}`).catch(() => {});
     }
     return;
   }
@@ -887,9 +726,9 @@ async function telegramHandler(msg: TelegramMessage): Promise<void> {
     appendHistory(text, content);
     if (liveMessage) await liveMessage.finalize(stripThink(content));
     else await sendLongMessage(stripThink(content));
-  } catch (e: any) {
-    if (liveMessage) await liveMessage.fail(e.message).catch(() => {});
-    else await sendMessage(`Error: ${e.message}`).catch(() => {});
+  } catch (e) {
+    if (liveMessage) await liveMessage.fail(toError(e).message).catch(() => {});
+    else await sendMessage(`Error: ${toError(e).message}`).catch(() => {});
   } finally {
     busy = false;
     refreshPrompt();
@@ -930,7 +769,7 @@ if (isMain && isTTY) {
     if (busy) { console.log("Agent is busy, please wait..."); rl.prompt(); return; }
     busy = true; rl.pause();
     try { await fn(); }
-    catch (e: any) { console.error(`Error: ${e.message}`); }
+    catch (e) { console.error(`Error: ${toError(e).message}`); }
     finally { busy = false; rl.setPrompt(buildPrompt()); rl.resume(); rl.prompt(); }
   }
 
@@ -966,8 +805,8 @@ if (isMain && isTTY) {
     console.log(`Top pools (${total_eligible} eligible from ${total_screened} screened):\n`);
     console.log(formatCandidates(candidates));
 
-  } catch (e: any) {
-    console.error(`Startup fetch failed: ${e.message}`);
+  } catch (e) {
+    console.error(`Startup fetch failed: ${toError(e).message}`);
   } finally {
     busy = false;
   }
@@ -1225,8 +1064,8 @@ Focus on: hold duration, entry/exit timing, what win rates look like, whether sc
   (async () => {
     try {
       tryStartScreening("startup", false);
-    } catch (e: any) {
-      log("startup_error", e.message);
+    } catch (e) {
+      log("startup_error", toError(e).message);
     }
   })();
 }
