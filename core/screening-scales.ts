@@ -20,7 +20,7 @@ export const TIMEFRAME_SCREENING_SCALES: Record<string, ScreeningScale> = {
   "24h": { minFeeActiveTvlRatio: 3.0,  minVolume: 100_000 },
 };
 
-const DEFAULT_TIMEFRAME = "4h";
+const DEFAULT_TIMEFRAME = "5m";
 
 export function normalizeTimeframe(timeframe: string | null | undefined): string {
   const tf = String(timeframe || DEFAULT_TIMEFRAME).trim().toLowerCase();

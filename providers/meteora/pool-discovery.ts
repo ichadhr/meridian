@@ -1,5 +1,6 @@
 import { config } from "../../config/index.js";
 import { isBlacklisted, isDevBlocked, getBlockedDevs, isBaseMintOnCooldown, isPoolOnCooldown } from "../../core/index.js";
+import { scaleScreeningToTimeframe } from "../../core/screening-scales.js";
 import { log } from "../../utils/logger.js";
 import { confirmIndicatorPreset, getAgentMeridianBase, getAgentMeridianHeaders } from "../hivemind/index.js";
 
@@ -609,6 +610,13 @@ export async function discoverPools({
   page_size?: number;
 } = {}): Promise<DiscoverPoolsResult> {
   const s = config.screening as ScreeningConfig;
+
+  // Scale minVolume and minFeeActiveTvlRatio to the configured timeframe
+  // so hard filters match the LLM prompt's timeframe guidelines.
+  const scaled = scaleScreeningToTimeframe(s.timeframe);
+  const apiMinVolume = scaled.minVolume;
+  const apiMinFeeActiveTvlRatio = scaled.minFeeActiveTvlRatio;
+
   const filters = [
     "base_token_has_critical_warnings=false",
     "quote_token_has_critical_warnings=false",
@@ -618,12 +626,12 @@ export async function discoverPools({
     `base_token_market_cap>=${s.minMcap}`,
     `base_token_market_cap<=${s.maxMcap}`,
     `base_token_holders>=${s.minHolders}`,
-    `volume>=${s.minVolume}`,
+    `volume>=${apiMinVolume}`,
     `tvl>=${s.minTvl}`,
     s.maxTvl != null ? `tvl<=${s.maxTvl}` : null,
     `dlmm_bin_step>=${s.minBinStep}`,
     `dlmm_bin_step<=${s.maxBinStep}`,
-    `fee_active_tvl_ratio>=${s.minFeeActiveTvlRatio}`,
+    `fee_active_tvl_ratio>=${apiMinFeeActiveTvlRatio}`,
     `base_token_organic_score>=${s.minOrganic}`,
     `quote_token_organic_score>=${s.minQuoteOrganic}`,
     s.minTokenAgeHours != null ? `base_token_created_at<=${Date.now() - s.minTokenAgeHours * 3_600_000}` : null,
@@ -696,9 +704,12 @@ export async function discoverPools({
   rawPools = await applyVolatilityTimeframe(rawPools, s.timeframe);
   await enrichDiscordSignalLaunchpads(rawPools);
 
+  // Override static thresholds with time-scaled values for the hard filter
+  const sScaled = { ...s, minVolume: apiMinVolume, minFeeActiveTvlRatio: apiMinFeeActiveTvlRatio };
+
   const filteredExamples: FilteredExample[] = [];
   const thresholdedRawPools = rawPools.filter((pool) => {
-    const reason = getRawPoolScreeningRejectReason(pool, s);
+    const reason = getRawPoolScreeningRejectReason(pool, sScaled);
     if (!reason) return true;
     filteredExamples.push({ name: pool.name || pool.pool_address || "unknown pool", reason });
     if (pool.discord_signal) log("screening", `Discord signal filtered: ${pool.name || pool.pool_address} — ${reason}`);

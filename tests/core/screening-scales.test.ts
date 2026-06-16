@@ -13,20 +13,20 @@ describe("Screening Scales", () => {
       expect(normalizeTimeframe("24h")).toBe("24h");
     });
 
-    it("returns default 4h for invalid timeframe", () => {
-      expect(normalizeTimeframe("15m")).toBe("4h");
-      expect(normalizeTimeframe(null)).toBe("4h");
-      expect(normalizeTimeframe(undefined)).toBe("4h");
+    it("returns default 5m for invalid timeframe", () => {
+      expect(normalizeTimeframe("15m")).toBe("5m");
+      expect(normalizeTimeframe(null)).toBe("5m");
+      expect(normalizeTimeframe(undefined)).toBe("5m");
     });
   });
 
   describe("getScreeningDefaultsForTimeframe", () => {
-    it("returns default 4h scales when input is invalid", () => {
+    it("returns default 5m scales when input is invalid", () => {
       const defaults = getScreeningDefaultsForTimeframe("15m");
       expect(defaults).toEqual({
-        timeframe: "4h",
-        minFeeActiveTvlRatio: 0.8,
-        minVolume: 40000,
+        timeframe: "5m",
+        minFeeActiveTvlRatio: 0.02,
+        minVolume: 500,
       });
     });
 
