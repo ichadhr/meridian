@@ -1,15 +1,6 @@
-import { config } from "../../config/index.js";
-import { getGmgnTokenFees, hasGmgnApiKey } from "../gmgn/index.js";
+import { resolveGlobalFeesSol } from "../token-fees.js";
 
 const DATAPI_BASE = "https://datapi.jup.ag/v1";
-
-async function resolveGlobalFeesSol(mint: string, jupiterFees: number | null | undefined): Promise<number | null> {
-  const jup = jupiterFees != null ? parseFloat(jupiterFees.toFixed(2)) : null;
-  if (!mint || config.gmgn?.feeSource !== "gmgn" || !hasGmgnApiKey()) return jup;
-  const fees = await getGmgnTokenFees(mint);
-  if (fees?.total_fee != null) return parseFloat(fees.total_fee.toFixed(2));
-  return jup;
-}
 
 /**
  * Get the narrative/story behind a token from Jupiter ChainInsight.
