@@ -37,14 +37,15 @@ export function appendHistory(userMsg: string, assistantMsg: string): void {
 
 // ── CLI prompt refresh (set by index.ts) ────────────────────────
 let _ttyInterface: readline.Interface | null = null;
+let _buildPrompt: (() => string) | null = null;
 
-export function setTtyInterface(rl: readline.Interface | null): void {
+export function setTtyInterface(rl: readline.Interface | null, buildPrompt?: () => string): void {
   _ttyInterface = rl;
+  _buildPrompt = buildPrompt ?? null;
 }
 
 export function refreshPrompt(): void {
-  if (!_ttyInterface) return;
-  const { buildPrompt } = require("./format.js");
-  _ttyInterface.setPrompt(buildPrompt());
+  if (!_ttyInterface || !_buildPrompt) return;
+  _ttyInterface.setPrompt(_buildPrompt());
   _ttyInterface.prompt(true);
 }

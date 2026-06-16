@@ -10,14 +10,13 @@ import { runScreeningCycle, evolveThresholds, getPerformanceSummary, generateBri
 import { getMyPositions, getTopCandidates } from "../providers/meteora/index.js";
 import { getWalletBalances } from "../providers/solana/index.js";
 import { buildPrompt } from "./format.js";
+import { busy, setBusy, sessionHistory, appendHistory } from "./state.js";
 import { launchCron as _launchCron, cronStarted as _cronStarted } from "../scheduler/index.js";
 import type { LivePosition } from "../types/index.js";
 
 // ── Shared state ──────────────────────────────────────────────
 export const DEPLOY: number = config.management.deployAmountSol;
 
-let _busy: boolean = false;
-export const sessionHistory: any[] = [];
 let _latestCandidates: any[] = [];
 let _latestCandidatesAt: string | null = null;
 
@@ -77,16 +76,6 @@ export function parseConfigValue(raw: any): any {
   return value;
 }
 
-// ── Conversation history ───────────────────────────────────────
-const MAX_HISTORY: number = 20;
-
-export function appendHistory(userMsg: string, assistantMsg: string): void {
-  sessionHistory.push({ role: "user", content: userMsg });
-  sessionHistory.push({ role: "assistant", content: assistantMsg });
-  if (sessionHistory.length > MAX_HISTORY) {
-    sessionHistory.splice(0, sessionHistory.length - MAX_HISTORY);
-  }
-}
 
 // ── Cron launcher (needs rl for prompt refresh) ────────────────
 export function launchCron(rl: readline.Interface): void {
@@ -101,11 +90,11 @@ export function launchCron(rl: readline.Interface): void {
 // ── Attach REPL handlers ──────────────────────────────────────
 export function attachRepl(rl: readline.Interface, shutdown: (signal: string) => Promise<void>): void {
   async function runBusy(fn: () => Promise<void>): Promise<void> {
-    if (_busy) { console.log("Agent is busy, please wait..."); rl.prompt(); return; }
-    _busy = true; rl.pause();
+    if (busy) { console.log("Agent is busy, please wait..."); rl.prompt(); return; }
+    setBusy(true); rl.pause();
     try { await fn(); }
     catch (e) { console.error(`Error: ${toError(e).message}`); }
-    finally { _busy = false; rl.setPrompt(buildPrompt()); rl.resume(); rl.prompt(); }
+    finally { setBusy(false); rl.setPrompt(buildPrompt()); rl.resume(); rl.prompt(); }
   }
 
   rl.on("line", async (line: string) => {

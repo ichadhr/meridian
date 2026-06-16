@@ -252,8 +252,6 @@ export function hasActiveLiveMessage(): boolean {
   return _liveMessageDepth > 0;
 }
 
-export { telegramHandler } from "./handlers.js";
-
 function createTypingIndicator(): { stop: () => void } {
   if (!TOKEN || !chatId) {
     return { stop() {} };

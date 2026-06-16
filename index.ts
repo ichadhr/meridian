@@ -1,6 +1,5 @@
 import "./utils/secure-env.js";
 
-import fs from "fs";
 import readline from "readline";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -10,7 +9,6 @@ import { getMyPositions } from "./providers/meteora/index.js";
 import { getWalletBalances } from "./providers/solana/index.js";
 import { getTopCandidates } from "./providers/meteora/index.js";
 import { config, initProviders } from "./config/index.js";
-import { executeTool } from "./llm/index.js";
 import {
   startPolling,
   stopPolling,
@@ -105,7 +103,7 @@ if (isMain && isTTY) {
     output: process.stdout,
     prompt: buildPrompt(),
   });
-  setTtyInterface(rl);
+  setTtyInterface(rl, buildPrompt);
   launchCron(rl);
 
   // Update prompt countdown every 10 seconds

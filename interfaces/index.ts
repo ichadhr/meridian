@@ -7,7 +7,7 @@
  */
 
 import * as telegram from "./telegram/index.js";
-
+export { telegramHandler } from "./telegram/handlers.js";
 // --- Message tags (shared across all platforms) ---
 // Primitives (sendMessage, sendLongMessage, createLiveMessage) do NOT auto-tag.
 // Callers must wrap with dryRunTag/dryRunTitle, or use notify* helpers which wrap internally.
@@ -63,10 +63,6 @@ export async function notifySwap(...args: Parameters<typeof telegram.notifySwap>
 
 export async function notifyOutOfRange(...args: Parameters<typeof telegram.notifyOutOfRange>): Promise<void> {
   return telegram.notifyOutOfRange(...args);
-}
-
-export async function telegramHandler(...args: Parameters<typeof telegram.telegramHandler>): Promise<void> {
-  return telegram.telegramHandler(...args);
 }
 
 // --- Messaging primitives (delegate to telegram) ---
