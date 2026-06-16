@@ -43,6 +43,7 @@
   "blockedLaunchpads": [],
   "minTokenAgeHours": null,
   "maxTokenAgeHours": null,
+  "athFilterPct": null,
 
   "minClaimAmount": 5,
   "autoSwapAfterClaim": false,
