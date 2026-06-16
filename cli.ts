@@ -706,11 +706,6 @@ switch (subcommand) {
     break;
   }
 
-  // ── skill ────────────────────────────────────────────────────────
-  case "skill":
-    die("The skill system has been removed. Use native provider integrations instead.");
-    break;
-
-  default:
+  // ── default ───────────────────────────────────────────────────────
     die(`Unknown command: ${subcommand}. Run 'meridian help' for usage.`);
 }

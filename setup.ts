@@ -315,7 +315,7 @@ console.log("\n── Exit Rules & Trailing TP ───────────
 
 const takeProfitPct = await askNum(
   "Take profit when fees earned >= X% of deployed capital",
-  p("takeProfitPct", e("takeProfitFeePct", 5)),
+  p("takeProfitPct", 5),
   { min: 0.1, max: 100 }
 );
 

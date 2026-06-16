@@ -107,7 +107,7 @@ const DEFAULT_TIMEOUT_MS = 30_000;
 const MAX_BUFFER = 10 * 1024 * 1024;
 
 // Env vars passed to the subprocess (subset of executor.ts SKILL_ENV_ALLOWLIST
-// plus OKX creds). Kept in sync with buildSkillEnv("onchainos") in executor.ts.
+// plus OKX creds).
 const SAFE_BASE_VARS = new Set([
   "PATH", "HOME", "USER", "LOGNAME", "SHELL",
   "TMPDIR", "TEMP", "TMP",
@@ -333,7 +333,7 @@ function normalizeRiskLevel(raw: string | undefined): RiskLevel {
     case "LOW":
       return raw;
     default:
-      // Per SKILL.md: missing/null/unrecognized → treat as HIGH.
+      // Per upstream docs: missing/null/unrecognized → treat as HIGH.
       return "HIGH";
   }
 }
@@ -372,7 +372,7 @@ function failureVerdict(mint: string, reason: string): SafetyVerdict {
   };
 }
 
-// Deterministic mock verdict for tests and missing-credentials fallback.
+// Deterministic mock verdict for tests (MOCK_ONCHAINOS=1 or opts.useMock).
 // Cycles through risk levels so a batch of test mints gets variety.
 function mockVerdictFor(mint: string, index: number): SafetyVerdict {
   const levels: RiskLevel[] = ["LOW", "LOW", "LOW", "MEDIUM", "HIGH", "CRITICAL"];

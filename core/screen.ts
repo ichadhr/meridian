@@ -467,12 +467,13 @@ export async function runScreeningCycle({ silent = false, source, force = false 
       }
     }
 
-    // Pre-fetch active_bin for all passing candidates (required — retry each)
-    const activeBinResults: { status: "fulfilled"; value: any }[] = [];
+    // Pre-fetch active_bin for all passing candidates (required — retry each).
+    // Key by pool.pool so results survive candidate filtering by the safety step.
+    const activeBinByPool = new Map<string, any>();
     for (const { pool } of passing) {
       try {
         const bin = await callWithRetry(() => getActiveBin({ pool_address: pool.pool }), `getActiveBin(${pool.name})`);
-        activeBinResults.push({ status: "fulfilled", value: bin });
+        activeBinByPool.set(pool.pool, bin);
       } catch (err: any) {
         log("screening_error", `getActiveBin failed for ${pool.name} after retries: ${err?.message ?? String(err)}`);
         cycleRequiredToolFailed = true;
@@ -511,7 +512,8 @@ export async function runScreeningCycle({ silent = false, source, force = false 
       const launchpad: string | null = ti?.launchpad ?? null;
       const priceChange: number | null = ti?.stats_1h?.price_change;
       const netBuyers: number | null = ti?.stats_1h?.net_buyers;
-      const activeBin: any = activeBinResults[i]?.value?.binId ?? null;
+      const binResult = activeBinByPool.get(pool.pool);
+      const activeBin: any = binResult?.binId ?? null;
 
       const okxParts: string = [
         pool.risk_level     != null ? `risk=${pool.risk_level}`               : null,

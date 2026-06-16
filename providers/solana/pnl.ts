@@ -23,6 +23,12 @@ async function loadDlmmSdk() {
 }
 
 let _pnlConnection: Connection | null = null;
+
+/** Reset the cached connection (test helper). */
+export function _resetPnlConnectionForTesting(): void {
+  _pnlConnection = null;
+}
+
 export function getPnlConnection(): Connection {
   if (!_pnlConnection) {
     const rpcUrl = config.pnl.rpcUrl;

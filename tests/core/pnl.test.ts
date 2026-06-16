@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { config } from "../../config/index.js";
-import { getPnlConnection, computePositions, getJupiterPrices } from "../../providers/solana/index.js";
+import { getPnlConnection, _resetPnlConnectionForTesting, computePositions, getJupiterPrices } from "../../providers/solana/index.js";
 import { Connection, PublicKey } from "@solana/web3.js";
 
 // Mock only getAllLbPairPositionsByUser on default DLMM class export
@@ -143,6 +143,17 @@ describe("RPC PnL Engine", () => {
     const conn = getPnlConnection();
     expect(conn).toBeInstanceOf(Connection);
     expect(conn.rpcEndpoint).toBe("https://mock-rpc-url.com");
+  });
+
+  it("getPnlConnection throws on empty RPC URL", () => {
+    const origUrl = config.pnl.rpcUrl;
+    config.pnl.rpcUrl = "" as any;
+    _resetPnlConnectionForTesting();
+    expect(() => getPnlConnection()).toThrow(/rpcUrl/i);
+    _resetPnlConnectionForTesting();
+    config.pnl.rpcUrl = origUrl;
+    // Reset state so subsequent tests get a fresh connection
+    config.pnl.rpcUrl = "https://mock-rpc-url.com";
   });
 
   it("computePositions returns empty result when no positions are found on-chain", async () => {
