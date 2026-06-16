@@ -374,7 +374,7 @@ export const config: Config = {
   })(),
   pnl: {
     rpcUrl: str("pnlRpcUrl", process.env.RPC_URL ?? ""),
-    source: str("pnlSource", "meteora") as "rpc" | "meteora",
+    source: str("pnlSource", "rpc") as "rpc" | "meteora",
     pollIntervalSec: num("pnlPollIntervalSec", 10),
     depositCacheTtlSec: num("pnlDepositCacheTtlSec", 300),
   },
