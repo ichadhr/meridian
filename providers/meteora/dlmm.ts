@@ -15,7 +15,7 @@ import bs58 from "bs58";
 import { config, computeDeployAmount, MIN_SAFE_BINS_BELOW } from "../../config/index.js";
 import type { PositionsResult, WalletPositionsResult } from "../../types/index.js";
 import { log } from "../../utils/logger.js";
-import { computePositions } from "../solana/index.js";
+import { computePositions, fetchDlmmPnlForPool } from "../solana/index.js";
 import {
   trackPosition,
   markLiveOutOfRange,
@@ -1501,33 +1501,6 @@ async function fetchLpAgentOpenPositions(walletAddress: string): Promise<Record<
   } catch (e: any) {
     log("lpagent_api", `Fetch error for owner ${walletAddress.slice(0, 8)}: ${e.message}`);
     return {};
-  }
-}
-
-// ─── Fetch DLMM PnL API for all positions in a pool ────────────
-async function fetchDlmmPnlForPool(poolAddress: string, walletAddress: string): Promise<Record<string, any>> {
-  const url = `https://dlmm.datapi.meteora.ag/positions/${poolAddress}/pnl?user=${walletAddress}&status=open&pageSize=100&page=1`;
-  try {
-    const res = await fetch(url);
-    if (!res.ok) {
-      const body = await res.text().catch(() => "");
-      log("pnl_api", `HTTP ${res.status} for pool ${poolAddress.slice(0, 8)}: ${body.slice(0, 120)}`);
-      return { _api_error: true, _http_status: res.status };
-    }
-    const data = await res.json();
-    const positions = data.positions || data.data || [];
-    if (positions.length === 0) {
-      log("pnl_api", `No positions returned for pool ${poolAddress.slice(0, 8)} — keys: ${Object.keys(data).join(", ")}`);
-    }
-    const byAddress: Record<string, any> = {};
-    for (const p of positions) {
-      const addr = p.positionAddress || p.address || p.position;
-      if (addr) byAddress[addr] = p;
-    }
-    return byAddress;
-  } catch (e: any) {
-    log("pnl_api", `Fetch error for pool ${poolAddress.slice(0, 8)}: ${e.message}`);
-    return { _api_error: true, _http_status: null };
   }
 }
 

@@ -277,6 +277,41 @@ export interface PositionsResult {
 }
 
 /** Simpler position shape for getWalletPositions() — lacks management-cycle fields */
+export interface RpcPosition {
+  position: string;
+  pool: string;
+  pair: string;
+  base_mint: string | null;
+  lower_bin: number;
+  upper_bin: number;
+  active_bin: number | null;
+  in_range: boolean;
+  unclaimed_fees_usd: number;
+  unclaimed_fees_true_usd: number;
+  total_value_usd: number;
+  total_value_true_usd: number;
+  collected_fees_usd: number;
+  collected_fees_true_usd: number;
+  pnl_usd: number;
+  pnl_true_usd: number;
+  pnl_pct: number;
+  pnl_pct_derived: number;
+  pnl_pct_diff: number | null;
+  pnl_pct_suspicious: boolean;
+  fee_per_tvl_24h: number | null;
+  age_minutes: number | null;
+  minutes_out_of_range: number;
+  instruction: string | null;
+}
+
+/** Return type for computePositions() — RPC-derived PnL engine. */
+export interface RpcPositionsResult {
+  wallet: string;
+  total_positions: number;
+  positions: RpcPosition[];
+  source: string;
+}
+
 export interface WalletPosition {
   position: string;
   pool: string;

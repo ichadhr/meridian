@@ -7,6 +7,7 @@ import {
   markLiveInRange,
   minutesLiveOutOfRange,
 } from "../../core/index.js";
+import type { RpcPosition, RpcPositionsResult } from "../../types/index.js";
 import { fetchSolPrice } from "../jupiter/index.js";
 
 const JUPITER_PRICE_API = "https://api.jup.ag/price/v3";
@@ -62,6 +63,23 @@ function unique(arr: (string | null | undefined)[]): string[] {
   return [...new Set(arr.filter(Boolean))] as string[];
 }
 
+/** Retry an async operation with exponential backoff for transient RPC failures. */
+async function rpcRetry<T>(fn: () => Promise<T>, opts: { label?: string; maxRetries?: number; baseDelayMs?: number } = {}): Promise<T> {
+  const { label = "rpc", maxRetries = 3, baseDelayMs = 500 } = opts;
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await fn();
+    } catch (err: any) {
+      if (attempt > maxRetries) throw err;
+      const isTransient = /429|5\d{2}|timeout|ETIMEDOUT|ECONNRESET|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|rate.?limit/i.test(String(err?.message ?? err));
+      if (!isTransient) throw err;
+      const delay = baseDelayMs * Math.pow(2, attempt - 1) + Math.random() * 100;
+      log("pnl_rpc", `${label} attempt ${attempt}/${maxRetries} failed: ${err?.message ?? String(err)} (retry in ${Math.round(delay)}ms)`);
+      await new Promise((r) => setTimeout(r, delay));
+    }
+  }
+}
+
 // ─── Meteora /pnl per pool (deposit history) ────────────────────
 export async function fetchDlmmPnlForPool(poolAddress: string, walletAddress: string): Promise<Record<string, any>> {
   const url = `${METEORA_PNL}/${poolAddress}/pnl?user=${walletAddress}&status=open&pageSize=100&page=1`;
@@ -70,10 +88,13 @@ export async function fetchDlmmPnlForPool(poolAddress: string, walletAddress: st
     if (!res.ok) {
       const body = await res.text().catch(() => "");
       log("pnl_api", `HTTP ${res.status} for pool ${poolAddress.slice(0, 8)}: ${body.slice(0, 120)}`);
-      return {};
+      return { _api_error: true, _http_status: res.status };
     }
     const data = await res.json() as any;
     const positions = data.positions || data.data || [];
+    if (positions.length === 0) {
+      log("pnl_api", `No positions returned for pool ${poolAddress.slice(0, 8)} — keys: ${Object.keys(data).join(", ")}`);
+    }
     const byAddress: Record<string, any> = {};
     for (const p of positions) {
       const addr = p.positionAddress || p.address || p.position;
@@ -82,7 +103,7 @@ export async function fetchDlmmPnlForPool(poolAddress: string, walletAddress: st
     return byAddress;
   } catch (e: any) {
     log("pnl_api", `Fetch error for pool ${poolAddress.slice(0, 8)}: ${e.message}`);
-    return {};
+    return { _api_error: true, _http_status: null };
   }
 }
 
@@ -206,7 +227,7 @@ function mapEntries(map: any): [string, any][] {
 }
 
 // ─── Build the shaped position object (matches getMyPositions output) ──
-function buildPosition(f: any, prices: Record<string, number | null>, solUsd: number | null, meteora: any, solMode: boolean): any {
+function buildPosition(f: Record<string, any>, prices: Record<string, number | null>, solUsd: number | null, meteora: Record<string, any> | null, solMode: boolean): RpcPosition {
   const priceX = f.baseMint ? (prices[f.baseMint] ?? 0) : 0;
 
   const xHuman = safeNum(f.xRaw) / 10 ** f.decX;
@@ -277,26 +298,40 @@ function buildPosition(f: any, prices: Record<string, number | null>, solUsd: nu
     pnl_pct_suspicious: !!pnlPctSuspicious,
     fee_per_tvl_24h:    meteora ? Math.round(safeNum(meteora.feePerTvl24h) * 100) / 100 : null,
     age_minutes:        ageMinutes,
-    minutes_out_of_range: null as number | null,
+    minutes_out_of_range: tracked?.minutes_out_of_range ?? 0,
     instruction:        tracked?.instruction ?? null,
   };
 }
 
 // ─── Main entry: compute positions from public infra ────────────
-export async function computePositions(walletAddress: string): Promise<any> {
+export async function computePositions(walletAddress: string): Promise<RpcPositionsResult> {
   const solMode = !!config.management?.solMode;
   const SOL_MINT = config.tokens.SOL;
   const conn = getPnlConnection();
   const DLMM = await loadDlmmSdk();
 
-  const map = await DLMM.getAllLbPairPositionsByUser(conn, new PublicKey(walletAddress));
+  // RPC call with retry/backoff for public RPC reliability
+  const map = await rpcRetry(() => DLMM.getAllLbPairPositionsByUser(conn, new PublicKey(walletAddress)), { label: "getAllLbPairPositionsByUser" });
   _pollCount++;
   if (_pollCount % 20 === 1) {
     const n = [...mapEntries(map)].reduce((s, [, i]) => s + (i?.lbPairPositionsData?.length ?? 0), 0);
     log("pnl_tick", `poller alive — ${n} position(s) tracked (tick #${_pollCount})`);
   }
 
-  const flat: any[] = [];
+  const flat: Array<{
+    position: string;
+    pool: string;
+    baseMint: string | null;
+    decX: number;
+    decY: number;
+    active: number | null;
+    lower: number | null;
+    upper: number | null;
+    xRaw: any;
+    yRaw: any;
+    feeXRaw: any;
+    feeYRaw: any;
+  }> = [];
   for (const [lbPairKey, info] of mapEntries(map)) {
     const decX = info?.tokenX?.mint?.decimals ?? 9;
     const decY = info?.tokenY?.mint?.decimals ?? 9;
