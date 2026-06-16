@@ -26,7 +26,8 @@ import { getCloseRule } from "../close-rules.js";
 import { fetchExitConfirmations } from "../../providers/hivemind/index.js";
 import { computePositionPnl, estimateSlippageLamports } from "../pnl.js";
 import type { PositionPnlResult, BinData } from "../pnl.js";
-import type { VpPosition, VpResult } from "../../types/index.js";
+import type { VpPosition, VpResult, PerformanceRecord } from "../../types/index.js";
+import { recordPerformanceLocal } from "../lessons.js";
 
 /** Return type from getBinsInRange (dlmm.js is still JS) */
 interface BinsInRangeResult {
@@ -118,6 +119,44 @@ function buildCloseResult(
 }
 
 /**
+ * Build a PerformanceRecord from VP state + PnL result for local lesson generation.
+ * Used by both auto-close (closeVpAndRecord) and manual close (closeVpPosition).
+ */
+function buildVpPerformanceRecord(
+  vp: VpPosition,
+  finalPnl: PositionPnlResult,
+  reason: string,
+  effectiveOorMinutes: number,
+): PerformanceRecord {
+  const minutesHeld = vp.deployed_at
+    ? Math.floor((Date.now() - new Date(vp.deployed_at).getTime()) / 60000)
+    : 0;
+
+  return {
+    position: vp.id,
+    pool: vp.pool,
+    pool_name: vp.pool_name ?? vp.pair ?? undefined,
+    base_mint: vp.base_mint ?? undefined,
+    strategy: vp.strategy,
+    bin_range: vp.lower_bin != null && vp.upper_bin != null ? { min: vp.lower_bin, max: vp.upper_bin } : undefined,
+    amount_sol: vp.amount_sol,
+    initial_value_usd: vp.initial_value_usd ?? undefined,
+    final_value_usd: (vp.initial_value_usd ?? 0) + finalPnl.pnlUsd,
+    fees_earned_usd: finalPnl.feesUsd,
+    fees_earned_sol: finalPnl.feesSol,
+    close_reason: reason,
+    minutes_held: minutesHeld,
+    minutes_in_range: Math.max(0, minutesHeld - effectiveOorMinutes),
+    deployed_at: vp.deployed_at,
+    volatility: vp.volatility ?? undefined,
+    fee_tvl_ratio: vp.fee_tvl_ratio != null ? Number(vp.fee_tvl_ratio) : undefined,
+    organic_score: vp.organic_score != null ? Number(vp.organic_score) : undefined,
+    signal_snapshot: vp.signal_snapshot ?? undefined,
+    source: "vp",
+  };
+}
+
+/**
  * Record VP close to pool memory (not lessons/evolution — see NOTES.md).
  * Populates pool-memory.json so the SCREENER can skip pools with past losses.
  */
@@ -198,6 +237,14 @@ async function closeVpAndRecord(
   }
   invalidatePositionsCache();
   recordVpDeployToPoolMemory(vp, finalPnl, reason, effectiveOorMinutes);
+
+  // Generate local lesson (VP data stays local — no HiveMind push)
+  try {
+    await recordPerformanceLocal(buildVpPerformanceRecord(vp, finalPnl, reason, effectiveOorMinutes));
+  } catch (e) {
+    log("vp", `Failed to record VP lesson for ${vp.id}: ${(e as Error).message}`);
+  }
+
   log("vp", `VP ${vp.id} (${vp.pair}) CLOSED: ${reason} PnL=${finalPnl.pnlPct.toFixed(2)}% (SOL: ${finalPnl.pnlSolPct.toFixed(2)}%) deployGas=${finalPnl.deployGasSol.toFixed(6)} closeGas=${finalPnl.closeGasSol.toFixed(6)}`);
   return finalPnl;
 }
@@ -260,6 +307,14 @@ export async function closeVpPosition(vp_id: string, reason: string): Promise<Cl
   }
   invalidatePositionsCache();
   recordVpDeployToPoolMemory(vp, finalPnl, reason, vp._oor_minutes || 0);
+
+  // Generate local lesson (VP data stays local — no HiveMind push)
+  try {
+    await recordPerformanceLocal(buildVpPerformanceRecord(vp, finalPnl, reason, vp._oor_minutes || 0));
+  } catch (e) {
+    log("vp_close", `Failed to record VP lesson for ${vp_id}: ${(e as Error).message}`);
+  }
+
   log("vp_close", `VP ${vp_id} (${vp.pair}) CLOSED (manual): ${reason} PnL=${finalPnl.pnlPct.toFixed(2)}% (SOL: ${finalPnl.pnlSolPct.toFixed(2)}%)`);
 
   const isSol = !!config.management.solMode;

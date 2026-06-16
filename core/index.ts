@@ -78,6 +78,7 @@ export {
 // Learning & evolution
 export {
   recordPerformance,
+  recordPerformanceLocal,
   getLessonsForPrompt,
   evolveThresholds,
   getPerformanceSummary,

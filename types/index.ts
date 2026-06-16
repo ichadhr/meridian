@@ -616,6 +616,8 @@ export interface Lesson {
   exit_mcap?: number | null;
   exit_tvl?: number | null;
   exit_volume?: number | null;
+  /** 'live' = real trade, 'vp' = paper trade (Virtual Position). Absent defaults to live. */
+  source?: "live" | "vp";
 }
 
 export interface PerformanceRecord {
@@ -649,6 +651,7 @@ export interface PerformanceRecord {
   pnl_pct?: number;
   range_efficiency?: number;
   recorded_at?: string;
+  source?: "live" | "vp";
   [key: string]: unknown;
 }
 

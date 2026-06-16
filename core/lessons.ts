@@ -67,10 +67,16 @@ function buildSignalSnapshot(perf: PerformanceRecord): Record<string, unknown> |
 // ─── Record Position Performance ──────────────────────────────
 
 /**
- * Call this when a position closes. Captures performance data and
- * derives a lesson if the outcome was notably good or bad.
+ * Record position performance to local lessons.json only.
+ *
+ * Does NOT push to HiveMind or update pool-memory — those responsibilities
+ * belong to the caller (recordPerformance for live positions, VP close paths
+ * for paper trading).
+ *
+ * Returns the derived Lesson (if any) so callers can optionally push it
+ * to HiveMind or other shared stores.
  */
-export async function recordPerformance(perf: PerformanceRecord): Promise<void> {
+export async function recordPerformanceLocal(perf: PerformanceRecord): Promise<Lesson | null> {
   const data = load();
 
   // Guard against unit-mixed records where a SOL-sized final value is
@@ -86,7 +92,7 @@ export async function recordPerformance(perf: PerformanceRecord): Promise<void> 
 
   if (suspiciousUnitMix) {
     log("lessons_warn", `Skipped suspicious performance record for ${perf.pool_name || perf.pool}: initial=${perf.initial_value_usd}, final=${perf.final_value_usd}, amount_sol=${perf.amount_sol}`);
-    return;
+    return null;
   }
 
   const pnl_usd = ((perf.final_value_usd ?? 0) + (perf.fees_earned_usd ?? 0)) - (perf.initial_value_usd ?? 0);
@@ -106,7 +112,7 @@ export async function recordPerformance(perf: PerformanceRecord): Promise<void> 
 
   if (suspiciousAbsurdClosedPnl) {
     log("lessons_warn", `Skipped absurd closed PnL record for ${perf.pool_name || perf.pool}: pnl_pct=${pnl_pct.toFixed(2)} reason=${perf.close_reason}`);
-    return;
+    return null;
   }
 
   const signalSnapshot = buildSignalSnapshot(perf);
@@ -129,30 +135,6 @@ export async function recordPerformance(perf: PerformanceRecord): Promise<void> 
   }
 
   save(data);
-  if (lesson) {
-    void pushHiveLesson(lesson);
-  }
-
-  // Update pool-level memory
-  if (perf.pool) {
-    const { recordPoolDeploy } = await import("./pool-memory.js");
-    recordPoolDeploy(perf.pool, {
-      pool_name: perf.pool_name,
-      base_mint: perf.base_mint,
-      deployed_at: perf.deployed_at,
-      closed_at: entry.recorded_at,
-      pnl_pct: entry.pnl_pct,
-      pnl_usd: entry.pnl_usd,
-      range_efficiency: entry.range_efficiency,
-      minutes_held: perf.minutes_held,
-      fees_earned_usd: perf.fees_earned_usd,
-      fees_earned_sol: perf.fees_earned_sol,
-      fee_earned_pct: (perf.initial_value_usd ?? 0) > 0 ? (((perf.fees_earned_usd || 0)) / perf.initial_value_usd!) * 100 : undefined,
-      close_reason: perf.close_reason,
-      strategy: perf.strategy,
-      volatility: perf.volatility,
-    });
-  }
 
   // Evolve thresholds every 5 closed positions
   if (data.performance.length % MIN_EVOLVE_POSITIONS === 0) {
@@ -173,13 +155,66 @@ export async function recordPerformance(perf: PerformanceRecord): Promise<void> 
     }
   }
 
-  void pushHivePerformanceEvent({
-    ...entry,
-    base_mint: perf.base_mint || undefined,
-    fees_earned_sol: perf.fees_earned_sol || 0,
-    eventId: `close:${perf.position}:${entry.recorded_at}`,
-  });
+  return lesson;
+}
 
+/**
+ * Call this when a LIVE position closes.
+ *
+ * Delegates to recordPerformanceLocal for local state (lessons.json,
+ * threshold evolution), then pushes to HiveMind and updates pool-memory.
+ *
+ * VP (paper trading) closes should use recordPerformanceLocal directly
+ * to avoid polluting shared state with paper data.
+ */
+export async function recordPerformance(perf: PerformanceRecord): Promise<void> {
+  // Snapshot length before so we can detect if guards in recordPerformanceLocal
+  // rejected the record (no entry saved → nothing to push to HiveMind).
+  const dataBefore = load();
+  const beforeLen = dataBefore.performance.length;
+
+  const lesson = await recordPerformanceLocal(perf);
+  if (lesson) {
+    void pushHiveLesson(lesson);
+  }
+
+  // Reload entry after save — guards may have rejected the record entirely
+  const data = load();
+  const entry = data.performance[data.performance.length - 1];
+
+  // Guards in recordPerformanceLocal rejected this record — nothing saved,
+  // do NOT push stale data to HiveMind
+  if (data.performance.length <= beforeLen) return;
+
+  // Update pool-level memory
+  if (perf.pool && entry) {
+    const { recordPoolDeploy } = await import("./pool-memory.js");
+    recordPoolDeploy(perf.pool, {
+      pool_name: perf.pool_name,
+      base_mint: perf.base_mint,
+      deployed_at: perf.deployed_at,
+      closed_at: entry.recorded_at,
+      pnl_pct: entry.pnl_pct,
+      pnl_usd: entry.pnl_usd,
+      range_efficiency: entry.range_efficiency,
+      minutes_held: perf.minutes_held,
+      fees_earned_usd: perf.fees_earned_usd,
+      fees_earned_sol: perf.fees_earned_sol,
+      fee_earned_pct: (perf.initial_value_usd ?? 0) > 0 ? (((perf.fees_earned_usd || 0)) / perf.initial_value_usd!) * 100 : undefined,
+      close_reason: perf.close_reason,
+      strategy: perf.strategy,
+      volatility: perf.volatility,
+    });
+  }
+
+  if (entry) {
+    void pushHivePerformanceEvent({
+      ...entry,
+      base_mint: perf.base_mint || undefined,
+      fees_earned_sol: perf.fees_earned_sol || 0,
+      eventId: `close:${perf.position}:${entry.recorded_at}`,
+    });
+  }
 }
 
 /**
@@ -278,6 +313,7 @@ function derivLesson(perf: PerformanceRecord): Lesson | null {
     exit_mcap: numberOrNull(perf.exit_mcap),
     exit_tvl: numberOrNull(perf.exit_tvl),
     exit_volume: numberOrNull(perf.exit_volume),
+    source: perf.source,
   };
 }
 

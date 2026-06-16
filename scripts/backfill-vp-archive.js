@@ -19,7 +19,7 @@
 //   node scripts/backfill-vp-archive.js --archive <path>     # specific file
 //
 // STATE FILES TOUCHED
-//   lessons.json         (recordPerformance appends perf + lessons + Darwin recalc)
+//   lessons.json         (recordPerformanceLocal appends perf + lessons + Darwin recalc)
 //   signal-weights.json  (Darwin evolves thresholds, recalc_count++ at milestones)
 //   pool-memory.json     (final: server canonical, cleaned)
 //   user-config.json     (threshold evolution persists; minFeeActiveTvlRatio etc.)
@@ -237,7 +237,7 @@ if (fs.existsSync(SERVER_PM)) {
 }
 
 // ─── 7. BACKFILL LOOP ─────────────────────────────────────────────────────────
-const { recordPerformance } = await import('../lessons.js');
+const { recordPerformanceLocal } = await import('../core/lessons.js');
 
 let success = 0;
 let errors = [];
@@ -269,9 +269,10 @@ for (const r of newRecords) {
     fee_tvl_ratio: r.fee_tvl_ratio,
     organic_score: r.organic_score,
     signal_snapshot: r.signal_snapshot,
+    source: "vp",
   };
   try {
-    await recordPerformance(perf);
+    await recordPerformanceLocal(perf);
     success++;
   } catch (e) {
     errors.push({ id: r.id, error: e.message });
