@@ -4,7 +4,7 @@
   "llmBaseUrl": "",
   "llmApiKey": "",
   "llmModel": "minimax/minimax-m2.7",
-  "dryRun": false,
+  "dryRun": true,
 
   "deployAmountSol": 0.5,
   "maxPositions": 3,
@@ -43,7 +43,6 @@
   "blockedLaunchpads": [],
   "minTokenAgeHours": null,
   "maxTokenAgeHours": null,
-  "athFilterPct": null,
 
   "minClaimAmount": 5,
   "autoSwapAfterClaim": false,
@@ -98,6 +97,15 @@
   "publicApiKey": "",
   "agentMeridianApiUrl": "https://api.agentmeridian.xyz/api",
   "lpAgentRelayEnabled": false,
+
+  "pnlSource": "rpc",
+  "pnlRpcUrl": "https://pump.helius-rpc.com",
+  "pnlPollIntervalSec": 3,
+  "pnlDepositCacheTtlSec": 300,
+
+  "gmgnFeeSource": "gmgn",
+  "gmgnApiKey": "",
+
   "chartIndicators": {
     "enabled": false,
     "entryPreset": "supertrend_break",
