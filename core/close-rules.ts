@@ -28,6 +28,7 @@ export interface CloseRulePosition {
   unclaimed_fees_usd?: number | null;
   deployed_at?: string | null;
   snapshots?: Array<Record<string, unknown>>;
+  pnl_pct_suspicious?: boolean | null;
   [key: string]: unknown;
 }
 
@@ -66,9 +67,12 @@ export function getCloseRule(
 
   // Suspect PnL: a huge negative PnL while the position still has value
   // usually means the bin state went wrong. Skip PnL-based rules.
-  const pnlSuspect = position.pnl_pct != null
-    && position.pnl_pct < -90
-    && (position.total_value_usd ?? 0) > 0.01;
+  const pnlSuspect = (() => {
+    if (position.pnl_pct_suspicious) return true;
+    if (position.pnl_pct == null) return false;
+    if (position.pnl_pct > -90) return false;
+    return (position.total_value_usd ?? 0) > 0.01;
+  })();
 
   // Stop loss
   if (!pnlSuspect && position.pnl_pct != null && position.pnl_pct <= stopLossPct) {

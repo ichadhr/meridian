@@ -15,6 +15,7 @@ import bs58 from "bs58";
 import { config, computeDeployAmount, MIN_SAFE_BINS_BELOW } from "../../config/index.js";
 import type { PositionsResult, WalletPositionsResult } from "../../types/index.js";
 import { log } from "../../utils/logger.js";
+import { computePositions } from "../solana/index.js";
 import {
   trackPosition,
   markLiveOutOfRange,
@@ -1726,6 +1727,21 @@ export async function getMyPositions({ force = false, silent = false, wallet_add
   }
 
   const loadPositions = async () => { try {
+    if (config.pnl.source === "rpc") {
+      try {
+        if (!silent) log("positions", `Computing PnL from RPC (${config.pnl.rpcUrl})...`);
+        const rpcResult = await computePositions(walletAddress);
+        if (useLocalWallet) {
+          syncLiveOpenPositions(rpcResult.positions.map((p: any) => p.position));
+          _positionsCache = rpcResult;
+          _positionsCacheAt = Date.now();
+        }
+        return rpcResult;
+      } catch (error: any) {
+        log("positions_warn", `RPC PnL path failed; falling back to Meteora portfolio API: ${error.message}`);
+      }
+    }
+
     let relayLpAgentByPosition = null;
     let relayRequestId = null;
     if (shouldUseLpAgentRelay()) {
@@ -1792,12 +1808,17 @@ export async function getMyPositions({ force = false, silent = false, wallet_add
           : binData
             ? deriveOpenPnlPct(binData, config.management.solMode)
             : null;
-        const pnlPctDiff = reportedPnlPct != null && derivedPnlPct != null
-          ? Math.abs(reportedPnlPct! - derivedPnlPct!)
-          : null;
-        const pnlPctSuspicious = pnlPctDiff != null && pnlPctDiff > (config.management.pnlSanityMaxDiffPct ?? 5);
+        const solMode = config.management.solMode;
+        const depositsSol = binData ? safeNum(binData.allTimeDeposits?.total?.sol) : 0;
+        const depositsUsd = binData ? safeNum(binData.allTimeDeposits?.total?.usd) : 0;
+        const depositsMissing = (solMode ? depositsSol : depositsUsd) <= 0;
+        const xHuman = binData ? parseFloat(binData.unrealizedPnl?.balancesTokenX || 0) : 0;
+        const feeXHuman = binData ? parseFloat(binData.unrealizedPnl?.unclaimedFeeTokenX?.amount || 0) : 0;
+        const holdsTokenX = xHuman > 0 || feeXHuman > 0;
+        const priceMissing = binData ? (holdsTokenX && !safeNum(binData.unrealizedPnl?.balances)) : false;
+        const pnlPctSuspicious = priceMissing || depositsMissing;
         if (pnlPctSuspicious) {
-          log("positions_warn", `Suspicious pnl_pct for ${positionAddress.slice(0, 8)}: reported=${reportedPnlPct!.toFixed(2)} derived=${derivedPnlPct!.toFixed(2)} diff=${pnlPctDiff!.toFixed(2)}`);
+          log("positions_warn", `Suspicious pnl_pct for ${positionAddress.slice(0, 8)}: priceMissing=${priceMissing} depositsMissing=${depositsMissing}`);
         }
 
         positions.push({
@@ -1873,7 +1894,7 @@ export async function getMyPositions({ force = false, silent = false, wallet_add
             ? Math.round(reportedPnlPct! * 100) / 100
             : null,
           pnl_pct_derived:    derivedPnlPct != null ? Math.round(derivedPnlPct * 100) / 100 : null,
-          pnl_pct_diff:       pnlPctDiff != null ? Math.round(pnlPctDiff * 100) / 100 : null,
+          pnl_pct_diff:       null,
           pnl_pct_suspicious: !!pnlPctSuspicious,
           unclaimed_fees_true_usd: lpData
             ? Math.round(safeNum(lpData.unCollectedFee) * 10000) / 10000
@@ -2113,6 +2134,20 @@ export async function closePosition({ position_address, reason }: { position_add
     const wallet = getWallet();
     const poolAddress = await lookupPoolForPosition(position_address, wallet.publicKey.toString());
     const poolMeta = await getPoolMetadata(poolAddress);
+
+    let exitMarket: Record<string, number | null> = {};
+    try {
+      const exitDetail = await fetch(`https://pool-discovery-api.datapi.meteora.ag/pools?page_size=1&filter_by=${encodeURIComponent(`pool_address=${poolAddress}`)}&timeframe=${encodeURIComponent(config.screening?.timeframe || "5m")}`).then(r => r.json()).catch(() => null) as any;
+      const ep = exitDetail?.data?.[0];
+      if (ep) {
+        exitMarket = {
+          exit_mcap: parseFloat(ep?.token_x?.market_cap) || null,
+          exit_tvl: parseFloat(ep?.tvl ?? ep?.active_tvl) || null,
+          exit_volume: parseFloat(ep?.volume) || null,
+        };
+      }
+    } catch { /* non-blocking */ }
+
     if (shouldUseLpAgentRelay()) {
       let relaySubmitted = false;
       try {
@@ -2280,6 +2315,11 @@ export async function closePosition({ position_address, reason }: { position_add
           minutes_held: minutesHeld,
           close_reason: reason || "agent decision",
           signal_snapshot: signalSnapshot ?? undefined,
+          entry_mcap: (tracked as any).entry_mcap ?? null,
+          entry_tvl: (tracked as any).entry_tvl ?? null,
+          entry_volume: (tracked as any).entry_volume ?? null,
+          entry_holders: (tracked as any).entry_holders ?? null,
+          ...exitMarket,
         });
 
         appendDecision({
@@ -2566,6 +2606,11 @@ export async function closePosition({ position_address, reason }: { position_add
         minutes_held: minutesHeld,
         close_reason: reason || "agent decision",
         signal_snapshot: signalSnapshot ?? undefined,
+        entry_mcap: (tracked as any).entry_mcap ?? null,
+        entry_tvl: (tracked as any).entry_tvl ?? null,
+        entry_volume: (tracked as any).entry_volume ?? null,
+        entry_holders: (tracked as any).entry_holders ?? null,
+        ...exitMarket,
       });
 
       appendDecision({

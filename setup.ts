@@ -8,7 +8,6 @@ import "./utils/secure-env.js";
 import readline from "readline";
 import fs from "fs";
 import path from "path";
-import { fileURLToPath } from "url";
 
 const CONFIG_PATH = path.join(process.cwd(), "user-config.json");
 const ENV_PATH    = path.join(process.cwd(), ".env");
@@ -97,7 +96,7 @@ interface Preset {
   minOrganic: number;
   minHolders: number;
   maxMcap: number;
-  takeProfitFeePct: number;
+  takeProfitPct: number;
   stopLossPct: number;
   outOfRangeWaitMinutes: number;
   managementIntervalMin: number;
@@ -112,7 +111,7 @@ const PRESETS: Record<string, Preset> = {
     minOrganic:            60,
     minHolders:            200,
     maxMcap:               5_000_000,
-    takeProfitFeePct:      10,
+    takeProfitPct:         10,
     stopLossPct:           -25,
     outOfRangeWaitMinutes: 15,
     managementIntervalMin: 5,
@@ -125,7 +124,7 @@ const PRESETS: Record<string, Preset> = {
     minOrganic:            65,
     minHolders:            500,
     maxMcap:               10_000_000,
-    takeProfitFeePct:      5,
+    takeProfitPct:         5,
     stopLossPct:           -15,
     outOfRangeWaitMinutes: 30,
     managementIntervalMin: 10,
@@ -138,7 +137,7 @@ const PRESETS: Record<string, Preset> = {
     minOrganic:            75,
     minHolders:            1000,
     maxMcap:               10_000_000,
-    takeProfitFeePct:      3,
+    takeProfitPct:         3,
     stopLossPct:           -10,
     outOfRangeWaitMinutes: 60,
     managementIntervalMin: 15,
@@ -223,8 +222,8 @@ console.log(preset
   : `\nCustom mode — configure all settings.\n`
 );
 
-// ─── Section 4: Deployment ────────────────────────────────────────────────────
-console.log("── Deployment ────────────────────────────────────────────────");
+// ─── Section 4: Deployment & Reserves ─────────────────────────────────────────
+console.log("── Deployment & Reserves ─────────────────────────────────────");
 
 const deployAmountSol = await askNum(
   "SOL to deploy per position",
@@ -242,6 +241,12 @@ const minSolToOpen = await askNum(
   "Min SOL balance to open a new position",
   e("minSolToOpen", parseFloat((deployAmountSol + 0.05).toFixed(3))),
   { min: 0.05 }
+);
+
+const gasReserve = await askNum(
+  "Gas reserve in SOL (held back for transaction fees)",
+  e("gasReserve", 0.2),
+  { min: 0.01, max: 10 }
 );
 
 const dryRun = await askBool(
@@ -267,12 +272,24 @@ const defaultBinsBelow = await askNum(
   { min: minBinsBelow, max: maxBinsBelow }
 );
 
-// ─── Section 5: Risk & Filters ────────────────────────────────────────────────
-console.log("\n── Risk & Filters ────────────────────────────────────────────");
+// ─── Section 5: Risk, TVL & Filters ───────────────────────────────────────────
+console.log("\n── Risk, TVL & Filters ───────────────────────────────────────");
 
 const timeframe = await ask(
   "Pool discovery timeframe (30m / 1h / 4h / 12h / 24h)",
   p("timeframe", "4h")
+);
+
+const minTvl = await askNum(
+  "Min pool TVL USD",
+  e("minTvl", 10_000),
+  { min: 0 }
+);
+
+const maxTvl = await askNum(
+  "Max pool TVL USD",
+  e("maxTvl", 150_000),
+  { min: minTvl }
 );
 
 const minOrganic = await askNum(
@@ -293,14 +310,34 @@ const maxMcap = await askNum(
   { min: 100_000 }
 );
 
-// ─── Section 6: Exit Rules ────────────────────────────────────────────────────
-console.log("\n── Exit Rules ────────────────────────────────────────────────");
+// ─── Section 6: Exit Rules & Trailing TP ──────────────────────────────────────
+console.log("\n── Exit Rules & Trailing TP ──────────────────────────────────");
 
-const takeProfitFeePct = await askNum(
+const takeProfitPct = await askNum(
   "Take profit when fees earned >= X% of deployed capital",
-  p("takeProfitFeePct", 5),
+  p("takeProfitPct", e("takeProfitFeePct", 5)),
   { min: 0.1, max: 100 }
 );
+
+const trailingTakeProfit = await askBool(
+  "Enable trailing take profit?",
+  e("trailingTakeProfit", true)
+);
+
+let trailingTriggerPct = 3;
+let trailingDropPct = 1.5;
+if (trailingTakeProfit) {
+  trailingTriggerPct = await askNum(
+    "  Trailing trigger % (rise above target before trailing starts)",
+    e("trailingTriggerPct", 3),
+    { min: 0.1, max: 100 }
+  );
+  trailingDropPct = await askNum(
+    "  Trailing drop % (drop from peak to trigger exit)",
+    e("trailingDropPct", 1.5),
+    { min: 0.1, max: 100 }
+  );
+}
 
 const stopLossPct = await askNum(
   "Stop loss at X% price drop (e.g. -15)",
@@ -342,8 +379,13 @@ const repeatDeployCooldownMinFeeEarnedPct = await askNum(
   { min: 0 }
 );
 
-// ─── Section 7: Scheduling ────────────────────────────────────────────────────
-console.log("\n── Scheduling ────────────────────────────────────────────────");
+// ─── Section 7: Display Mode & Scheduling ────────────────────────────────────
+console.log("\n── Display Mode & Scheduling ─────────────────────────────────");
+
+const solMode = await askBool(
+  "SOL display mode? (displays balances/PnL in SOL instead of USD)",
+  e("solMode", false)
+);
 
 const managementIntervalMin = await askNum(
   "Management cycle interval (minutes)",
@@ -357,8 +399,8 @@ const screeningIntervalMin = await askNum(
   { min: 5 }
 );
 
-// ─── Section 8: LLM Provider ─────────────────────────────────────────────────
-console.log("\n── LLM Provider ──────────────────────────────────────────────");
+// ─── Section 8: LLM Provider & Per-Role Models ────────────────────────────────
+console.log("\n── LLM Provider & Per-Role Models ────────────────────────────");
 
 interface LLMProvider {
   label: string;
@@ -419,8 +461,33 @@ const llmApiKeyRaw = await ask("API Key", llmApiKeyExisting ? "*** (already set)
 const llmApiKey   = llmApiKeyRaw.startsWith("***") ? llmApiKeyExisting : llmApiKeyRaw;
 
 const llmModel = await ask(
-  "Model name",
+  "Default fallback model name",
   e("llmModel", process.env.LLM_MODEL || provider.modelDefault)
+);
+
+const getExistingModelStr = (key: string): string => {
+  const val = e(key, "");
+  if (typeof val === "string") return val;
+  if (val && typeof val === "object") {
+    if (val.provider && val.model) return `${val.provider}/${val.model}`;
+    if (val.model) return val.model;
+  }
+  return "";
+};
+
+const managementModel = await ask(
+  "Management cycle model",
+  getExistingModelStr("managementModel") || `${provider.key}/${llmModel}`
+);
+
+const screeningModel = await ask(
+  "Screening cycle model",
+  getExistingModelStr("screeningModel") || `${provider.key}/${llmModel}`
+);
+
+const generalModel = await ask(
+  "General / utility model",
+  getExistingModelStr("generalModel") || `${provider.key}/${llmModel}`
 );
 
 rl.close();
@@ -448,14 +515,20 @@ const userConfig: Record<string, any> = {
   deployAmountSol,
   maxPositions,
   minSolToOpen,
+  gasReserve,
   minBinsBelow,
   maxBinsBelow,
   defaultBinsBelow,
   timeframe,
+  minTvl,
+  maxTvl,
   minOrganic,
   minHolders,
   maxMcap,
-  takeProfitFeePct,
+  takeProfitPct,
+  trailingTakeProfit,
+  trailingTriggerPct,
+  trailingDropPct,
   stopLossPct,
   outOfRangeWaitMinutes,
   repeatDeployCooldownEnabled,
@@ -463,17 +536,24 @@ const userConfig: Record<string, any> = {
   repeatDeployCooldownHours,
   repeatDeployCooldownScope,
   repeatDeployCooldownMinFeeEarnedPct,
+  solMode,
   managementIntervalMin,
   screeningIntervalMin,
   llmProvider: provider.key,
   llmBaseUrl,
   llmModel,
+  managementModel,
+  screeningModel,
+  generalModel,
   ...(llmApiKey ? { llmApiKey } : {}),
   telegramChatId: telegramChatId || "",
   dryRun,
 };
 
-// Remove legacy key if present
+// Remove deprecated keys
+delete userConfig.takeProfitFeePct;
+delete userConfig.maxBundlePct;
+delete userConfig.athFilterPct;
 delete userConfig.emergencyPriceDropPct;
 
 fs.writeFileSync(CONFIG_PATH, JSON.stringify(userConfig, null, 2));
@@ -490,16 +570,22 @@ console.log(`
   Dry run:      ${dryRun ? "YES — no real transactions" : "NO — live trading"}
 
   Deploy:       ${deployAmountSol} SOL/position  ·  max ${maxPositions} positions
+  Gas reserve:  ${gasReserve} SOL
   Min balance:  ${minSolToOpen} SOL to open new position
   Timeframe:    ${timeframe}  ·  organic ≥ ${minOrganic}  ·  holders ≥ ${minHolders}
-  Take profit:  fees ≥ ${takeProfitFeePct}%
+  TVL range:    $${minTvl.toLocaleString()} - $${maxTvl.toLocaleString()}
+  Take profit:  fees ≥ ${takeProfitPct}% ${trailingTakeProfit ? `(trailing trigger: ${trailingTriggerPct}%, drop: ${trailingDropPct}%)` : "(flat)"}
   Stop loss:    ${stopLossPct}% price drop
   OOR close:    after ${outOfRangeWaitMinutes} min
   Repeat CD:    ${repeatDeployCooldownEnabled ? `${repeatDeployCooldownTriggerCount}x / ${repeatDeployCooldownHours}h / ${repeatDeployCooldownScope}` : "disabled"}
+  SOL mode:     ${solMode ? "enabled" : "disabled"}
 
   Cycles:       management every ${managementIntervalMin}m  ·  screening every ${screeningIntervalMin}m
   Provider:     ${provider.label.split("(")[0].trim()}
-  Model:        ${llmModel}
+  Default Model:${llmModel}
+  Mgmt Model:   ${managementModel}
+  Screen Model: ${screeningModel}
+  Gen Model:    ${generalModel}
   Base URL:     ${llmBaseUrl}
 
   Telegram:     ${telegramToken ? "enabled" : "disabled"}

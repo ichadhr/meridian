@@ -8,3 +8,4 @@ export {
   estimateFullCycleGasSol,
   getRentCostSol,
 } from "./gas-estimator.js";
+export { computePositions, getPnlConnection } from "./pnl.js";

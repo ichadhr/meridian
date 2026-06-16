@@ -168,6 +168,13 @@ interface SharedLesson {
   pinned?: boolean;
   created_at?: string;
   createdAt?: string;
+  context?: string | null;
+  entry_mcap?: number | string | null;
+  entry_tvl?: number | string | null;
+  entry_volume?: number | string | null;
+  exit_mcap?: number | string | null;
+  exit_tvl?: number | string | null;
+  exit_volume?: number | string | null;
 }
 
 interface NormalizedLesson {
@@ -300,6 +307,23 @@ export function startHiveMindBackgroundSync(): ReturnType<typeof setInterval> | 
   return _heartbeatTimer;
 }
 
+function numberOrNull(value: any): number | null {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function buildMarketFields(source: any): Record<string, number | null> | null {
+  const market = {
+    entryMcap: numberOrNull(source?.entry_mcap),
+    entryTvl: numberOrNull(source?.entry_tvl),
+    entryVolume: numberOrNull(source?.entry_volume),
+    exitMcap: numberOrNull(source?.exit_mcap),
+    exitTvl: numberOrNull(source?.exit_tvl),
+    exitVolume: numberOrNull(source?.exit_volume),
+  };
+  return Object.values(market).some((value) => value != null) ? market : null;
+}
+
 interface LessonEvent {
   eventId: string;
   agentId: string;
@@ -315,6 +339,8 @@ interface LessonEvent {
     confidence: number | null;
     pool: string | null;
     pinned: boolean;
+    context: string | null;
+    market: Record<string, number | null> | null;
     metrics: {
       pnlPct: number | null;
       feesUsd: number | null;
@@ -329,6 +355,8 @@ function buildLessonEvent(lesson: SharedLesson): LessonEvent | null {
   const rule = sanitizeText(lesson?.rule, 400);
   if (!rule) return null;
   const sourceType = sanitizeText(lesson.sourceType || inferLessonSourceType(lesson), 24) || "manual";
+  const market = buildMarketFields(lesson);
+  const context = sanitizeText(lesson?.context, 600);
   return {
     eventId: `lesson:${getAgentId()}:${lesson.id || randomUUID()}`,
     agentId: getAgentId(),
@@ -344,6 +372,8 @@ function buildLessonEvent(lesson: SharedLesson): LessonEvent | null {
       confidence: Number.isFinite(Number(lesson.confidence)) ? Number(lesson.confidence) : null,
       pool: sanitizeText((lesson as any).pool || "", 64) || null,
       pinned: !!(lesson as any).pinned,
+      context: context || null,
+      market,
       metrics: {
         pnlPct: Number.isFinite(Number((lesson as any).pnl_pct)) ? Number((lesson as any).pnl_pct) : null,
         feesUsd: Number.isFinite(Number((lesson as any).fees_earned_usd)) ? Number((lesson as any).fees_earned_usd) : null,
@@ -406,6 +436,12 @@ interface PerformanceEvent {
   fees_earned_sol?: number;
   minutes_held?: number;
   recorded_at?: string;
+  entry_mcap?: number | string | null;
+  entry_tvl?: number | string | null;
+  entry_volume?: number | string | null;
+  exit_mcap?: number | string | null;
+  exit_tvl?: number | string | null;
+  exit_volume?: number | string | null;
 }
 
 export async function pushHivePerformanceEvent(perf: PerformanceEvent): Promise<any> {
@@ -430,6 +466,7 @@ export async function pushHivePerformanceEvent(perf: PerformanceEvent): Promise<
           feesSol: Number(perf.fees_earned_sol || 0),
           minutesHeld: Number(perf.minutes_held || 0),
           countInAdjustedWinRate: shouldCountInAdjustedWinRate(perf.close_reason),
+          market: buildMarketFields(perf),
         },
       },
     });

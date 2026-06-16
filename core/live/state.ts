@@ -261,7 +261,7 @@ export function queueLivePeakConfirmation(
     pos.pending_peak_pnl_pct = null;
     pos.pending_peak_started_at = null;
     save(state);
-    log("state", `Live position ${position_address} peak PnL accepted at ${candidatePnlPct.toFixed(2)}% from relay poll`);
+    log("state", `Live position ${position_address} peak PnL accepted at ${candidatePnlPct.toFixed(2)}% from rpc poll`);
     return true;
   }
 
