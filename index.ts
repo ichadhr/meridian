@@ -74,11 +74,13 @@ import {
   buildConfigSnapshotInput,
 } from "./interfaces/index.js";
 import { buildPrompt } from "./cli/format.js";
-import { renderSettingsMenu, settingButton, settingValue, type AnyObj } from "./cli/menu.js";
+import { attachRepl, DEPLOY, parseConfigValue, formatCandidates, setLatestCandidates, getLatestCandidatesMeta, describeLatestCandidates, sessionHistory, appendHistory, launchCron } from "./cli/repl.js";
+import { renderSettingsMenu, settingButton, settingValue, type AnyObj } from "./interfaces/telegram/menu.js";
+import { telegramHandler, showSettingsMenu, applySettingsMenuCallback } from "./interfaces/telegram/handlers.js";
 
 // ── Type helpers ──────────────────────────────────────────────
 
-interface TelegramMessage {
+export interface TelegramMessage {
   text?: string;
   isCallback?: boolean;
   callbackData?: string;
@@ -120,8 +122,6 @@ if (isMain) {
 }
 
 const TP_PCT: number = config.management.takeProfitPct;
-const DEPLOY: number = config.management.deployAmountSol;
-
 // ═══════════════════════════════════════════
 //  GRACEFUL SHUTDOWN
 // ═══════════════════════════════════════════
@@ -168,170 +168,21 @@ async function shutdown(signal: string): Promise<void> {
 process.on("SIGINT", () => shutdown("SIGINT"));
 process.on("SIGTERM", () => shutdown("SIGTERM"));
 
-// ═══════════════════════════════════════════
-//  FORMAT CANDIDATES TABLE
-// ═══════════════════════════════════════════
-function formatCandidates(candidates: any[]): string {
-  if (!candidates.length) return "  No eligible pools found right now.";
 
-  const lines: string[] = candidates.map((p: any, i: number) => {
-    const name = (p.name || "unknown").padEnd(20);
-    const ftvl = `${p.fee_active_tvl_ratio ?? p.fee_tvl_ratio}%`.padStart(8);
-    const vol = `$${((p.volume_window || 0) / 1000).toFixed(1)}k`.padStart(8);
-    const active = `${p.active_pct}%`.padStart(6);
-    const org = String(p.organic_score).padStart(4);
-    return `  [${i + 1}]  ${name}  fee/aTVL:${ftvl}  vol:${vol}  in-range:${active}  organic:${org}`;
-  });
-
-  return [
-    "  #   pool                  fee/aTVL     vol    in-range  organic",
-    "  " + "─".repeat(68),
-    ...lines,
-  ].join("\n");
-}
 
 // ═══════════════════════════════════════════
 //  INTERACTIVE REPL
 // ═══════════════════════════════════════════
 const isTTY: boolean = process.stdin.isTTY;
-let busy: boolean = false;
-const _telegramQueue: TelegramMessage[] = []; // queued messages received while agent was busy
-const sessionHistory: AnyObj[] = []; // persists conversation across REPL turns
-const MAX_HISTORY: number = 20;    // keep last 20 messages (10 exchanges)
+export let busy: boolean = false;
+const _telegramQueue: TelegramMessage[] = [];
 let _ttyInterface: readline.Interface | null = null;
-let _latestCandidates: any[] = [];
-let _latestCandidatesAt: string | null = null;
 
-function setLatestCandidates(candidates: any[] = []): void {
-  _latestCandidates = Array.isArray(candidates) ? candidates : [];
-  _latestCandidatesAt = new Date().toISOString();
-}
-
-function getLatestCandidatesMeta(): { candidates: any[]; count: number; updatedAt: string | null } {
-  return {
-    candidates: _latestCandidates,
-    count: _latestCandidates.length,
-    updatedAt: _latestCandidatesAt,
-  };
-}
-
-function describeLatestCandidates(limit: number = 5): string {
-  if (!_latestCandidates.length) return "No cached candidates yet. Run /screen first.";
-  const lines: string[] = _latestCandidates.slice(0, limit).map((pool: any, i: number) => {
-    const feeTvl = pool.fee_active_tvl_ratio ?? pool.fee_tvl_ratio ?? "?";
-    const vol = pool.volume_window ?? pool.volume_24h ?? "?";
-    const active = pool.active_pct ?? "?";
-    const organic = pool.organic_score ?? "?";
-    return `${i + 1}. ${pool.name} | fee/aTVL ${feeTvl}% | vol $${vol} | in-range ${active}% | organic ${organic}`;
-  });
-  const age: string = _latestCandidatesAt ? new Date(_latestCandidatesAt).toLocaleString("en-US", { hour12: false }) : "unknown";
-  return `Latest candidates (${_latestCandidates.length}) — updated ${age}\n\n${lines.join("\n")}`;
-}
+export function setBusy(v: boolean): void { busy = v; }
 
 
 
-function parseConfigValue(raw: any): any {
-  const value: string = String(raw ?? "").trim();
-  if (!value.length) return "";
-  if (/^(true|false)$/i.test(value)) return value.toLowerCase() === "true";
-  if (/^null$/i.test(value)) return null;
-  if (/^-?\d+(\.\d+)?$/.test(value)) return Number(value);
-  if ((value.startsWith("[") && value.endsWith("]")) || (value.startsWith("{") && value.endsWith("}"))) {
-    return JSON.parse(value);
-  }
-  return value;
-}
-
-async function showSettingsMenu({ messageId = null, page = "main" }: { messageId?: number | null; page?: string } = {}): Promise<void> {
-  const menu = renderSettingsMenu(page);
-  if (messageId) {
-    await editMessageWithButtons(menu.text, messageId, menu.keyboard);
-  } else {
-    await sendMessageWithButtons(menu.text, menu.keyboard);
-  }
-}
-
-function normalizeMenuValue(key: string, raw: any): any {
-  if (key === "indicatorIntervals") {
-    if (raw === "both") return ["5_MINUTE", "15_MINUTE"];
-    return [raw];
-  }
-  return parseConfigValue(raw);
-}
-
-async function applySettingsMenuCallback(msg: TelegramMessage): Promise<void> {
-  const data: string = msg.callbackData || msg.text || "";
-  const parts: string[] = data.split(":");
-  const action: string = parts[1];
-  let page: string = "main";
-
-  if (action === "noop") {
-    await answerCallbackQuery(msg.callbackQueryId!);
-    return;
-  }
-  if (action === "close") {
-    await answerCallbackQuery(msg.callbackQueryId!, "Closed");
-    await editMessage("Settings menu closed.", msg.messageId!);
-    return;
-  }
-  if (action === "show") {
-    await answerCallbackQuery(msg.callbackQueryId!);
-    await editMessageWithButtons(formatConfigSnapshot(buildConfigSnapshotInput(config, isHiveMindEnabled())), msg.messageId!, [[settingButton("Back", "cfg:page:main")]]);
-    return;
-  }
-  if (action === "page") {
-    page = parts[2] || "main";
-    await answerCallbackQuery(msg.callbackQueryId!);
-    await showSettingsMenu({ messageId: msg.messageId!, page });
-    return;
-  }
-
-  const key: string = parts[2];
-  let value: any;
-  if (action === "toggle") {
-    value = !Boolean(settingValue(key));
-  } else if (action === "step") {
-    const current: number = Number(settingValue(key));
-    const delta: number = Number(parts[3]);
-    if (!Number.isFinite(current) || !Number.isFinite(delta)) {
-      await answerCallbackQuery(msg.callbackQueryId!, "Invalid setting");
-      return;
-    }
-    value = Number((current + delta).toFixed(4));
-    if (key === "maxPositions") value = Math.max(1, Math.round(value));
-    if (key === "rsiLength") value = Math.max(2, Math.round(value));
-    if (key === "repeatDeployCooldownTriggerCount") value = Math.max(1, Math.round(value));
-    if (key === "repeatDeployCooldownHours") value = Math.max(0, Math.round(value));
-    if (key === "repeatDeployCooldownMinFeeEarnedPct") value = Math.max(0, value);
-    if (["minBinsBelow", "maxBinsBelow", "defaultBinsBelow"].includes(key)) value = Math.max(35, Math.round(value));
-    if (["deployAmountSol", "gasReserve", "maxDeployAmount"].includes(key)) value = Math.max(0, value);
-  } else if (action === "set") {
-    value = normalizeMenuValue(key, parts.slice(3).join(":"));
-  } else {
-    await answerCallbackQuery(msg.callbackQueryId!, "Unknown action");
-    return;
-  }
-
-  const result: any = await executeTool("update_config", {
-    changes: { [key]: value },
-    reason: "Telegram settings menu",
-  });
-  if (!result?.success) {
-    await answerCallbackQuery(msg.callbackQueryId!, "Config update failed");
-    return;
-  }
-  page = key.startsWith("indicator") || key === "chartIndicatorsEnabled" || key === "rsiLength" || key === "requireAllIntervals"
-    ? "indicators"
-    : ["useDiscordSignals", "blockPvpSymbols", "strategy", "minBinsBelow", "maxBinsBelow", "defaultBinsBelow", "managementIntervalMin", "screeningIntervalMin"].includes(key)
-      ? "screen"
-      : "risk";
-  await answerCallbackQuery(msg.callbackQueryId!, `Updated ${key}`);
-  await showSettingsMenu({ messageId: msg.messageId!, page });
-}
-
-
-
-async function runDeterministicScreen(limit: number = 5): Promise<string> {
+export async function runDeterministicScreen(limit: number = 5): Promise<string> {
   const top: any = await getTopCandidates({ limit });
   const candidates: any[] = (top?.candidates || top?.pools || []).slice(0, limit);
   setLatestCandidates(candidates);
@@ -351,12 +202,13 @@ async function runDeterministicScreen(limit: number = 5): Promise<string> {
     : "No candidates available right now.";
 }
 
-async function deployLatestCandidate(index: number): Promise<{ result: any; candidate: any; deployAmount: number; binsBelow: number }> {
-  const candidate: any = _latestCandidates[index];
+export async function deployLatestCandidate(index: number): Promise<{ result: any; candidate: any; deployAmount: number; binsBelow: number }> {
+  const meta = getLatestCandidatesMeta();
+  const candidate: any = meta.candidates[index];
   if (!candidate) {
     throw new Error("Invalid candidate index. Run /screen first.");
   }
-  if (_latestCandidates.length === 1) {
+  if (meta.candidates.length === 1) {
     const mint: string | null = candidate.base?.mint || candidate.base_mint || null;
     const [smartWallets, narrative, tokenInfo] = await Promise.allSettled([
       checkSmartWalletsOnPool({ pool_address: candidate.pool }),
@@ -407,324 +259,13 @@ async function deployLatestCandidate(index: number): Promise<{ result: any; cand
   return { result, candidate, deployAmount, binsBelow };
 }
 
-function appendHistory(userMsg: string, assistantMsg: string): void {
-  sessionHistory.push({ role: "user", content: userMsg });
-  sessionHistory.push({ role: "assistant", content: assistantMsg });
-  // Trim to last MAX_HISTORY messages
-  if (sessionHistory.length > MAX_HISTORY) {
-    sessionHistory.splice(0, sessionHistory.length - MAX_HISTORY);
-  }
-}
-
-function refreshPrompt(): void {
+export function refreshPrompt(): void {
   if (!_ttyInterface) return;
   _ttyInterface.setPrompt(buildPrompt());
   _ttyInterface.prompt(true);
 }
 
-async function drainTelegramQueue(): Promise<void> {
-  while (_telegramQueue.length > 0 && !managementBusy && !screeningBusy && !busy) {
-    const queued: TelegramMessage | undefined = _telegramQueue.shift();
-    if (queued) {
-      await telegramHandler(queued);
-    }
-  }
-}
 
-async function telegramHandler(msg: TelegramMessage): Promise<void> {
-  const text: string | undefined = msg?.text?.trim().split("@")[0];
-  if (!text) return;
-  if (msg?.isCallback && text.startsWith("cfg:")) {
-    try {
-      await applySettingsMenuCallback(msg);
-    } catch (e) {
-      await answerCallbackQuery(msg.callbackQueryId!, toError(e).message).catch(() => {});
-    }
-    return;
-  }
-  if (text === "/settings" || text === "/menu" || text === "/configmenu") {
-    await showSettingsMenu().catch((e: Error) => sendMessage(`Settings error: ${e.message}`).catch(() => {}));
-    return;
-  }
-  if (managementBusy || screeningBusy || busy) {
-    if (_telegramQueue.length < 5) {
-      _telegramQueue.push(msg);
-      sendMessage(formatQueued(_telegramQueue.length, text)).catch(() => {});
-    } else {
-      sendMessage(formatQueueFull()).catch(() => {});
-    }
-    return;
-  }
-
-  if (text === "/briefing") {
-    try {
-      const briefing: string = await generateBriefing();
-      await sendLongMessage(briefing);
-    } catch (e) {
-      await sendMessage(`Error: ${toError(e).message}`).catch(() => {});
-    }
-    return;
-  }
-
-  if (text === "/help") {
-    await sendMessage(formatHelpText()).catch(() => {});
-    return;
-  }
-
-  if (text === "/wallet" || text === "/status") {
-    try {
-      const [wallet, positions] = await Promise.all([getWalletBalances(), getMyPositions({ force: true })]);
-      const suffix: string = text === "/status" && positions.total_positions
-        ? `\n\nUse /positions for the numbered list.`
-        : "";
-      await sendMessage(`${formatWalletStatus(wallet, positions, {
-        solMode: config.management.solMode,
-        maxPositions: config.risk.maxPositions,
-        deployAmount: computeDeployAmount(wallet.sol),
-        dryRun: process.env.DRY_RUN === "true",
-        hiveEnabled: isHiveMindEnabled(),
-      })}${suffix}`).catch(() => {});
-    } catch (e) {
-      await sendMessage(`Error: ${toError(e).message}`).catch(() => {});
-    }
-    return;
-  }
-
-  if (text === "/config") {
-    await sendMessage(formatConfigSnapshot(buildConfigSnapshotInput(config, isHiveMindEnabled()))).catch(() => {});
-    return;
-  }
-
-  if (text === "/positions") {
-    try {
-      const { positions, total_positions }: { positions: LivePosition[]; total_positions: number } = await getMyPositions({ force: true });
-      await sendMessage(dryRunTag(formatPositions(positions, total_positions, config.management.solMode)));
-    } catch (e) { await sendMessage(`Error: ${toError(e).message}`).catch(() => {}); }
-    return;
-  }
-
-  if (text === "/vp" || text === "/vp report") {
-    try {
-      if (text === "/vp report") {
-        const records: any = await readArchive({ source: "paper", hours: 720, limit: 5000 });
-        const statsMsg: string = compileVpStats(records);
-        await sendLongMessage(statsMsg);
-
-        const html: string = await generateDryRunReport();
-        const filePath: string = path.join(path.dirname(fileURLToPath(import.meta.url)), "dry-run-report.html");
-        fs.writeFileSync(filePath, html, "utf8");
-        const sent: boolean = await sendDocument(filePath, { caption: "📄 Dry-run VP report" });
-        if (!sent) await sendMessage("❌ Failed to upload HTML report — check logs.");
-      } else {
-        const { positions }: { positions: LivePosition[] } = await getMyPositions({ force: true });
-        const vps: LivePosition[] = positions.filter((p: LivePosition) => p.position?.startsWith("vp:"));
-        await sendMessage(formatVirtualPositions(vps, config.management.solMode));
-      }
-    } catch (e) { await sendMessage(`Error: ${toError(e).message}`).catch(() => {}); }
-    return;
-  }
-
-  const poolMatch: RegExpMatchArray | null = text.match(/^\/pool\s+(\d+)$/i);
-  if (poolMatch) {
-    try {
-      const idx: number = parseInt(poolMatch[1]) - 1;
-      const { positions }: { positions: LivePosition[] } = await getMyPositions({ force: true });
-      if (idx < 0 || idx >= positions.length) { await sendMessage("Invalid number. Use /positions first."); return; }
-      const pos: LivePosition = positions[idx];
-      await sendMessage(formatPositionDetail(pos, idx, config.management.solMode));
-    } catch (e) {
-      await sendMessage(`Error: ${toError(e).message}`).catch(() => {});
-    }
-    return;
-  }
-
-  // Helper: close a position from the result of getMyPositions.
-  // Routes to closeVirtualPosition for VPs (source: "virtual") and
-  // closePosition for live on-chain positions. Returns a unified
-  // result shape so the success/failure branches work for both.
-  async function closeTelegramPosition(pos: LivePosition): Promise<any> {
-    const vpId: string | null = parseVirtualPositionAddress(pos.position);
-    if (vpId) {
-      // closeVpManual does a fresh bin fetch + computePositionPnl — the
-      // legacy computeSimpleVirtualPnl read stale `vp.current_value_usd`.
-      // Returns polymorphic pnl_usd/pnl_pct matching the current solMode.
-      return await closeVpManual(vpId, "manual close via telegram /close");
-    }
-    return await closePosition({ position_address: pos.position });
-  }
-
-  const closeMatch: RegExpMatchArray | null = text.match(/^\/close\s+(\d+)$/i);
-  if (closeMatch) {
-    try {
-      const idx: number = parseInt(closeMatch[1]) - 1;
-      const { positions }: { positions: LivePosition[] } = await getMyPositions({ force: true });
-      if (idx < 0 || idx >= positions.length) { await sendMessage("Invalid number. Use /positions first."); return; }
-      const pos: LivePosition = positions[idx];
-      await sendMessage(`Closing ${escapeMarkdown(pos.pair)}...`);
-      const result: any = await closeTelegramPosition(pos);
-      await sendMessage(dryRunTag(formatCloseResult(pos, result, config.management.solMode)));
-      if (result.success) {
-        tryStartScreening("telegram-close", true);
-      }
-    } catch (e) { await sendMessage(`Error: ${toError(e).message}`).catch(() => {}); }
-    return;
-  }
-
-  if (text === "/closeall") {
-    try {
-      const { positions }: { positions: LivePosition[] } = await getMyPositions({ force: true });
-      if (!positions.length) { await sendMessage("No open positions."); return; }
-      await sendMessage(`Closing ${positions.length} position(s)...`);
-      const results: Array<{ pair: string; success: boolean; pnl_pct?: number; error?: string; is_virtual?: boolean }> = [];
-      for (const pos of positions) {
-        try {
-          const result: any = await closeTelegramPosition(pos);
-          results.push({ pair: pos.pair, success: result.success, pnl_pct: result.pnl_pct, error: result.error, is_virtual: result.is_virtual });
-        } catch (error) {
-          results.push({ pair: pos.pair, success: false, error: toError(error).message });
-        }
-      }
-      await sendMessage(dryRunTag(formatCloseAllResult(results))).catch(() => {});
-      tryStartScreening("telegram-closeall", true);
-    } catch (e) {
-      await sendMessage(`Error: ${toError(e).message}`).catch(() => {});
-    }
-    return;
-  }
-
-  const setMatch: RegExpMatchArray | null = text.match(/^\/set\s+(\d+)\s+(.+)$/i);
-  if (setMatch) {
-    try {
-      const idx: number = parseInt(setMatch[1]) - 1;
-      const note: string = setMatch[2].trim();
-      const { positions }: { positions: LivePosition[] } = await getMyPositions({ force: true });
-      if (idx < 0 || idx >= positions.length) { await sendMessage("Invalid number. Use /positions first."); return; }
-      const pos: LivePosition = positions[idx];
-      setPositionInstruction(pos.position, note);
-      await sendMessage(formatSetNote(pos.pair, note));
-    } catch (e) { await sendMessage(`Error: ${toError(e).message}`).catch(() => {}); }
-    return;
-  }
-
-  const setCfgMatch: RegExpMatchArray | null = text.match(/^\/setcfg\s+([A-Za-z0-9_]+)\s+(.+)$/i);
-  if (setCfgMatch) {
-    try {
-      const key: string = setCfgMatch[1];
-      const value: any = parseConfigValue(setCfgMatch[2]);
-      const result: any = await executeTool("update_config", {
-        changes: { [key]: value },
-        reason: "Telegram slash command /setcfg",
-      });
-      if (!result?.success) {
-        await sendMessage(formatSetConfig(key, value, result?.unknown)).catch(() => {});
-        return;
-      }
-      await sendMessage(formatSetConfig(key, value)).catch(() => {});
-    } catch (e) {
-      await sendMessage(`Error: ${toError(e).message}`).catch(() => {});
-    }
-    return;
-  }
-
-  if (text === "/screen") {
-    try {
-      await sendMessage(await runDeterministicScreen(5)).catch(() => {});
-    } catch (e) {
-      await sendMessage(`Error: ${toError(e).message}`).catch(() => {});
-    }
-    return;
-  }
-
-  if (text === "/candidates") {
-    await sendMessage(describeLatestCandidates(5)).catch(() => {});
-    return;
-  }
-
-  const deployMatch: RegExpMatchArray | null = text.match(/^\/deploy\s+(\d+)$/i);
-  if (deployMatch) {
-    try {
-      const idx: number = parseInt(deployMatch[1]) - 1;
-      const { candidate, result, deployAmount, binsBelow } = await deployLatestCandidate(idx);
-      await sendMessage(dryRunTag(formatDeployResult(candidate, result, deployAmount, binsBelow, config.strategy.strategy))).catch(() => {});
-    } catch (e) {
-      await sendMessage(`Error: ${toError(e).message}`).catch(() => {});
-    }
-    return;
-  }
-
-  if (text === "/pause") {
-    pauseCron();
-    await sendMessage(formatPause()).catch(() => {});
-    return;
-  }
-
-  if (text === "/resume") {
-    if (!_cronStarted) {
-      resumeCron();
-      await sendMessage(formatResume(false)).catch(() => {});
-    } else {
-      await sendMessage(formatResume(true)).catch(() => {});
-    }
-    return;
-  }
-
-  if (text === "/hive" || text === "/hive pull") {
-    try {
-      const enabled: boolean = isHiveMindEnabled();
-      const agentId: string = ensureAgentId();
-      if (!enabled) {
-        await sendMessage(`HiveMind: disabled\nAgent ID: ${agentId}\nSet hiveMindApiKey to connect.`).catch(() => {});
-        return;
-      }
-      const isManualPull: boolean = text === "/hive pull";
-      const pullMode: string = getHiveMindPullMode();
-      const [registerResult, lessons, presets]: [any, any, any] = await Promise.all([
-        registerHiveMindAgent({ reason: isManualPull ? "telegram_pull" : "telegram_status" }),
-        (pullMode === "auto" || isManualPull) ? pullHiveMindLessons(12) : Promise.resolve(null),
-        (pullMode === "auto" || isManualPull) ? pullHiveMindPresets() : Promise.resolve(null),
-      ]);
-      await sendMessage([
-        "HiveMind: enabled",
-        `Agent ID: ${agentId}`,
-        `URL: ${config.hiveMind.url}`,
-        `Pull mode: ${pullMode}`,
-        `Register: ${registerResult ? "ok" : "warn"}`,
-        `Shared lessons: ${Array.isArray(lessons) ? lessons.length : (pullMode === "manual" ? "manual" : 0)}`,
-        `Presets: ${Array.isArray(presets) ? presets.length : (pullMode === "manual" ? "manual" : 0)}`,
-        isManualPull ? "Manual pull: completed" : null,
-      ].join("\n")).catch(() => {});
-    } catch (e) {
-      await sendMessage(`HiveMind error: ${toError(e).message}`).catch(() => {});
-    }
-    return;
-  }
-
-  busy = true;
-  let liveMessage: any = null;
-  try {
-    log("telegram", `Incoming: ${text}`);
-    const hasCloseIntent: boolean = /\bclose\b|\bsell\b|\bexit\b|\bwithdraw\b/i.test(text);
-    const isDeployRequest: boolean = !hasCloseIntent && /\bdeploy\b|\bopen position\b|\blp into\b|\badd liquidity\b/i.test(text);
-    const agentRole: string = isDeployRequest ? "SCREENER" : "GENERAL";
-    const agentModel = agentRole === "SCREENER" ? config.llm.screeningModel : config.llm.generalModel;
-    liveMessage = await createLiveMessage("🤖 Live Update", `Request: ${text.slice(0, 240)}`);
-    const { content }: { content: string } = await agentLoop(text, config.llm.maxSteps, sessionHistory, agentRole as any, agentModel, null, {
-      interactive: true,
-      onToolStart: async ({ name }: { name: string }) => { await liveMessage?.toolStart(name); },
-      onToolFinish: async ({ name, result, success }: { name: string; result: any; success: boolean }) => { await liveMessage?.toolFinish(name, result, success); },
-    });
-    appendHistory(text, content);
-    if (liveMessage) await liveMessage.finalize(stripThink(content));
-    else await sendLongMessage(stripThink(content));
-  } catch (e) {
-    if (liveMessage) await liveMessage.fail(toError(e).message).catch(() => {});
-    else await sendMessage(`Error: ${toError(e).message}`).catch(() => {});
-  } finally {
-    busy = false;
-    refreshPrompt();
-    drainTelegramQueue().catch(() => {});
-  }
-}
 
 
 
@@ -745,23 +286,6 @@ if (isMain && isTTY) {
       rl.prompt(true); // true = preserve current line
     }
   }, 10_000);
-
-  function launchCron(): void {
-    if (!_cronStarted) {
-      _launchCron();
-      console.log("Autonomous cycles are now running.\n");
-      rl.setPrompt(buildPrompt());
-      rl.prompt(true);
-    }
-  }
-
-  async function runBusy(fn: () => Promise<void>): Promise<void> {
-    if (busy) { console.log("Agent is busy, please wait..."); rl.prompt(); return; }
-    busy = true; rl.pause();
-    try { await fn(); }
-    catch (e) { console.error(`Error: ${toError(e).message}`); }
-    finally { busy = false; rl.setPrompt(buildPrompt()); rl.resume(); rl.prompt(); }
-  }
 
   // ── Startup: show wallet + top candidates ──
   console.log(`
@@ -802,7 +326,7 @@ if (isMain && isTTY) {
   }
 
   // Always start autonomous cycles on launch
-  launchCron();
+  launchCron(rl);
   maybeRunMissedBriefing().catch(() => { });
 
   startPolling(telegramHandler);
@@ -823,227 +347,7 @@ Commands:
 
   rl.prompt();
 
-  rl.on("line", async (line: string) => {
-    const input: string = line.trim();
-    if (!input) { rl.prompt(); return; }
-
-    // ── Number pick: deploy into pool N ─────
-    const pick: number = parseInt(input);
-    const latest: any[] = getLatestCandidatesMeta().candidates;
-    if (!isNaN(pick) && pick >= 1 && pick <= latest.length) {
-      await runBusy(async () => {
-        const pool: any = latest[pick - 1];
-        console.log(`\nDeploying ${DEPLOY} SOL into ${pool.name}...\n`);
-        const { content: reply }: { content: string } = await agentLoop(
-          `Deploy ${DEPLOY} SOL into pool ${pool.pool} (${pool.name}). Call get_active_bin first then deploy_position. Report result.`,
-          config.llm.maxSteps,
-          [],
-          "SCREENER"
-        );
-        console.log(`\n${reply}\n`);
-        launchCron();
-      });
-      return;
-    }
-
-    // ── auto: run a screening cycle ─────────
-    if (input.toLowerCase() === "auto") {
-      await runBusy(async () => {
-        console.log("\nRunning screening cycle...\n");
-        const reply = await runScreeningCycle({ silent: false, source: "cli-auto" });
-        console.log(`\n${reply || "Screening returned no result."}\n`);
-        launchCron();
-      });
-      return;
-    }
-
-    // ── go: start cron without deploying ────
-    if (input.toLowerCase() === "go") {
-      launchCron();
-      rl.prompt();
-      return;
-    }
-
-    // ── Slash commands ───────────────────────
-    if (input === "/stop") { await shutdown("user command"); return; }
-
-    if (input === "/status") {
-      await runBusy(async () => {
-        const [wallet, positions]: [any, any] = await Promise.all([getWalletBalances(), getMyPositions({ force: true })]);
-        console.log(`\nWallet: ${wallet.sol} SOL  ($ ${wallet.sol_usd})`);
-        console.log(`Positions: ${positions.total_positions}`);
-        for (const p of positions.positions) {
-          // Step 7 (meridian-wie): null in_range = "no fresh PnL".
-          const status: string = p.in_range === true ? "in-range ✓" : p.in_range === false ? "OUT OF RANGE ⚠" : "?? (no fresh PnL)";
-          console.log(`  ${p.pair.padEnd(16)} ${status}  fees: ${config.management.solMode ? "◎" : "$"}${p.unclaimed_fees_usd}`);
-        }
-        console.log();
-      });
-      return;
-    }
-
-    if (input === "/briefing") {
-      await runBusy(async () => {
-        const briefing: string = await generateBriefing();
-        console.log(`\n${briefing.replace(/<[^>]*>/g, "")}\n`);
-      });
-      return;
-    }
-
-    if (input === "/candidates") {
-      await runBusy(async () => {
-        const { candidates, total_eligible, total_screened }: any = await getTopCandidates({ limit: 5 });
-        setLatestCandidates(candidates);
-        console.log(`\nTop pools (${total_eligible} eligible from ${total_screened} screened):\n`);
-        console.log(formatCandidates(candidates));
-        console.log();
-      });
-      return;
-    }
-
-    if (input === "/thresholds") {
-      const s: any = config.screening;
-      console.log("\nCurrent screening thresholds:");
-      console.log(`  minFeeActiveTvlRatio: ${s.minFeeActiveTvlRatio}`);
-      console.log(`  minOrganic:           ${s.minOrganic}`);
-      console.log(`  minHolders:           ${s.minHolders}`);
-      console.log(`  minTvl:               ${s.minTvl}`);
-      console.log(`  maxTvl:               ${s.maxTvl}`);
-      console.log(`  minVolume:            ${s.minVolume}`);
-      console.log(`  minTokenFeesSol:      ${s.minTokenFeesSol}`);
-      console.log(`  maxBotHoldersPct:     ${s.maxBotHoldersPct}`);
-      console.log(`  maxTop10Pct:          ${s.maxTop10Pct}`);
-      console.log(`  timeframe:            ${s.timeframe}`);
-      const perf: any = getPerformanceSummary();
-      if (perf) {
-        console.log(`\n  Based on ${perf.total_positions_closed} closed positions`);
-        console.log(`  Win rate: ${perf.win_rate_pct}%  |  Avg PnL: ${perf.avg_pnl_pct}%`);
-      } else {
-        console.log("\n  No closed positions yet — thresholds are preset defaults.");
-      }
-      console.log();
-      rl.prompt();
-      return;
-    }
-
-    if (input.startsWith("/learn")) {
-      await runBusy(async () => {
-        const parts: string[] = input.split(" ");
-        const poolArg: string | null = parts[1] || null;
-
-        let poolsToStudy: any[] = [];
-
-        if (poolArg) {
-          poolsToStudy = [{ pool: poolArg, name: poolArg }];
-        } else {
-          // Fetch top 10 candidates across all eligible pools
-          console.log("\nFetching top pool candidates to study...\n");
-          const { candidates }: { candidates: any[] } = await getTopCandidates({ limit: 10 });
-          if (!candidates.length) {
-            console.log("No eligible pools found to study.\n");
-            return;
-          }
-          poolsToStudy = candidates.map((c: any) => ({ pool: c.pool, name: c.name }));
-        }
-
-        console.log(`\nStudying top LPers across ${poolsToStudy.length} pools...\n`);
-        for (const p of poolsToStudy) console.log(`  • ${p.name || p.pool}`);
-        console.log();
-
-        const poolList: string = poolsToStudy
-          .map((p: any, i: number) => `${i + 1}. ${p.name} (${p.pool})`)
-          .join("\n");
-
-        const { content: reply }: { content: string } = await agentLoop(
-          `Study top LPers across these ${poolsToStudy.length} pools by calling study_top_lpers for each:
-
-${poolList}
-
-For each pool, call study_top_lpers then move to the next. After studying all pools:
-1. Identify patterns that appear across multiple pools (hold time, scalping vs holding, win rates).
-2. Note pool-specific patterns where behaviour differs significantly.
-3. Derive 4-8 concrete, actionable lessons using add_lesson. Prioritize cross-pool patterns — they're more reliable.
-4. Summarize what you learned.
-
-Focus on: hold duration, entry/exit timing, what win rates look like, whether scalpers or holders dominate.`,
-          config.llm.maxSteps,
-          [],
-          "GENERAL"
-        );
-        console.log(`\n${reply}\n`);
-      });
-      return;
-    }
-
-    if (input === "/evolve") {
-      await runBusy(async () => {
-        const perf: any = getPerformanceSummary();
-        if (!perf || perf.total_positions_closed < 5) {
-          const needed: number = 5 - (perf?.total_positions_closed || 0);
-          console.log(`\nNeed at least 5 closed positions to evolve. ${needed} more needed.\n`);
-          return;
-        }
-        const fs: any = await import("fs");
-        const { LESSONS_FILE } = await import("./config/paths.js");
-        const lessonsData: any = JSON.parse(fs.default.readFileSync(LESSONS_FILE, "utf8"));
-        const result: any = evolveThresholds(lessonsData.performance, config);
-        if (!result || Object.keys(result.changes).length === 0) {
-          console.log("\nNo threshold changes needed — current settings already match performance data.\n");
-        } else {
-          reloadScreeningThresholds();
-          console.log("\nThresholds evolved:");
-          for (const [key, val] of Object.entries(result.changes)) {
-            console.log(`  ${key}: ${result.rationale[key]}`);
-          }
-          console.log("\nSaved to user-config.json. Applied immediately.\n");
-        }
-      });
-      return;
-    }
-
-    if (input.startsWith("/vp")) {
-      await runBusy(async () => {
-        if (input === "/vp report") {
-          console.log("\nGenerating dry-run report...\n");
-          const html: string = await generateDryRunReport();
-          const filePath: string = path.join(path.dirname(fileURLToPath(import.meta.url)), "dry-run-report.html");
-          fs.writeFileSync(filePath, html, "utf8");
-          console.log(`✅ Report saved to ${filePath}\n`);
-        } else {
-          // Use getMyPositions({force:true}) so the display has FRESH PnL
-          // (via Step 3 fresh path) and live in_range — not the stale cached
-          // fields. Filter to VPs only.
-          const { positions }: { positions: LivePosition[] } = await getMyPositions({ force: true });
-          const vps: LivePosition[] = positions.filter((p: LivePosition) => p.position?.startsWith("vp:"));
-          if (vps.length === 0) {
-            console.log("No open virtual positions.\n");
-            return;
-          }
-          const solFmt: string = config.management.solMode ? "◎" : "$";
-          for (const pos of vps) {
-            const vpId: string = pos.position.slice(3); // strip "vp:" prefix
-            const pnl: string = pos.pnl_pct != null ? `${pos.pnl_pct.toFixed(2)}%` : "?";
-            const fees: string = pos.unclaimed_fees_usd != null ? `${solFmt} ${pos.unclaimed_fees_usd.toFixed(2)}` : "?";
-            // Step 7 (meridian-wie): null in_range = "no fresh PnL".
-            const oor: string = pos.in_range === true ? "🟢 IN" : pos.in_range === false ? "🔴 OOR" : "??";
-            console.log(`  ${vpId} | ${pos.pair.padEnd(16)} | PnL: ${pnl.padStart(8)} | fees: ${fees} | ${oor}`);
-          }
-          console.log();
-        }
-      });
-      return;
-    }
-
-    // ── Free-form chat ───────────────────────
-    await runBusy(async () => {
-      log("user", input);
-      const { content }: { content: string } = await agentLoop(input, config.llm.maxSteps, sessionHistory, "GENERAL", config.llm.generalModel, null, { interactive: true });
-      appendHistory(input, content);
-      console.log(`\n${content}\n`);
-    });
-  });
-
-  rl.on("close", () => shutdown("stdin closed"));
+  attachRepl(rl, shutdown);
 
 } else if (isMain) {
   // Non-TTY: start immediately
