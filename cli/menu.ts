@@ -142,15 +142,15 @@ function renderSettingsMenu(page: string = "main"): { text: string; keyboard: An
     ];
   } else {
     rows = [
-      [toggleButton("solMode", "SOL mode")],
-      [toggleButton("lpAgentRelayEnabled", "LPA relay")],
-      [settingButton("Config editor", "cfg:editor")],
+      [toggleButton("trailingTakeProfit", "Trailing TP")],
+      [toggleButton("chartIndicatorsEnabled", "Indicators")],
+      [settingButton("Show config", "cfg:show")],
     ];
   }
 
   return {
     text: summary,
-    keyboard: [...(page !== "main" ? nav : []), ...rows, ...footer],
+    keyboard: [...nav, ...rows, ...footer],
   };
 }
 

@@ -74,7 +74,7 @@ import {
   buildConfigSnapshotInput,
 } from "./interfaces/index.js";
 import { buildPrompt } from "./cli/format.js";
-import { renderSettingsMenu, settingButton, settingValue, stepButtons, type AnyObj } from "./cli/menu.js";
+import { renderSettingsMenu, settingButton, settingValue, type AnyObj } from "./cli/menu.js";
 
 // ── Type helpers ──────────────────────────────────────────────
 
@@ -240,16 +240,6 @@ function parseConfigValue(raw: any): any {
     return JSON.parse(value);
   }
   return value;
-}
-
-function fmtSettingValue(value: any): string {
-  if (Array.isArray(value)) return value.join(",");
-  if (typeof value === "boolean") return value ? "on" : "off";
-  return String(value);
-}
-
-function toggleButton(key: string, label: string): AnyObj {
-  return settingButton(`${label}: ${fmtSettingValue(settingValue(key))}`, `cfg:toggle:${key}`);
 }
 
 async function showSettingsMenu({ messageId = null, page = "main" }: { messageId?: number | null; page?: string } = {}): Promise<void> {
