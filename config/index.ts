@@ -228,7 +228,6 @@ export const config: Config = {
     discordSignalMode: (str("discordSignalMode", "merge") as "merge" | "only"),
     avoidPvpSymbols:   bool("avoidPvpSymbols", true),
     blockPvpSymbols:   bool("blockPvpSymbols", false),
-    maxBundlePct:      num("maxBundlePct", 30),
     maxBotHoldersPct:  num("maxBotHoldersPct", 30),
     maxTop10Pct:       num("maxTop10Pct", 60),
     allowedLaunchpads: strArray("allowedLaunchpads", []),
@@ -255,7 +254,7 @@ export const config: Config = {
     repeatDeployCooldownMinFeeEarnedPct: num("repeatDeployCooldownMinFeeEarnedPct", num("repeatDeployCooldownMinFeeYieldPct", 0)),
     minVolumeToRebalance:  num("minVolumeToRebalance", 1000),
     stopLossPct:           num("stopLossPct", num("emergencyPriceDropPct", -50)),
-    takeProfitPct:         num("takeProfitPct", num("takeProfitFeePct", 5)),
+    takeProfitPct:         num("takeProfitPct", 5),
     minFeePerTvl24h:       num("minFeePerTvl24h", 7),
     minAgeBeforeYieldCheck: num("minAgeBeforeYieldCheck", 60),
     minSolToOpen:          num("minSolToOpen", 0.55),
@@ -474,7 +473,6 @@ export function reloadScreeningThresholds(): void {
     if (fresh.minTokenAgeHours  !== undefined) s.minTokenAgeHours = fresh.minTokenAgeHours as number | null;
     if (fresh.maxTokenAgeHours  !== undefined) s.maxTokenAgeHours = fresh.maxTokenAgeHours as number | null;
     if (fresh.athFilterPct      !== undefined) s.athFilterPct     = fresh.athFilterPct as number | null;
-    if (fresh.maxBundlePct      != null) s.maxBundlePct     = fresh.maxBundlePct as number;
     if (fresh.avoidPvpSymbols   !== undefined) s.avoidPvpSymbols = fresh.avoidPvpSymbols as boolean;
     if (fresh.blockPvpSymbols   !== undefined) s.blockPvpSymbols = fresh.blockPvpSymbols as boolean;
     if (fresh.maxBotHoldersPct  != null) s.maxBotHoldersPct = fresh.maxBotHoldersPct as number;

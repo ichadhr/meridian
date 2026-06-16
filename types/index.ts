@@ -27,7 +27,6 @@ export interface ScreeningConfig {
   discordSignalMode: "merge" | "only";
   avoidPvpSymbols: boolean;
   blockPvpSymbols: boolean;
-  maxBundlePct: number;
   maxBotHoldersPct: number;
   maxTop10Pct: number;
   allowedLaunchpads: string[];

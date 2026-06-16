@@ -25,7 +25,11 @@ async function loadDlmmSdk() {
 let _pnlConnection: Connection | null = null;
 export function getPnlConnection(): Connection {
   if (!_pnlConnection) {
-    _pnlConnection = new Connection(config.pnl.rpcUrl, "confirmed");
+    const rpcUrl = config.pnl.rpcUrl;
+    if (!rpcUrl || typeof rpcUrl !== "string" || rpcUrl.trim() === "") {
+      throw new Error(`RPC PnL engine requires a valid rpcUrl in config.pnl. Got: ${JSON.stringify(rpcUrl)}`);
+    }
+    _pnlConnection = new Connection(rpcUrl, "confirmed");
   }
   return _pnlConnection;
 }
