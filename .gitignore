@@ -57,3 +57,17 @@ discord-signals.json
 # Claude Code runtime lock
 .claude/scheduled_tasks.lock
 dist
+
+# Runtime data
+archives/
+meridian-log.txt
+
+# Packages
+*.tgz
+
+# Generated
+bun.lock
+user-config.json.bck
+
+# Skill docs (not committed)
+docs/superpowers/
