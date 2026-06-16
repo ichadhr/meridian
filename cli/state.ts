@@ -20,8 +20,13 @@ export interface TelegramMessage {
 export let busy: boolean = false;
 export function setBusy(v: boolean): void { busy = v; }
 
-// ── Telegram message queue ──────────────────────────────────────
-export const _telegramQueue: TelegramMessage[] = [];
+// ── Telegram message queue (with timestamp for TTL) ────────────
+export interface QueuedMessage {
+  msg: TelegramMessage;
+  queuedAt: number;
+}
+export const _telegramQueue: QueuedMessage[] = [];
+const QUEUE_TTL_MS = 10 * 60 * 1000; // 10 minutes
 
 // ── Session history (shared between CLI and Telegram) ───────────
 export const sessionHistory: any[] = [];

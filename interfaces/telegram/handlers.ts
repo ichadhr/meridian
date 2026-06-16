@@ -1,5 +1,6 @@
 import type { TelegramMessage } from "../../cli/state.js";
 import { busy, setBusy, refreshPrompt, _telegramQueue, sessionHistory, appendHistory } from "../../cli/state.js";
+import type { QueuedMessage } from "../../cli/state.js";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -149,10 +150,15 @@ async function applySettingsMenuCallback(msg: TelegramMessage): Promise<void> {
 }
 
 async function drainTelegramQueue(): Promise<void> {
+  const now = Date.now();
   while (_telegramQueue.length > 0 && !managementBusy && !screeningBusy && !busy) {
-    const queued: TelegramMessage | undefined = _telegramQueue.shift();
+    const queued: QueuedMessage | undefined = _telegramQueue.shift();
     if (queued) {
-      await telegramHandler(queued);
+      if (now - queued.queuedAt > 10 * 60 * 1000) {
+        log("telegram", `Dropped stale queued message (age >10m): ${queued.msg.text?.slice(0, 60)}`);
+        continue;
+      }
+      await telegramHandler(queued.msg);
     }
   }
 }
@@ -174,9 +180,10 @@ async function telegramHandler(msg: TelegramMessage): Promise<void> {
   }
   if (managementBusy || screeningBusy || busy) {
     if (_telegramQueue.length < 5) {
-      _telegramQueue.push(msg);
+      _telegramQueue.push({ msg, queuedAt: Date.now() });
       sendMessage(formatQueued(_telegramQueue.length, text)).catch(() => {});
     } else {
+      log("telegram", `Queue full — dropping message: ${text.slice(0, 60)}`);
       sendMessage(formatQueueFull()).catch(() => {});
     }
     return;
