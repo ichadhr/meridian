@@ -706,6 +706,6 @@ switch (subcommand) {
     break;
   }
 
-  // ── default ───────────────────────────────────────────────────────
+  default:
     die(`Unknown command: ${subcommand}. Run 'meridian help' for usage.`);
 }

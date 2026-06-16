@@ -611,11 +611,12 @@ export async function discoverPools({
 } = {}): Promise<DiscoverPoolsResult> {
   const s = config.screening as ScreeningConfig;
 
-  // Scale minVolume and minFeeActiveTvlRatio to the configured timeframe
-  // so hard filters match the LLM prompt's timeframe guidelines.
+  // Scale minVolume and minFeeActiveTvlRatio to the configured timeframe:
+  // use the MAX of the user's configured value and the timeframe floor.
+  // This ensures user-configured thresholds are never silently discarded.
   const scaled = scaleScreeningToTimeframe(s.timeframe);
-  const apiMinVolume = scaled.minVolume;
-  const apiMinFeeActiveTvlRatio = scaled.minFeeActiveTvlRatio;
+  const apiMinVolume = Math.max(scaled.minVolume, Number(s.minVolume ?? 0));
+  const apiMinFeeActiveTvlRatio = Math.max(scaled.minFeeActiveTvlRatio, Number(s.minFeeActiveTvlRatio ?? 0));
 
   const filters = [
     "base_token_has_critical_warnings=false",
