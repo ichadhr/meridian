@@ -861,6 +861,25 @@ export async function deployPosition({
 
   const totalYLamports = new BN(Math.floor(finalAmountY * 1e9));
 
+  // ── Fetch entry market data at deploy time (live only) ────
+  // Captures pool market state (MCAP, TVL, volume) when position opens,
+  // used later by HiveMind to correlate entry conditions with performance.
+  // Skipped in DRY_RUN — paper trading VPs push lessons locally, not to HiveMind.
+  let entryMarket: Record<string, number | null> = {};
+  if (process.env.DRY_RUN !== "true") {
+    const entryDetail = await fetch(
+      `https://pool-discovery-api.datapi.meteora.ag/pools?page_size=1&filter_by=${encodeURIComponent(`pool_address=${pool_address}`)}&timeframe=${encodeURIComponent(config.screening?.timeframe || "5m")}`
+    ).then((r) => r.json()).catch(() => null) as any;
+    const ep = entryDetail?.data?.[0];
+    if (ep) {
+      entryMarket = {
+        entry_mcap: parseFloat(ep?.token_x?.market_cap) || null,
+        entry_tvl: parseFloat(ep?.tvl ?? ep?.active_tvl) || null,
+        entry_volume: parseFloat(ep?.volume) || null,
+      };
+    }
+  }
+
   // ── DRY RUN: track as virtual position ─────────────────────────
   if (process.env.DRY_RUN === "true") {
     let vpId = null;
@@ -1104,6 +1123,8 @@ export async function deployPosition({
           amount_x: finalAmountX,
           active_bin: activeBin.binId,
           initial_value_usd: (solPrice > 0 ? solPrice * finalAmountY : null) as any,
+          signal_snapshot: signalSnapshot ?? undefined,
+          ...entryMarket,
         });
       }
 
@@ -1250,6 +1271,7 @@ export async function deployPosition({
       active_bin: activeBin.binId,
       initial_value_usd: (solPrice > 0 ? solPrice * finalAmountY : null) as any,
       signal_snapshot: signalSnapshot ?? undefined,
+      ...entryMarket,
     });
 
     appendDecision({
@@ -1354,6 +1376,7 @@ export async function deployPosition({
         active_bin: activeBin.binId,
         initial_value_usd: (solPrice > 0 ? solPrice * finalAmountY : null) as any,
         signal_snapshot: signalSnapshot ?? undefined,
+        ...entryMarket,
       });
 
       appendDecision({

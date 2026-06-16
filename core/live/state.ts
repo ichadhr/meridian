@@ -43,6 +43,9 @@ export interface TrackedPosition {
   organic_score?: number;
   initial_value_usd?: number;
   signal_snapshot?: unknown;
+  entry_mcap?: number | null;
+  entry_tvl?: number | null;
+  entry_volume?: number | null;
   deployed_at: string;
   out_of_range_since: string | null;
   last_claim_at: string | null;
@@ -116,6 +119,9 @@ export function trackLivePosition({
   organic_score,
   initial_value_usd,
   signal_snapshot = null,
+  entry_mcap,
+  entry_tvl,
+  entry_volume,
 }: {
   position: string;
   pool: string;
@@ -131,6 +137,9 @@ export function trackLivePosition({
   organic_score?: number;
   initial_value_usd?: number;
   signal_snapshot?: unknown;
+  entry_mcap?: number | null;
+  entry_tvl?: number | null;
+  entry_volume?: number | null;
 }): void {
   const state = load();
   state.positions[position] = {
@@ -149,6 +158,9 @@ export function trackLivePosition({
     organic_score,
     initial_value_usd,
     signal_snapshot: signal_snapshot || null,
+    entry_mcap: entry_mcap ?? null,
+    entry_tvl: entry_tvl ?? null,
+    entry_volume: entry_volume ?? null,
     deployed_at: new Date().toISOString(),
     out_of_range_since: null,
     last_claim_at: null,
