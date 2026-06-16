@@ -104,7 +104,6 @@ Sets defined in `agent.ts:6-7`. If you add a tool, also add it to the relevant s
 | timeframe | screening | "5m" |
 | category | screening | "trending" |
 | minTokenFeesSol | screening | 30 |
-| maxBundlePct | screening | 30 |
 | maxTop10Pct | screening | 60 |
 | blockedLaunchpads | screening | [] |
 | deployAmountSol | management | 0.5 |
@@ -187,7 +186,7 @@ Two signals used in `getTokenHolders()`:
 - `common_funder` — multiple wallets funded by same source
 - `funded_same_window` — multiple wallets funded in same time window
 
-**Thresholds in config**: `maxBundlePct` (default 30%), `maxTop10Pct` (default 60%)
+**Thresholds in config**: `maxTop10Pct` (default 60%)
 Jupiter audit API: `botHoldersPercentage` (5–25% is normal for legitimate tokens)
 
 ---
@@ -274,7 +273,7 @@ Agent Meridian HiveMind sync is handled by `hivemind.ts`. It uses built-in Agent
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **meridian** (2375 symbols, 5488 relationships, 203 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **meridian** (2378 symbols, 5497 relationships, 203 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > Index stale? Run `node .gitnexus/run.cjs analyze` from the project root — it auto-selects an available runner. No `.gitnexus/run.cjs` yet? `npx gitnexus analyze` (npm 11 crash → `npm i -g gitnexus`; #1939).
 

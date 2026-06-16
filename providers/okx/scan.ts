@@ -106,8 +106,7 @@ const MAX_MINTS_PER_BATCH = 50;  // CLI limit per docs
 const DEFAULT_TIMEOUT_MS = 30_000;
 const MAX_BUFFER = 10 * 1024 * 1024;
 
-// Env vars passed to the subprocess (subset of executor.ts SKILL_ENV_ALLOWLIST
-// plus OKX creds).
+// Env vars passed to the subprocess (safe base vars + OKX creds).
 const SAFE_BASE_VARS = new Set([
   "PATH", "HOME", "USER", "LOGNAME", "SHELL",
   "TMPDIR", "TEMP", "TMP",

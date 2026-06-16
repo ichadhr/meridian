@@ -153,7 +153,6 @@ In `index.ts` (~L873), when the Telegram queue is full (≥5 messages) a "Queue 
 Darwin's `evolveThresholds` in `core/lessons.ts` only touches 2 of the ~20 screening thresholds. Other good candidates for auto-evolution based on performance data:
 
 - `minBinStep` / `maxBinStep` — if certain bin steps consistently OOR
-- `maxBundlePct` — if bundled launches consistently fail
 - `maxTop10Pct` — if concentrated tokens consistently underperform
 
 **Fix:** Extend `evolveThresholds` with 2-3 more threshold targets, guarded by the same `MAX_CHANGE_PER_STEP` and `minSamples` constraints already in place.
