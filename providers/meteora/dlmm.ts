@@ -38,6 +38,7 @@ import { normalizeMint, getConnection, getWallet } from "../solana/wallet.js";
 import { getWalletBalances } from "../solana/balance.js";
 import { estimateDeployGasSol, estimateCloseGasSol, samplePriorityFee } from "../solana/gas-estimator.js";
 import { agentMeridianJson, getAgentIdForRequests, getAgentMeridianHeaders } from "../hivemind/index.js";
+import { safeNum, maybeNum, roundNum, deriveOpenPnlPct, deriveLpAgentPnlPct, getClosedPnlValue, getClosedPnlPct, resolvePerformanceSignalSnapshot, fetchRawOpenPositionsFromMeridian } from "./dlmm-pnl.js";
 
 // ─── Transaction reliability infrastructure ──────────────────
 // Priority fee + retry on transient RPC errors. Avoids lost deploys from
@@ -136,7 +137,10 @@ let _calculateSpotDistribution: any = null;
 let _calculateBidAskDistribution: any = null;
 let _calculateNormalDistribution: any = null;
 
-async function getDLMM() {
+// Exported so dlmm-bins.ts can call it for the VP distribution functions.
+// Internal callers in this file (assertRange…, deployPosition, etc.) still
+// use the un-prefixed import path below.
+export async function getDLMM() {
   if (!_DLMM) {
     const mod = await import("@meteora-ag/dlmm");
     _DLMM = mod.default;
@@ -498,7 +502,9 @@ function getDlmmInstructionDiscriminators(serialized: string): string[] {
 const poolCache = new Map();
 const poolMetadataCache = new Map();
 
-async function getPool(poolAddress: PublicKey | string): Promise<any> {
+// Exported so dlmm-bins.ts can resolve pools when fetching active bin /
+// in-range bin data.
+export async function getPool(poolAddress: PublicKey | string): Promise<any> {
   const key = poolAddress.toString();
   if (!poolCache.has(key)) {
     const { DLMM } = await getDLMM();
@@ -543,159 +549,17 @@ async function getPoolMetadata(poolAddress: PublicKey | string): Promise<any> {
   }
 }
 
-// ─── Get Active Bin ────────────────────────────────────────────
-export async function getActiveBin({ pool_address }: { pool_address: string }): Promise<{ binId: number; price: number; pricePerLamport: string }> {
-  pool_address = normalizeMint(pool_address);
-  const pool = await getPool(pool_address);
-  const activeBin = await pool.getActiveBin();
-
-  return {
-    binId: activeBin.binId,
-    price: pool.fromPricePerLamport(Number(activeBin.price)),
-    pricePerLamport: activeBin.price.toString(),
-  };
-}
-
-// 30s cache for getBinsInRange. Key = `${poolAddress}:${minBin}:${maxBin}`.
-// Deploy path must pass { skipCache: true } to read fresh bins at open.
-const BINS_IN_RANGE_CACHE_TTL_MS = 30_000;
-let _binsInRangeCache = new Map(); // key -> { data, expiresAt }
-
-export function _resetBinsInRangeCacheForTesting() {
-  _binsInRangeCache = new Map();
-}
-
-/** Test-only: pre-populate the cache to verify a subsequent call returns cached data. */
-export function _setBinsInRangeCacheForTesting(key: string, data: any, ttlMs = BINS_IN_RANGE_CACHE_TTL_MS): void {
-  _binsInRangeCache.set(key, { data, expiresAt: Date.now() + ttlMs });
-}
-
-/** Test-only: inspect current cache state. */
-export function _getBinsInRangeCacheSizeForTesting() {
-  return _binsInRangeCache.size;
-}
-
-// ─── Get Bins In Range ─────────────────────────────────────────
-export async function getBinsInRange({ pool_address, lower_bin, upper_bin, skipCache = false }: { pool_address: string; lower_bin: number; upper_bin: number; skipCache?: boolean }): Promise<any> {
-  pool_address = normalizeMint(pool_address);
-  const pool = await getPool(pool_address);
-  // Guard against swapped bounds (SDK may error or return empty if lower > upper)
-  const minBin = Math.min(lower_bin, upper_bin);
-  const maxBin = Math.max(lower_bin, upper_bin);
-  const cacheKey = `${pool_address}:${minBin}:${maxBin}`;
-
-  if (!skipCache) {
-    const cached = _binsInRangeCache.get(cacheKey);
-    if (cached && Date.now() < cached.expiresAt) {
-      log("bins_cache_hit", `key=${cacheKey}`);
-      // structuredClone protects bins from caller mutation.
-      // Pool parameters (sParameter/vParameter) contain SDK BN instances
-      // that lose their prototype on structuredClone — fetch them fresh
-      // from the pool object (already fetched above, no extra RPC).
-      const clone = structuredClone(cached.data);
-      clone.binStep = pool.lbPair.binStep;
-      clone.sParameter = pool.lbPair.parameters ?? null;
-      clone.vParameter = pool.lbPair.vParameters ?? null;
-      return clone;
-    }
-  }
-
-  const result = await pool.getBinsBetweenLowerAndUpperBound(minBin, maxBin);
-  const data = {
-    activeBin: result.activeBin,
-    // Pool parameters for swap fee calculation (needed by estimateSlippageLamports
-    // which uses SDK's swapExactInQuoteAtBin for exact parity with live close).
-    binStep: pool.lbPair.binStep,
-    sParameter: pool.lbPair.parameters ?? null,
-    vParameter: pool.lbPair.vParameters ?? null,
-    bins: result.bins.map((b: any) => {
-      // SDK sometimes returns b.price as a BN object (Q64.64 integer) and
-      // sometimes as a human-readable decimal string. Normalize to a consistent
-      // priceQ64 field so callers never have to guess the format.
-      let priceQ64 = null;
-      const rawPrice = b.price?.toString?.() ?? null;
-      // BN.isBN checks constructor.name === 'BN' which can fail across bn.js versions.
-      // Fall back to checking BN's internal structure (words array) as a robust backup.
-      if (BN.isBN(b.price) || (b.price && typeof b.price === 'object' && Array.isArray(b.price.words))) {
-        priceQ64 = b.price.toString(10);
-      } else if (rawPrice !== null) {
-        priceQ64 = decimalPriceToQ64(rawPrice).toString(10);
-      }
-      return {
-        binId: b.binId,
-        xAmount: b.xAmount?.toString?.() ?? null,
-        yAmount: b.yAmount?.toString?.() ?? null,
-        supply: b.supply?.toString?.() ?? null,
-        feeAmountXPerTokenStored: b.feeAmountXPerTokenStored?.toString?.() ?? null,
-        feeAmountYPerTokenStored: b.feeAmountYPerTokenStored?.toString?.() ?? null,
-        price: rawPrice,
-        priceQ64,
-        priceHuman: pool.fromPricePerLamport(Number(b.price)),
-      };
-    }),
-  };
-
-  // Store successful result in cache
-  _binsInRangeCache.set(cacheKey, { data, expiresAt: Date.now() + BINS_IN_RANGE_CACHE_TTL_MS });
-  return data;
-}
-
-// ─── VP Strategy Distribution ──────────────────────────────────
-// Computes per-bin Y-side BPS (basis points out of 10000) allocation for
-// virtual position deploys. Delegates to the Meteora SDK's distribution
-// functions — the same logic addLiquidityByStrategy uses on-chain — so VP
-// share allocations match what a live deploy would produce exactly.
-//
-// The SDK functions are loaded once by getDLMM() (called before this path
-// in deployPosition at line 702). They are cached in module-level vars.
-
-/**
- * Compute per-bin Y-side BPS allocation for a VP deploy.
- *
- * Delegates to Meteora SDK's calculateSpotDistribution,
- * calculateBidAskDistribution, and calculateNormalDistribution.
- * These produce the exact same BPS weights that a real
- * addLiquidityByStrategy call would use on-chain.
- *
- * @param {string} strategy   "spot" | "bid_ask" | "curve"
- * @param {number} activeBinId  The pool's current active bin ID
- * @param {number[]} binIds  Sorted array of bin IDs in the position range
- * @returns {Map<number, number>}  Map of binId → yBps (basis points, totaling ~10000)
- */
-function computeVpYDistribution(strategy: string, activeBinId: number, binIds: number[]): Map<number, number> {
-  const result = new Map();
-  if (binIds.length === 0) return result;
-
-  // Y-side bins = bins ≤ active bin (single-side SOL goes to Y side only)
-  const yBins = binIds.filter(id => id <= activeBinId);
-  if (yBins.length === 0) {
-    for (const id of binIds) result.set(id, 0);
-    return result;
-  }
-
-  let distribution;
-  if (strategy === "spot" || !strategy) {
-    distribution = _calculateSpotDistribution(activeBinId, binIds);
-  } else if (strategy === "bid_ask") {
-    distribution = _calculateBidAskDistribution(activeBinId, binIds);
-  } else if (strategy === "curve") {
-    distribution = _calculateNormalDistribution(activeBinId, binIds);
-  } else {
-    log("deploy", `VP: unknown strategy "${strategy}", falling back to spot`);
-    distribution = _calculateSpotDistribution(activeBinId, binIds);
-  }
-
-  for (const d of distribution) {
-    result.set(d.binId, Number(d.yAmountBpsOfTotal.toString()));
-  }
-
-  // X-side bins (above active) get 0 — VP only deposits Y
-  for (const id of binIds) {
-    if (!result.has(id)) result.set(id, 0);
-  }
-
-  return result;
-}
+// ─── Bin helpers (active-bin lookup, in-range bins, VP distribution) ───
+// Extracted to ./dlmm-bins.ts. Imported here so deployPosition (below) can
+// use them. Public re-exports live in providers/meteora/index.ts.
+import {
+  getActiveBin,
+  _resetBinsInRangeCacheForTesting,
+  _setBinsInRangeCacheForTesting,
+  _getBinsInRangeCacheSizeForTesting,
+  getBinsInRange,
+  computeVpYDistribution,
+} from "./dlmm-bins.js";
 
 // ─── Deploy Position ───────────────────────────────────────────
 export async function deployPosition({
@@ -896,7 +760,7 @@ export async function deployPosition({
       // calculateBidAskDistribution / calculateNormalDistribution —
       // same BPS weights a real addLiquidityByStrategy uses on-chain.
       const binIds = bins.map((b: any) => b.binId).sort((a: any, b: any) => a - b);
-      const yBpsMap = computeVpYDistribution(activeStrategy, activeBin.binId, binIds);
+      const yBpsMap = await computeVpYDistribution(activeStrategy, activeBin.binId, binIds);
 
       const binShares = bins.map((b: any) => {
         const depositBps = yBpsMap.get(b.binId) || 0;
@@ -1568,136 +1432,6 @@ export async function getPositionPnl({ pool_address, position_address }: { pool_
     log("pnl_error", error.message);
     return { error: error.message };
   }
-}
-
-function safeNum(value: any): number {
-  const n = parseFloat(value ?? 0);
-  return Number.isFinite(n) ? n : 0;
-}
-
-function maybeNum(value: any): number | null {
-  if (value == null || value === "") return null;
-  const n = parseFloat(value);
-  return Number.isFinite(n) ? n : null;
-}
-
-function roundNum(value: unknown, decimals = 4): number {
-  const n = Number(value);
-  if (!Number.isFinite(n)) return 0;
-  const factor = 10 ** decimals;
-  return Math.round(n * factor) / factor;
-}
-
-const PERFORMANCE_SIGNAL_FIELDS = [
-  "organic_score",
-  "fee_tvl_ratio",
-  "volume",
-  "mcap",
-  "holder_count",
-  "smart_wallets_present",
-  "narrative_quality",
-  "study_win_rate",
-  "hive_consensus",
-  "volatility",
-];
-
-function resolvePerformanceSignalSnapshot({ poolAddress, baseMint, tracked }: { poolAddress: string; baseMint: string; tracked: any }): Record<string, unknown> | null {
-  const staged = config.darwin?.enabled
-    ? getAndClearStagedSignals(poolAddress, baseMint)
-    : null;
-  const snapshot = {
-    ...(staged || {}),
-    ...(tracked?.signal_snapshot || {}),
-  };
-
-  if (baseMint && snapshot.base_mint == null) snapshot.base_mint = baseMint;
-  for (const field of PERFORMANCE_SIGNAL_FIELDS) {
-    if (snapshot[field] == null && tracked?.[field] != null) {
-      snapshot[field] = tracked[field];
-    }
-  }
-
-  return Object.values(snapshot).some((value) => value != null) ? snapshot : null;
-}
-
-function getClosedPnlValue(posEntry: any, solMode = false): number {
-  return solMode
-    ? maybeNum(posEntry?.pnlSol) ?? maybeNum(posEntry?.pnl?.valueNative) ?? 0
-    : maybeNum(posEntry?.pnlUsd) ?? maybeNum(posEntry?.pnl?.value) ?? 0;
-}
-
-function getClosedPnlPct(posEntry: any, solMode = false): number {
-  const reported = solMode
-    ? maybeNum(posEntry?.pnlSolPctChange) ?? maybeNum(posEntry?.pnl?.percentNative)
-    : maybeNum(posEntry?.pnlPctChange) ?? maybeNum(posEntry?.pnl?.percent);
-  if (reported != null) return reported;
-
-  const pnl = getClosedPnlValue(posEntry, solMode);
-  const deposit = solMode
-    ? maybeNum(posEntry?.allTimeDeposits?.total?.sol)
-    : maybeNum(posEntry?.allTimeDeposits?.total?.usd);
-  return deposit && deposit > 0 ? (pnl / deposit) * 100 : 0;
-}
-
-function deriveOpenPnlPct(binData: any, solMode = false): number | null {
-  if (!binData) return null;
-
-  const deposit = solMode
-    ? safeNum(binData.allTimeDeposits?.total?.sol)
-    : safeNum(binData.allTimeDeposits?.total?.usd);
-  if (deposit <= 0) return null;
-
-  const balances = solMode
-    ? safeNum(binData.unrealizedPnl?.balancesSol)
-    : safeNum(binData.unrealizedPnl?.balances);
-  const unclaimedFees = solMode
-    ? safeNum(binData.unrealizedPnl?.unclaimedFeeTokenX?.amountSol) + safeNum(binData.unrealizedPnl?.unclaimedFeeTokenY?.amountSol)
-    : safeNum(binData.unrealizedPnl?.unclaimedFeeTokenX?.usd) + safeNum(binData.unrealizedPnl?.unclaimedFeeTokenY?.usd);
-  const withdrawals = solMode
-    ? safeNum(binData.allTimeWithdrawals?.total?.sol)
-    : safeNum(binData.allTimeWithdrawals?.total?.usd);
-  const fees = solMode
-    ? safeNum(binData.allTimeFees?.total?.sol)
-    : safeNum(binData.allTimeFees?.total?.usd);
-
-  const pnl = balances + unclaimedFees + withdrawals + fees - deposit;
-  return (pnl / deposit) * 100;
-}
-
-function deriveLpAgentPnlPct(lpData: any, solMode = false): number | null {
-  if (!lpData) return null;
-  const deposit = solMode ? safeNum(lpData.inputNative) : safeNum(lpData.inputValue);
-  if (deposit <= 0) return null;
-
-  const currentValue = solMode ? safeNum(lpData.valueNative) : safeNum(lpData.value);
-  const unclaimedFees = solMode ? safeNum(lpData.unCollectedFeeNative) : safeNum(lpData.unCollectedFee);
-  const pnl = currentValue + unclaimedFees - deposit;
-  return (pnl / deposit) * 100;
-}
-
-async function fetchRawOpenPositionsFromMeridian({ walletAddress, agentId }: { walletAddress: string; agentId?: string }): Promise<any> {
-  const search = new URLSearchParams({
-    owner: walletAddress,
-    agentId: agentId || "agent-local",
-  });
-  const payload = await agentMeridianJson(`/positions/open/raw?${search.toString()}`, {
-    headers: getAgentMeridianHeaders(),
-    retry: {
-      maxElapsedMs: 30_000,
-      perAttemptTimeoutMs: 10_000,
-    },
-  });
-  const rows = Array.isArray(payload?.data) ? payload.data : [];
-  const byPosition: Record<string, any> = {};
-  for (const row of rows) {
-    const addr = row?.position || row?.id || row?.tokenId;
-    if (addr) byPosition[addr] = row;
-  }
-  return {
-    ...payload,
-    data: rows,
-    byPosition,
-  };
 }
 
 // ─── Get My Positions ──────────────────────────────────────────
