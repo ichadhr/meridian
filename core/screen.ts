@@ -22,6 +22,8 @@ import { appendDecision } from "./decision-log.js";
 import { getActiveStrategy } from "./strategy-library.js";
 import { stripThink, sanitizeUntrustedPromptText } from "../utils/text.js";
 import { screeningBusy, setScreeningBusy, screeningLastStarted, setScreeningLastStarted, timers, SCREENING_COOLDOWN_MS } from "./coordination-state.js";
+import { scanTokens } from "../providers/okx/index.js";
+import type { SafetyVerdict } from "../providers/okx/index.js";
 
 // ── Types ─────────────────────────────────────────────────────
 type AnyObj = Record<string, any>;
@@ -98,6 +100,119 @@ export function getLoneCandidateSkipReason({ pool, sw, swFailed, n, nFailed, ti 
   const smartWalletsMissing = !swFailed && smartWalletCount === 0;
   if (narrativeMissing && smartWalletsMissing) return "only candidate has no narrative and no smart-wallet confirmation";
   return null;
+}
+
+// ── Safety pre-step (OKX onchainos) ──────────────────────────
+
+export interface SafetyPreStepResult {
+  /** Filtered candidates — CRITICAL/HIGH/(optional MEDIUM)/SCAN_FAILED removed. */
+  safePassing: Candidate[];
+  /** Per-mint verdicts keyed by mint. */
+  verdictMap: Map<string, SafetyVerdict>;
+  /** Human-readable summary block for the LLM prompt. */
+  summary: string;
+  /** True when the entire pre-step failed (binary missing, network, etc.). */
+  scanFailed: boolean;
+}
+
+/**
+ * Run the OKX onchainos token-scan over all passing candidates, then
+ * hard-filter the results. CRITICAL and HIGH verdicts (and optionally
+ * MEDIUM if `config.safetyScan.dropMediumRisk`) are removed.
+ *
+ * Fail-closed: if a mint is missing from the response (native token
+ * skipped, chain unsupported, etc.) it gets a SCAN_FAILED verdict and
+ * is dropped. This is the only way to guarantee the LLM can't deploy
+ * an unscanned token.
+ *
+ * @param passing - Pre-fetched candidates (post getActiveBin)
+ * @returns Safe candidates to pass to the LLM, plus the verdict map and summary
+ */
+export async function runSafetyPreStep(passing: Candidate[]): Promise<SafetyPreStepResult> {
+  const empty: SafetyPreStepResult = {
+    safePassing: passing,
+    verdictMap: new Map(),
+    summary: "",
+    scanFailed: false,
+  };
+  if (passing.length === 0) return empty;
+
+  // Extract mints (best-effort). Candidates without a mint can't be scanned
+  // and are kept as-is (no verdict, no blocking).
+  const mintByCandidate = new Map<Candidate, string>();
+  const mints: string[] = [];
+  for (const c of passing) {
+    const mint: string | null = c.pool?.base?.mint || c.pool?.base_mint || c.ti?.mint || null;
+    if (mint) {
+      mintByCandidate.set(c, mint);
+      mints.push(mint);
+    }
+  }
+
+  if (mints.length === 0) {
+    return { ...empty, summary: "⚠️ Safety scan skipped: no mint addresses in candidates" };
+  }
+
+  log("safety_scan", `Scanning ${mints.length} mints via onchainos...`);
+
+  let verdicts: SafetyVerdict[];
+  try {
+    verdicts = await scanTokens(mints, { timeoutMs: config.safetyScan.timeoutMs });
+  } catch (err: any) {
+    log("safety_error", `onchainos scan threw: ${err?.message ?? String(err)}`);
+    return {
+      safePassing: [],   // fail-closed: block all deploys
+      verdictMap: new Map(),
+      summary: `⚠️ Safety scan failed: ${err?.message ?? String(err)}`,
+      scanFailed: true,
+    };
+  }
+
+  // Index verdicts by mint for filtering and the summary block
+  const verdictMap = new Map<string, SafetyVerdict>();
+  for (const v of verdicts) verdictMap.set(v.mint, v);
+
+  // Hard filter: drop CRITICAL, HIGH, SCAN_FAILED. Optional MEDIUM.
+  const blocked: string[] = [];
+  const kept: Candidate[] = [];
+  for (const c of passing) {
+    const mint = mintByCandidate.get(c);
+    if (!mint) {
+      // No mint available — pass through (can't scan, but no verdict either).
+      kept.push(c);
+      continue;
+    }
+    const v = verdictMap.get(mint);
+    if (!v) {
+      // No verdict returned (shouldn't happen — scanTokens fills SCAN_FAILED)
+      blocked.push(mint);
+      continue;
+    }
+    if (
+      v.riskLevel === "CRITICAL" ||
+      v.riskLevel === "HIGH" ||
+      v.riskLevel === "SCAN_FAILED" ||
+      (config.safetyScan.dropMediumRisk && v.riskLevel === "MEDIUM")
+    ) {
+      blocked.push(mint);
+    } else {
+      kept.push(c);
+    }
+  }
+
+  // Build a compact summary for the LLM prompt
+  const summaryLines: string[] = ["OKX safety scan:"];
+  for (const v of verdicts) {
+    summaryLines.push(`  ${v.mint.slice(0, 8)}…  ${v.riskLevel}  ${v.summary}`);
+  }
+  summaryLines.push(`Blocked: ${blocked.length}/${verdicts.length} (CRITICAL/HIGH/SCAN_FAILED${config.safetyScan.dropMediumRisk ? "/MEDIUM" : ""})`);
+
+  return {
+    safePassing: kept,
+    verdictMap,
+    summary: summaryLines.join("\n"),
+    scanFailed: false,
+  };
 }
 
 // ── tryStartScreening ─────────────────────────────────────────
@@ -246,7 +361,7 @@ export async function runScreeningCycle({ silent = false, source, force = false 
 
     // Hard filters
     const filteredOut: AnyObj[] = [];
-    const passing: Candidate[] = allCandidates.filter(({ pool, ti }: Candidate) => {
+    let passing: Candidate[] = allCandidates.filter(({ pool, ti }: Candidate) => {
       // Fail-closed: reject candidates without token info (required for safety filters)
       if (!ti) {
         log("screening", `Skipping ${pool.name} — token info unavailable`);
@@ -338,6 +453,26 @@ export async function runScreeningCycle({ silent = false, source, force = false 
       }
     }
 
+    // ── Safety pre-step: OKX onchainos token-scan ───────────────────────
+    // Hard-filter CRITICAL/HIGH/SCAN_FAILED mints before the LLM sees them.
+    // Run AFTER getActiveBin so the pre-fetch is complete, but BEFORE the
+    // candidate blocks are built so we don't waste formatting on dropped ones.
+    const safety = await runSafetyPreStep(passing);
+    if (safety.scanFailed && config.safetyScan.required) {
+      // Required mode + entire pre-step failed → block all deploys.
+      screenReport = `Screening aborted — required safety scan failed: ${safety.summary}`;
+      appendDecision({ type: "no_deploy", actor: "SCREENER", summary: "Safety scan failed", reason: safety.summary });
+      return screenReport;
+    }
+    if (passing.length > 0 && safety.safePassing.length === 0) {
+      // All candidates blocked by safety → no_deploy
+      screenReport = `Screening aborted — all ${passing.length} candidates blocked by safety scan.\n${safety.summary}`;
+      appendDecision({ type: "no_deploy", actor: "SCREENER", summary: "All blocked by safety scan", reason: safety.summary });
+      return screenReport;
+    }
+    // Reassign passing to the safety-filtered set
+    passing = safety.safePassing;
+
     // Build compact candidate blocks
     const candidateBlocks: string[] = passing.map(({ pool, sw, swFailed, n, nFailed, ti, mem }: Candidate, i: number) => {
       const botPct: any = ti?.audit?.bot_holders_pct ?? "?";
@@ -416,6 +551,7 @@ SCREENING CYCLE
 ${strategyBlock}
 Positions: ${prePositions.total_positions}/${config.risk.maxPositions} | SOL: ${currentBalance.sol.toFixed(3)} | Deploy: ${deployAmount} SOL
 ${weightsSummary ? `\n${weightsSummary}\n` : ""}
+${safety.summary ? `\n${safety.summary}\n` : ""}
 PRE-LOADED CANDIDATES (${passing.length} pools):
 ${candidateBlocks.join("\n\n")}
 
@@ -485,7 +621,8 @@ IMPORTANT:
 - "none" / "unavailable" / "0 present" means the tool succeeded but found nothing. This is a legitimate signal.
 - Optional tool failure alone is NOT a reason to skip a candidate.
 - Keep the whole report compact and highly scannable for Telegram.
-    `, config.llm.maxSteps, [], "SCREENER", config.llm.screeningModel, 2048, {
+     `, config.llm.maxSteps, [], "SCREENER", config.llm.screeningModel, 2048, {
+      safetyVerified: !safety.scanFailed,
       onToolStart: async ({ name }: { name: string }) => {
         if (name === "deploy_position") deployAttempted = true;
         await liveMessage?.toolStart(name);

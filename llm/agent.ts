@@ -79,9 +79,18 @@ const INTENT_PATTERNS: IntentPattern[] = [
   { intent: "lessons",     re: /\b(lesson|learned|teach|pin|unpin|clear lesson|what did you learn)\b/i },
 ];
 
-function getToolsForRole(agentType: AgentType, goal: string = ""): any[] {
+function getToolsForRole(agentType: AgentType, goal: string = "", safetyVerified: boolean = true): any[] {
   if (agentType === "MANAGER")  return tools.filter((t: any) => MANAGER_TOOLS.has(t.function.name));
-  if (agentType === "SCREENER") return tools.filter((t: any) => SCREENER_TOOLS.has(t.function.name));
+  if (agentType === "SCREENER") {
+    const screenerTools = tools.filter((t: any) => SCREENER_TOOLS.has(t.function.name));
+    // If safety pre-step failed and is required, remove deploy_position
+    // (LLM can only suggest, not deploy). The LLM will see a 🚫
+    // marker in the prompt so it knows deploys are blocked.
+    if (!safetyVerified && config.safetyScan?.required) {
+      return screenerTools.filter((t: any) => t.function.name !== "deploy_position");
+    }
+    return screenerTools;
+  }
 
   // GENERAL: match intent from goal, combine matched tool sets
   const matched = new Set<string>();
@@ -201,6 +210,13 @@ export interface AgentLoopOptions {
   interactive?: boolean;
   onToolStart?: ((event: { name: string; args: any; step: number }) => void) | null;
   onToolFinish?: ((event: { name: string; args: any; result: any; success: boolean; step: number }) => void) | null;
+  /**
+   * If false, deploy_position is removed from the SCREENER tool set
+   * (LLM can only suggest, not deploy). Used by the safety pre-step:
+   * when config.safetyScan.required and the scan fails, we block deploys.
+   * Defaults to true.
+   */
+  safetyVerified?: boolean;
 }
 
 export interface AgentLoopResult {
@@ -224,7 +240,7 @@ export async function agentLoop(
   maxOutputTokens: number | null = null,
   options: AgentLoopOptions = {},
 ): Promise<AgentLoopResult> {
-  const { interactive = false, onToolStart = null, onToolFinish = null } = options;
+  const { interactive = false, onToolStart = null, onToolFinish = null, safetyVerified = true } = options;
   // Build dynamic system prompt with current portfolio state
   const [portfolio, positions] = await Promise.all([getWalletBalances(), getMyPositions()]);
   const stateSummary = await getStateSummary();
@@ -291,7 +307,7 @@ export async function agentLoop(
           const reqParams: any = {
             model: tryModel,
             messages,
-            tools: getToolsForRole(agentType, goal),
+            tools: getToolsForRole(agentType, goal, safetyVerified),
             tool_choice: "auto",
             temperature: config.llm.temperature,
             max_tokens: tokenBudget,
