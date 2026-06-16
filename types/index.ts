@@ -164,6 +164,23 @@ export interface PnlConfig {
   depositCacheTtlSec: number;
 }
 
+export interface SafetyScanConfig {
+  /**
+   * If true, deploy_position is gated by the safety pre-step:
+   *   - Candidates that fail the scan (CRITICAL/HIGH risk or SCAN_FAILED)
+   *     are dropped before the LLM sees them.
+   *   - If the entire pre-step fails, deploy_position is removed from the
+   *     SCREENER tool set (LLM can only suggest, not deploy).
+   * If false, the pre-step still runs as a soft filter — failures are
+   * logged but candidates pass through with a warning.
+   */
+  required: boolean;
+  /** Per-call timeout for the onchainos binary in ms. */
+  timeoutMs: number;
+  /** If true, also drop MEDIUM-risk candidates. Default false. */
+  dropMediumRisk: boolean;
+}
+
 export interface GmgnConfig {
   apiKey: string | null;
   baseUrl: string;
@@ -187,6 +204,7 @@ export interface Config {
   indicators: IndicatorsConfig;
   pnl: PnlConfig;
   gmgn: GmgnConfig;
+  safetyScan: SafetyScanConfig;
 }
 
 // ─── State Summary ──────────────────────────────────────────────

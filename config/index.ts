@@ -387,6 +387,11 @@ export const config: Config = {
     maxRetries: num("gmgnMaxRetries", 2),
     feeSource: str("gmgnFeeSource", "jupiter") as "gmgn" | "jupiter",
   },
+  safetyScan: {
+    required: bool("safetyScanRequired", false),
+    timeoutMs: num("safetyScanTimeoutMs", 30_000),
+    dropMediumRisk: bool("safetyScanDropMedium", false),
+  },
 };
 
 // Deprecation warning for legacy vpSlippagePct config key.
