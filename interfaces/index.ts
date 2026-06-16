@@ -65,6 +65,10 @@ export async function notifyOutOfRange(...args: Parameters<typeof telegram.notif
   return telegram.notifyOutOfRange(...args);
 }
 
+export async function telegramHandler(...args: Parameters<typeof telegram.telegramHandler>): Promise<void> {
+  return telegram.telegramHandler(...args);
+}
+
 // --- Messaging primitives (delegate to telegram) ---
 
 export async function sendMessage(...args: Parameters<typeof telegram.sendMessage>): Promise<void> {

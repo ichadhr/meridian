@@ -1,4 +1,5 @@
-import type { TelegramMessage } from "../../index.js";
+import type { TelegramMessage } from "../../cli/state.js";
+import { busy, setBusy, refreshPrompt, _telegramQueue, sessionHistory, appendHistory } from "../../cli/state.js";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -53,10 +54,8 @@ import {
 } from "../../interfaces/index.js";
 import { renderSettingsMenu, settingButton, settingValue } from "../../interfaces/telegram/menu.js";
 import type { LivePosition } from "../../types/index.js";
-import { parseConfigValue, setLatestCandidates, getLatestCandidatesMeta, describeLatestCandidates, sessionHistory, appendHistory } from "../../cli/repl.js";
-import { busy, setBusy, refreshPrompt, runDeterministicScreen, deployLatestCandidate } from "../../index.js";
-
-let _telegramQueue: TelegramMessage[] = [];
+import { parseConfigValue, setLatestCandidates, getLatestCandidatesMeta, describeLatestCandidates } from "../../cli/repl.js";
+import { runDeterministicScreen, deployLatestCandidate } from "../../cli/orchestrate.js";
 
 // ═══════════════════════════════════════════
 //  TELEGRAM SETTINGS MENU
