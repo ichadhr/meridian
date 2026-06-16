@@ -62,13 +62,17 @@ interface Choice {
   key?: string;
 }
 
-function askChoice<T extends Choice>(question: string, choices: T[]): Promise<T> {
+function askChoice<T extends Choice>(question: string, choices: T[], defaultKey?: string): Promise<T> {
   return new Promise(async (resolve) => {
     const labels = choices.map((c, i) => `  ${i + 1}. ${c.label}`).join("\n");
     while (true) {
       console.log(`\n${question}`);
       console.log(labels);
       const raw = await ask("Enter number", "");
+      if (raw === "" && defaultKey !== undefined) {
+        const found = choices.find((c) => c.key === defaultKey);
+        if (found) { resolve(found); break; }
+      }
       const idx = parseInt(raw) - 1;
       if (idx >= 0 && idx < choices.length) { resolve(choices[idx]); break; }
       console.log("  ⚠ Invalid choice.");
@@ -93,12 +97,24 @@ function buildEnv(map: Record<string, string>): string {
 interface Preset {
   label: string;
   timeframe: string;
+  strategy: string;
   minOrganic: number;
+  minQuoteOrganic: number;
   minHolders: number;
+  minMcap: number;
   maxMcap: number;
+  minVolume: number;
+  minBinStep: number;
+  maxBinStep: number;
+  minFeeActiveTvlRatio: number;
+  minTokenFeesSol: number;
   takeProfitPct: number;
   stopLossPct: number;
   outOfRangeWaitMinutes: number;
+  positionSizePct: number;
+  maxDeployAmount: number;
+  gasReserve: number;
+  minAgeBeforeYieldCheck: number;
   managementIntervalMin: number;
   screeningIntervalMin: number;
   description: string;
@@ -108,12 +124,24 @@ const PRESETS: Record<string, Preset> = {
   degen: {
     label:                 "Degen",
     timeframe:             "30m",
+    strategy:              "bid_ask",
     minOrganic:            60,
+    minQuoteOrganic:       60,
     minHolders:            200,
+    minMcap:               100_000,
     maxMcap:               5_000_000,
+    minVolume:             300,
+    minBinStep:            80,
+    maxBinStep:            125,
+    minFeeActiveTvlRatio:  0.02,
+    minTokenFeesSol:       10,
     takeProfitPct:         10,
     stopLossPct:           -25,
     outOfRangeWaitMinutes: 15,
+    positionSizePct:       0.25,
+    maxDeployAmount:       25,
+    gasReserve:            0.3,
+    minAgeBeforeYieldCheck: 30,
     managementIntervalMin: 5,
     screeningIntervalMin:  15,
     description: "30m timeframe, pumping tokens allowed, fast cycles. High risk/reward.",
@@ -121,12 +149,24 @@ const PRESETS: Record<string, Preset> = {
   moderate: {
     label:                 "Moderate",
     timeframe:             "4h",
+    strategy:              "bid_ask",
     minOrganic:            65,
+    minQuoteOrganic:       65,
     minHolders:            500,
+    minMcap:               150_000,
     maxMcap:               10_000_000,
+    minVolume:             500,
+    minBinStep:            80,
+    maxBinStep:            125,
+    minFeeActiveTvlRatio:  0.05,
+    minTokenFeesSol:       30,
     takeProfitPct:         5,
     stopLossPct:           -15,
     outOfRangeWaitMinutes: 30,
+    positionSizePct:       0.35,
+    maxDeployAmount:       50,
+    gasReserve:            0.2,
+    minAgeBeforeYieldCheck: 60,
     managementIntervalMin: 10,
     screeningIntervalMin:  30,
     description: "4h timeframe, balanced risk/reward. Recommended for most users.",
@@ -134,12 +174,24 @@ const PRESETS: Record<string, Preset> = {
   safe: {
     label:                 "Safe",
     timeframe:             "24h",
+    strategy:              "spot",
     minOrganic:            75,
+    minQuoteOrganic:       75,
     minHolders:            1000,
+    minMcap:               200_000,
     maxMcap:               10_000_000,
+    minVolume:             1000,
+    minBinStep:            80,
+    maxBinStep:            125,
+    minFeeActiveTvlRatio:  0.1,
+    minTokenFeesSol:       50,
     takeProfitPct:         3,
     stopLossPct:           -10,
     outOfRangeWaitMinutes: 60,
+    positionSizePct:       0.50,
+    maxDeployAmount:       100,
+    gasReserve:            0.15,
+    minAgeBeforeYieldCheck: 120,
     managementIntervalMin: 15,
     screeningIntervalMin:  60,
     description: "24h timeframe, stable pools only, avoids pumps. Lower yield, lower risk.",
@@ -207,12 +259,17 @@ const telegramChatId = await ask(
 );
 
 // ─── Section 3: Preset ────────────────────────────────────────────────────────
+// Detect existing preset from config for default-key support on re-runs
+const existingPreset = Object.keys(PRESETS).find((k) => {
+  const p = PRESETS[k];
+  return e("timeframe", "") === p.timeframe && e("minOrganic", 0) === p.minOrganic;
+});
 const presetChoice = await askChoice("Select a risk preset:", [
   { label: `🔥 Degen    — ${PRESETS.degen.description}`,    key: "degen"    },
   { label: `⚖️  Moderate — ${PRESETS.moderate.description}`, key: "moderate" },
   { label: `🛡️  Safe     — ${PRESETS.safe.description}`,     key: "safe"     },
-  { label: "⚙️  Custom   — Configure every setting manually", key: "custom"  },
-]);
+  { label: "⚙️  Custom   — Configure every setting manually",  key: "custom"  },
+], existingPreset);
 
 const preset = presetChoice.key === "custom" ? null : PRESETS[presetChoice.key!];
 const p = (key: string, fallback: any): any => preset?.[key as keyof Preset] ?? e(key, fallback);
@@ -237,6 +294,18 @@ const maxPositions = await askNum(
   { min: 1, max: 10 }
 );
 
+const positionSizePct = await askNum(
+  "Position size % of wallet (0.1–1.0)",
+  p("positionSizePct", 0.35),
+  { min: 0.05, max: 1.0 }
+);
+
+const maxDeployAmount = await askNum(
+  "Max SOL per deploy",
+  p("maxDeployAmount", 50),
+  { min: 1, max: 500 }
+);
+
 const minSolToOpen = await askNum(
   "Min SOL balance to open a new position",
   e("minSolToOpen", parseFloat((deployAmountSol + 0.05).toFixed(3))),
@@ -248,6 +317,14 @@ const gasReserve = await askNum(
   e("gasReserve", 0.2),
   { min: 0.01, max: 10 }
 );
+
+const strategyChoices = [
+  { label: "bid_ask — Balanced buy/sell walls (default, most liquid pools)", key: "bid_ask" },
+  { label: "spot    — Tight range around current price", key: "spot" },
+  { label: "curve   — Multi-bin convex distribution", key: "curve" },
+];
+const strategyChoice = await askChoice("Strategy:", strategyChoices, e("strategy", "bid_ask"));
+const strategy = strategyChoice.key!;
 
 const dryRun = await askBool(
   "Dry run mode? (no real transactions)",
@@ -308,6 +385,48 @@ const maxMcap = await askNum(
   "Max token market cap USD",
   p("maxMcap", 10_000_000),
   { min: 100_000 }
+);
+
+const minMcap = await askNum(
+  "Min token market cap USD",
+  p("minMcap", 150_000),
+  { min: 0 }
+);
+
+const minVolume = await askNum(
+  "Min 24h volume USD",
+  p("minVolume", 500),
+  { min: 0 }
+);
+
+const minQuoteOrganic = await askNum(
+  "Min quote token organic score (0–100)",
+  p("minQuoteOrganic", 65),
+  { min: 0, max: 100 }
+);
+
+const minBinStep = await askNum(
+  "Min bin step (80 = tight, 125 = wide)",
+  p("minBinStep", 80),
+  { min: 1, max: 400 }
+);
+
+const maxBinStep = await askNum(
+  "Max bin step",
+  p("maxBinStep", 125),
+  { min: minBinStep, max: 400 }
+);
+
+const minFeeActiveTvlRatio = await askNum(
+  "Min fee/active TVL ratio (0.02 = 2% for 5m window)",
+  p("minFeeActiveTvlRatio", 0.05),
+  { min: 0 }
+);
+
+const minTokenFeesSol = await askNum(
+  "Min all-time token fees in SOL (anti-scam)",
+  p("minTokenFeesSol", 30),
+  { min: 0 }
 );
 
 // ─── Section 6: Exit Rules & Trailing TP ──────────────────────────────────────
@@ -376,6 +495,12 @@ const repeatDeployCooldownScope = await ask(
 const repeatDeployCooldownMinFeeEarnedPct = await askNum(
   "Repeat deploy min fee earned %",
   p("repeatDeployCooldownMinFeeEarnedPct", 0),
+  { min: 0 }
+);
+
+const minAgeBeforeYieldCheck = await askNum(
+  "Min age (minutes) before yield check on new positions",
+  p("minAgeBeforeYieldCheck", 60),
   { min: 0 }
 );
 
@@ -514,6 +639,9 @@ const userConfig: Record<string, any> = {
   rpcUrl,
   deployAmountSol,
   maxPositions,
+  positionSizePct,
+  maxDeployAmount,
+  strategy,
   minSolToOpen,
   gasReserve,
   minBinsBelow,
@@ -522,9 +650,16 @@ const userConfig: Record<string, any> = {
   timeframe,
   minTvl,
   maxTvl,
+  minMcap,
+  minVolume,
   minOrganic,
+  minQuoteOrganic,
   minHolders,
   maxMcap,
+  minBinStep,
+  maxBinStep,
+  minFeeActiveTvlRatio,
+  minTokenFeesSol,
   takeProfitPct,
   trailingTakeProfit,
   trailingTriggerPct,
@@ -536,6 +671,7 @@ const userConfig: Record<string, any> = {
   repeatDeployCooldownHours,
   repeatDeployCooldownScope,
   repeatDeployCooldownMinFeeEarnedPct,
+  minAgeBeforeYieldCheck,
   solMode,
   managementIntervalMin,
   screeningIntervalMin,
