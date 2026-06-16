@@ -209,6 +209,12 @@ Output: { count, pending, processed, signals: [{id, symbol, pool, author, channe
 ### meridian start [--dry-run]
 Starts the autonomous agent with cron jobs (management + screening).
 
+### meridian skill [add|remove|list] <target>
+Manages pluggable skill instructions and CLI binaries.
+- add <repo>: Installs a new skill (clones, runs install.sh, prompts credentials)
+- remove <name>: Uninstalls a skill
+- list: Lists all installed skills and their status
+
 ## Flags
 --dry-run     Skip all on-chain transactions
 --silent      Suppress Telegram notifications for this run
@@ -703,6 +709,27 @@ switch (subcommand) {
       strategy: flags.strategy || "spot",
       single_sided_x: argv.includes("--single-sided-x"),
     }));
+    break;
+  }
+
+  // ── skill ────────────────────────────────────────────────────────
+  case "skill": {
+    const { addSkill, removeSkill, listSkills } = await import("./scripts/skill-manager.js");
+    const positionals = argv.filter(a => !a.startsWith("-"));
+    const action = positionals[1];
+    const target = positionals[2];
+
+    if (action === "add") {
+      if (!target) die("Usage: meridian skill add <repo>");
+      await addSkill(target);
+    } else if (action === "remove") {
+      if (!target) die("Usage: meridian skill remove <name>");
+      removeSkill(target);
+    } else if (action === "list") {
+      listSkills();
+    } else {
+      die("Unknown action. Usage: meridian skill [add|remove|list]");
+    }
     break;
   }
 

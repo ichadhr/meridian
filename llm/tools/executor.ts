@@ -41,7 +41,7 @@ import {
   checkSmartWalletsOnPool,
   getRecentDecisions,
 } from "../../core/index.js";
-import { getInstalledSkillBinaries, getBinaryPath, getSkillsForCycle, loadCredentials } from "../skill-loader.js";
+import { getSkillsForCycle, loadCredentials, recordSafetyExecution } from "../skill-loader.js";
 import { swapToken } from "../../providers/jupiter/index.js";
 import { getWalletBalances } from "../../providers/solana/index.js";
 import { studyTopLPers } from "./study.js";
@@ -437,37 +437,59 @@ const toolMap: Record<string, ToolFn> = {
     return { error: "invalid mode" };
   },
   execute_skill: async (args: Record<string, unknown>): Promise<ToolResult> => {
+    const skillName = args.skill as string;
     const command = args.command as string;
+    if (!skillName) return { error: "skill is required" };
     if (!command) return { error: "command is required" };
 
+    // Verify skill exists
+    const { getSkillByName, verifySkillChecksum } = await import("../skill-loader.js");
+    const skill = getSkillByName(skillName);
+    if (!skill) {
+      return { error: `Skill '${skillName}' not found. Install with: npx skills add <owner/repo>` };
+    }
+
+    // Verify skill integrity (SKILL.md hasn't been tampered with)
+    const integrity = verifySkillChecksum(skillName);
+    if (!integrity.valid) {
+      log("skill_warn", `Integrity check failed for ${skillName}: ${integrity.reason}`);
+      return { error: `Skill integrity check failed: ${integrity.reason}. Reinstall with: npx skills add <owner/repo>` };
+    }
+
+    // Build env for this skill
+    const env = buildSkillEnv(skillName);
+
+    // Split command into binary + args — no shell involved
     const parts = command.trim().split(/\s+/);
     const binary = parts[0];
-    const allowedBinaries = getInstalledSkillBinaries();
-    if (!allowedBinaries.includes(binary)) {
-      return { error: `Binary '${binary}' not allowed or not installed.` };
-    }
+    const cmdArgs = parts.slice(1);
 
-    const binaryPath = getBinaryPath(binary);
-    if (!binaryPath) {
-      return { error: `Binary path for '${binary}' could not be resolved.` };
-    }
+    if (!binary) return { error: "command must include a binary name as the first token" };
+
+    log("skill_exec", `Running: ${command} (skill: ${skillName})`);
 
     try {
-      let runBinary = binaryPath;
-      let runArgs = parts.slice(1);
-      if (binaryPath.endsWith(".js")) {
-        runBinary = process.execPath;
-        runArgs = [binaryPath, ...runArgs];
-      }
-      const { stdout } = await execFileAsync(runBinary, runArgs, {
-        timeout: 15_000,
-        env: buildSkillEnv(binary),
-        maxBuffer: 10 * 1024 * 1024
+      const { stdout, stderr } = await execFileAsync(binary, cmdArgs, {
+        timeout: 30_000,
+        env,
+        maxBuffer: 10 * 1024 * 1024,
       });
+
+      // Record safety execution if this is a safety skill
+      const { getSkillsForCycle, recordSafetyExecution } = await import("../skill-loader.js");
+      const safetySkills = getSkillsForCycle("safety");
+      if (safetySkills.some((s) => s.name === skillName)) {
+        // Try to extract mint from command for tracking
+        const mintMatch = command.match(/(?:--tokens?\s+)?solana:([A-Za-z0-9]+)/);
+        if (mintMatch) {
+          recordSafetyExecution(skillName, mintMatch[1]);
+        }
+      }
+
       try {
         return JSON.parse(stdout);
       } catch {
-        return { success: true, stdout };
+        return { success: true, stdout, stderr };
       }
     } catch (err: any) {
       return { success: false, error: err.message, stdout: err.stdout, stderr: err.stderr };
@@ -865,33 +887,11 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
   }
 }
 
-async function executeSkillCommand(command: string): Promise<any> {
-  const parts = command.trim().split(/\s+/);
-  const binary = parts[0];
-  const binaryPath = getBinaryPath(binary);
-  if (!binaryPath) return null;
-
-  try {
-    let runBinary = binaryPath;
-    let runArgs = parts.slice(1);
-    if (binaryPath.endsWith(".js")) {
-      runBinary = process.execPath;
-      runArgs = [binaryPath, ...runArgs];
-    }
-    const { stdout } = await execFileAsync(runBinary, runArgs, {
-      timeout: 15_000,
-      env: buildSkillEnv(binary),
-      maxBuffer: 10 * 1024 * 1024
-    });
-    return JSON.parse(stdout);
-  } catch (err: any) {
-    log("error", `Safety skill execution failed: ${err.message}`);
-    return null;
-  }
-}
-
 /**
  * Run safety checks before executing write operations.
+ * Uses the standard skill model: SKILL.md instructions are injected into prompt,
+ * LLM reads them and calls execute_skill with the appropriate command.
+ * This function checks if required safety skills ran recently.
  */
 async function runSafetyChecks(name: string, args: Record<string, unknown>): Promise<SafetyCheckResult> {
   switch (name) {
@@ -899,63 +899,24 @@ async function runSafetyChecks(name: string, args: Record<string, unknown>): Pro
       const poolThresholds = await validateDeployPoolThresholds(args);
       if (!poolThresholds.pass) return poolThresholds;
 
-      // Pluggable safety skills (e.g. okx-security check-token <mint_address>)
-      if (process.env.DRY_RUN === "true") {
-        log("safety_skip", "DRY_RUN — Safety skills check bypassed");
-      } else if (!args.base_mint) {
-        log("safety_skip", "base_mint not provided — Safety skills check bypassed");
-      } else {
-        const safetySkills = getSkillsForCycle("safety");
-        for (const skill of safetySkills) {
-          if (!skill.binaryPath) continue;
+      // Check if required safety skills ran recently
+      if (args.base_mint) {
+        const mint = args.base_mint as string;
+        const { getRequiredDeploySkills, checkSafetyExecution } = await import("../skill-loader.js");
+        const requiredSkills = getRequiredDeploySkills();
 
-          let pattern = "{binary} check-token {mint}";
-          const skillJsonPath = path.join(skill.dirPath, "skill.json");
-          if (fs.existsSync(skillJsonPath)) {
-            try {
-              const sj = JSON.parse(fs.readFileSync(skillJsonPath, "utf8"));
-              if (sj.securityCommandPattern) {
-                pattern = sj.securityCommandPattern;
-              } else if (sj.commands && sj.commands.security) {
-                pattern = sj.commands.security;
-              }
-            } catch {}
-          }
+        if (requiredSkills.length > 0) {
+          const safetyTtl = config.screening.safetyTtlMinutes ?? 10;
+          const hasRecentScan = checkSafetyExecution(mint, safetyTtl);
 
-          const cmd = pattern
-            .replace("{binary}", skill.name)
-            .replace("{mint}", args.base_mint as string);
-
-          log("safety_check", `Running safety check via skill '${skill.name}': ${cmd}`);
-          try {
-            const result = await executeSkillCommand(cmd);
-            if (result) {
-              const isHoneypot = result.is_honeypot === true || result.honeypot === true;
-              const maxRugCount = config.screening.maxDevRugCount ?? 2;
-              const rugCount = result.dev_rug_count ?? 0;
-              const isRug = result.is_rug === true || result.rug === true || rugCount >= maxRugCount;
-
-              if (isHoneypot) {
-                return {
-                  pass: false,
-                  reason: `Token ${(args.base_mint as string).slice(0, 8)} flagged as honeypot by skill '${skill.name}'. Refusing deploy.`,
-                };
-              }
-              if (isRug) {
-                return {
-                  pass: false,
-                  reason: `Token ${(args.base_mint as string).slice(0, 8)} flagged as rug risk (${rugCount} rugs) by skill '${skill.name}'. Refusing deploy.`,
-                };
-              }
-            }
-          } catch (err: any) {
-            log("warn", `Safety skill '${skill.name}' failed: ${err.message}`);
-            if (config.screening.okxFailClosed) {
-              return {
-                pass: false,
-                reason: `Safety skill '${skill.name}' execution failed: ${err.message} (failClosed=true). Refusing deploy.`,
-              };
-            }
+          if (!hasRecentScan) {
+            // Safety skill hasn't run recently — refuse deploy
+            // The LLM should run execute_skill with the safety skill first
+            const skillNames = requiredSkills.map((s) => s.name).join(", ");
+            return {
+              pass: false,
+              reason: `Required safety skill(s) [${skillNames}] have not been run for this token. Run execute_skill with the safety skill before deploying.`,
+            };
           }
         }
       }

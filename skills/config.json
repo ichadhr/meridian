@@ -1,0 +1,10 @@
+{
+  "onchainos": {
+    "cycles": [
+      "screening",
+      "management",
+      "safety"
+    ],
+    "enabled": true
+  }
+}

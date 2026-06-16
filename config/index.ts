@@ -238,6 +238,7 @@ export const config: Config = {
     athFilterPct:       optNum("athFilterPct"),
     maxDevRugCount:     num("maxDevRugCount", 2),
     okxFailClosed:      bool("okxFailClosed", false),
+    safetyTtlMinutes:   num("safetyTtlMinutes", 10),
   },
 
   // ─── Position Management ────────────────
@@ -373,6 +374,19 @@ export const config: Config = {
       exitMinAgeMinutes: typeof ic.exitMinAgeMinutes === "number" ? ic.exitMinAgeMinutes : 20,
     };
   })(),
+  pnl: {
+    rpcUrl: str("pnlRpcUrl", process.env.RPC_URL ?? ""),
+    source: str("pnlSource", "meteora") as "rpc" | "meteora",
+    pollIntervalSec: num("pnlPollIntervalSec", 10),
+    depositCacheTtlSec: num("pnlDepositCacheTtlSec", 300),
+  },
+  gmgn: {
+    apiKey: nonEmptyString(u.gmgnApiKey, process.env.GMGN_API_KEY) ?? null,
+    baseUrl: str("gmgnBaseUrl", "https://openapi.gmgn.ai"),
+    requestDelayMs: num("gmgnRequestDelayMs", 2500),
+    maxRetries: num("gmgnMaxRetries", 2),
+    feeSource: str("gmgnFeeSource", "jupiter") as "gmgn" | "jupiter",
+  },
 };
 
 // Deprecation warning for legacy vpSlippagePct config key.

@@ -1,4 +1,5 @@
 import { config } from "../config/index.js";
+import { getSkillsForCycle } from "./skill-loader.js";
 
 type AgentType = "SCREENER" | "MANAGER" | "GENERAL";
 
@@ -15,6 +16,23 @@ export function buildSystemPrompt(
 ): string {
   const s = config.screening;
 
+  const cycleMap = {
+    SCREENER: "screening",
+    MANAGER: "management",
+    GENERAL: "general",
+  };
+  const cycle = cycleMap[agentType] || "general";
+  const skills = getSkillsForCycle(cycle);
+  let skillsPrompt = "";
+  if (skills.length > 0) {
+    skillsPrompt = `\n═══════════════════════════════════════════\n ACTIVE SKILLS & INSTRUCTIONS\n═══════════════════════════════════════════\n`;
+    for (const skill of skills) {
+      if (skill.body) {
+        skillsPrompt += `\n[SKILL: ${skill.name}]\n${skill.body}\n`;
+      }
+    }
+  }
+
   if (agentType === "MANAGER") {
     const portfolioCompact = JSON.stringify(portfolio);
     const mgmtConfig = JSON.stringify(config.management);
@@ -30,7 +48,7 @@ BEHAVIORAL CORE:
 2. GAS EFFICIENCY: close_position costs gas — only close for clear reasons. After close, swap_token is MANDATORY for any token worth >= $0.10 (dust < $0.10 = skip). Always check token USD value before swapping.
 3. DATA-DRIVEN AUTONOMY: You have full autonomy. Guidelines are heuristics.
 
-${lessons ? `LESSONS LEARNED:\n${lessons}\n` : ""}Timestamp: ${new Date().toISOString()}
+${lessons ? `LESSONS LEARNED:\n${lessons}\n` : ""}${skillsPrompt}Timestamp: ${new Date().toISOString()}
 `;
   }
 
@@ -139,7 +157,7 @@ DEPLOY RULES:
 - Bin steps must be [80-125].
 - Pick ONE pool only when conviction is real. If only one weak candidate survives, skip and explain why none qualify.
 
-${weightsSummary ? `${weightsSummary}\nPrioritize candidates whose strongest attributes align with high-weight signals.\n\n` : ""}${lessons ? `LESSONS LEARNED:\n${lessons}\n` : ""}${virtualDigest ? `\n── VIRTUAL POSITION DIGEST ──\n${virtualDigest}\n` : ""}Timestamp: ${new Date().toISOString()}
+${weightsSummary ? `${weightsSummary}\nPrioritize candidates whose strongest attributes align with high-weight signals.\n\n` : ""}${lessons ? `LESSONS LEARNED:\n${lessons}\n` : ""}${virtualDigest ? `\n── VIRTUAL POSITION DIGEST ──\n${virtualDigest}\n` : ""}${skillsPrompt}Timestamp: ${new Date().toISOString()}
 `;
   } else if (type === "MANAGER") {
     basePrompt += `
@@ -176,5 +194,5 @@ PVP RULE: Treat \`pvp: HIGH\` as a major negative. It means another mint with th
 `;
   }
 
-  return basePrompt + `\nTimestamp: ${new Date().toISOString()}\n`;
+  return basePrompt + skillsPrompt + `\nTimestamp: ${new Date().toISOString()}\n`;
 }

@@ -1157,6 +1157,27 @@ Blacklisted tokens are filtered BEFORE the LLM even sees pool candidates.`,
       }
     }
   },
+  {
+    type: "function",
+    function: {
+      name: "execute_skill",
+      description: "Execute an installed skill command binary. Runs safety checks, scans, or other external vendor CLI logic.",
+      parameters: {
+        type: "object",
+        properties: {
+          skill: {
+            type: "string",
+            description: "The name of the installed skill (e.g. 'onchainos', 'gmgn-token')."
+          },
+          command: {
+            type: "string",
+            description: "The command to execute (e.g. 'onchainos security token-scan --tokens solana:{mint}'). The first token must be the skill's binary name."
+          }
+        },
+        required: ["skill", "command"]
+      }
+    }
+  },
 ];
 
 export const tools: ToolDefinition[] = toolDefinitions.map((tool) => ({

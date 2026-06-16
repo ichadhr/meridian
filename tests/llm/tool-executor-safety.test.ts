@@ -24,10 +24,6 @@ vi.mock("../../providers/solana/index.js", () => ({
   getWalletBalances: vi.fn(),
 }));
 
-vi.mock("../../providers/okx/index.js", () => ({
-  getAdvancedInfo: vi.fn(),
-}));
-
 vi.mock("../../providers/jupiter/index.js", () => ({
   swapToken: vi.fn(),
   getTokenInfo: vi.fn(),
@@ -110,12 +106,10 @@ vi.mock("../../llm/tools/study.js", () => ({
 import { executeTool } from "../../llm/tools/executor.js";
 import { getMyPositions } from "../../providers/meteora/index.js";
 import { getWalletBalances } from "../../providers/solana/index.js";
-import { getAdvancedInfo } from "../../providers/okx/index.js";
 import { config } from "../../config/index.js";
 
 const mockGetMyPositions = vi.mocked(getMyPositions);
 const mockGetWalletBalances = vi.mocked(getWalletBalances);
-const mockGetAdvancedInfo = vi.mocked(getAdvancedInfo);
 
 describe("executeTool safety checks", () => {
   const originalDryRun = process.env.DRY_RUN;
@@ -145,10 +139,6 @@ describe("executeTool safety checks", () => {
       total_usd: 1000,
     } as any);
 
-    mockGetAdvancedInfo.mockResolvedValue({
-      dev_rug_count: 0,
-      is_honeypot: false,
-    } as any);
   });
 
   afterEach(() => {

@@ -10,3 +10,16 @@ export { buildSystemPrompt } from "./prompt.js";
 export { tools, executeTool } from "./tools/index.js";
 export { studyTopLPers } from "./tools/study.js";
 export type { ToolDefinition } from "./tools/index.js";
+
+// Skill Runtime
+export {
+  getSkillsForCycle,
+  getInstalledSkills,
+  getSkillByName,
+  isSkillReady,
+  recordSafetyExecution,
+  checkSafetyExecution,
+  recordSkillChecksum,
+  verifySkillChecksum,
+  type SkillInfo,
+} from "./skill-loader.js";

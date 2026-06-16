@@ -1,4 +1,15 @@
+import { config } from "../../config/index.js";
+import { getGmgnTokenFees, hasGmgnApiKey } from "../gmgn/index.js";
+
 const DATAPI_BASE = "https://datapi.jup.ag/v1";
+
+async function resolveGlobalFeesSol(mint: string, jupiterFees: number | null | undefined): Promise<number | null> {
+  const jup = jupiterFees != null ? parseFloat(jupiterFees.toFixed(2)) : null;
+  if (!mint || config.gmgn?.feeSource !== "gmgn" || !hasGmgnApiKey()) return jup;
+  const fees = await getGmgnTokenFees(mint);
+  if (fees?.total_fee != null) return parseFloat(fees.total_fee.toFixed(2));
+  return jup;
+}
 
 /**
  * Get the narrative/story behind a token from Jupiter ChainInsight.
@@ -112,28 +123,19 @@ export async function getTokenInfo({
     stats_24h_net_buyers: t.stats24h ? t.stats24h.numNetBuyers : null,
   }));
 
-  // Enrich first result with OKX smart money + risk data (public endpoint, no key needed)
+  // Enrich first result with smart money + risk data
   if (results[0]?.mint) {
-    const { getAdvancedInfo, getClusterList } = await import("../okx/index.js");
-    const [adv, clusters] = await Promise.all([
-      getAdvancedInfo(results[0].mint).catch(() => null),
-      getClusterList(results[0].mint).catch(() => []),
-    ]);
-    if (adv) {
-      const a = adv as Record<string, unknown>;
-      results[0].risk_level = a.risk_level as number | null;
-      results[0].bundle_pct = a.bundle_pct as number | null;
-      results[0].sniper_pct = a.sniper_pct as number | null;
-      results[0].suspicious_pct = a.suspicious_pct as number | null;
-      results[0].new_wallet_pct = a.new_wallet_pct as number | null;
-      results[0].smart_money_buy = a.smart_money_buy as boolean | null;
-      results[0].tags = a.tags as string[];
-    }
-    if (clusters?.length) {
-      results[0].kol_in_clusters = clusters.some((c: any) => c.has_kol);
-      results[0].top_cluster_trend = clusters[0]?.trend ?? null;
-      results[0].clusters = clusters;
-    }
+    results[0].risk_level = null;
+    results[0].bundle_pct = null;
+    results[0].sniper_pct = null;
+    results[0].suspicious_pct = null;
+    results[0].new_wallet_pct = null;
+    results[0].smart_money_buy = null;
+    results[0].tags = [];
+    results[0].kol_in_clusters = false;
+    results[0].top_cluster_trend = null;
+    results[0].clusters = [];
+    results[0].global_fees_sol = await resolveGlobalFeesSol(results[0].mint, tokens[0]?.fees);
   }
 
   return { found: true, query, results };
@@ -247,11 +249,9 @@ export async function getTokenHolders({
     .reduce((s, h) => s + (Number(h.pct) || 0), 0);
 
   // ─── Bundle / Cluster Analysis (OKX) ─────────────────────────
-  const { getAdvancedInfo, getClusterList } = await import("../okx/index.js");
-  const [advancedData, clusterList] = await Promise.all([
-    getAdvancedInfo(mint).catch(() => null),
-    getClusterList(mint).catch(() => []),
-  ]);
+  const advancedData: any = null;
+  const clusterList: any[] = [];
+
 
   // ─── Smart Wallet / KOL Cross-reference ──────────────────────
   const { listSmartWallets } = await import("../../core/smart-wallets.js");
@@ -327,8 +327,7 @@ export async function getTokenHolders({
 
   return {
     mint,
-    global_fees_sol:
-      tokenInfo?.fees != null ? parseFloat(tokenInfo.fees.toFixed(2)) : null,
+    global_fees_sol: await resolveGlobalFeesSol(mint, tokenInfo?.fees),
     total_fetched: holders.length,
     showing: mapped.length,
     top_10_real_holders_pct: top10Pct.toFixed(2),

@@ -68,7 +68,7 @@ export function envryptDecrypt(value: string, key: string): string {
   ).join("");
 }
 
-export function loadEnv({ envPath = DEFAULT_ENV_PATH, keyPath = DEFAULT_KEY_PATH, override = false }: SecureEnvOptions = {}): { encryptedKeys: string[] } {
+export function loadEnv({ envPath = DEFAULT_ENV_PATH, keyPath = DEFAULT_KEY_PATH, override = true }: SecureEnvOptions = {}): { encryptedKeys: string[] } {
   dotenv.config({ path: envPath, override, quiet: true });
 
   const encryptedKeys = parseEncryptedKeys(envPath);

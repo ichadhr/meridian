@@ -1,0 +1,11 @@
+{
+  "name": "onchainos",
+  "description": "OKX OnchainOS security scanning — token risk, honeypot, dapp phishing, tx pre-execution",
+  "cycles": ["safety", "screening"],
+  "credentials": {
+    "required": ["OKX_API_KEY", "OKX_SECRET_KEY", "OKX_PASSPHRASE"]
+  },
+  "commands": {
+    "security": "{binary} security token-scan --tokens solana:{mint} --chain solana"
+  }
+}

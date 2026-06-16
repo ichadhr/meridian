@@ -37,6 +37,7 @@ export interface ScreeningConfig {
   athFilterPct: number | null;
   maxDevRugCount: number;
   okxFailClosed: boolean;
+  safetyTtlMinutes: number;
 }
 
 export interface ManagementConfig {
@@ -156,6 +157,21 @@ export interface IndicatorsConfig {
   exitMinAgeMinutes: number;
 }
 
+export interface PnlConfig {
+  rpcUrl: string;
+  source: "rpc" | "meteora";
+  pollIntervalSec: number;
+  depositCacheTtlSec: number;
+}
+
+export interface GmgnConfig {
+  apiKey: string | null;
+  baseUrl: string;
+  requestDelayMs: number;
+  maxRetries: number;
+  feeSource: "gmgn" | "jupiter";
+}
+
 export interface Config {
   risk: RiskConfig;
   screening: ScreeningConfig;
@@ -169,6 +185,8 @@ export interface Config {
   api: ApiConfig;
   jupiter: JupiterConfig;
   indicators: IndicatorsConfig;
+  pnl: PnlConfig;
+  gmgn: GmgnConfig;
 }
 
 // ─── State Summary ──────────────────────────────────────────────
