@@ -610,6 +610,12 @@ export interface Lesson {
   close_reason?: string;
   pool?: string;
   created_at?: string;
+  entry_mcap?: number | null;
+  entry_tvl?: number | null;
+  entry_volume?: number | null;
+  exit_mcap?: number | null;
+  exit_tvl?: number | null;
+  exit_volume?: number | null;
 }
 
 export interface PerformanceRecord {
@@ -631,6 +637,12 @@ export interface PerformanceRecord {
   minutes_held?: number;
   close_reason?: string;
   base_mint?: string;
+  entry_mcap?: number | null;
+  entry_tvl?: number | null;
+  entry_volume?: number | null;
+  exit_mcap?: number | null;
+  exit_tvl?: number | null;
+  exit_volume?: number | null;
   deployed_at?: string;
   signal_snapshot?: Record<string, unknown>;
   pnl_usd?: number;

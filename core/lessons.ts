@@ -272,6 +272,12 @@ function derivLesson(perf: PerformanceRecord): Lesson | null {
     close_reason: perf.close_reason,
     pool: perf.pool,
     created_at: new Date().toISOString(),
+    entry_mcap: numberOrNull(perf.entry_mcap),
+    entry_tvl: numberOrNull(perf.entry_tvl),
+    entry_volume: numberOrNull(perf.entry_volume),
+    exit_mcap: numberOrNull(perf.exit_mcap),
+    exit_tvl: numberOrNull(perf.exit_tvl),
+    exit_volume: numberOrNull(perf.exit_volume),
   };
 }
 
@@ -398,6 +404,11 @@ export function evolveThresholds(
 
 function isFiniteNum(n: unknown): n is number {
   return typeof n === "number" && isFinite(n);
+}
+
+function numberOrNull(value: unknown): number | null {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
 }
 
 function avg(arr: number[]): number {
