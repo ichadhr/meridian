@@ -315,7 +315,7 @@ export async function computePositions(walletAddress: string): Promise<RpcPositi
   _pollCount++;
   if (_pollCount % 20 === 1) {
     const n = [...mapEntries(map)].reduce((s, [, i]) => s + (i?.lbPairPositionsData?.length ?? 0), 0);
-    log("pnl_tick", `poller alive — ${n} position(s) tracked (tick #${_pollCount})`);
+    log("pnl_tick", `computePositions active — ${n} position(s) tracked (tick #${_pollCount})`);
   }
 
   const flat: Array<{
