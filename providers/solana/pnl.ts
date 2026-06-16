@@ -7,8 +7,9 @@ import {
   markLiveInRange,
   minutesLiveOutOfRange,
 } from "../../core/index.js";
+import { fetchSolPrice } from "../jupiter/index.js";
 
-const JUP_SEARCH = "https://datapi.jup.ag/v1/assets/search";
+const JUPITER_PRICE_API = "https://api.jup.ag/price/v3";
 const METEORA_PNL = "https://dlmm.datapi.meteora.ag/positions";
 
 // Lazy SDK load — mirrors tools/dlmm.js (CJS dir-imports break in ESM at import time).
@@ -75,21 +76,41 @@ export async function fetchDlmmPnlForPool(poolAddress: string, walletAddress: st
   }
 }
 
-// ─── Jupiter prices (never cached) ──────────────────────────────
+// ─── Jupiter prices via price/v3 (never cached for tokens) ───────
 async function getJupiterPrices(mints: (string | null | undefined)[]): Promise<Record<string, number | null>> {
   const list = unique(mints.map((m) => String(m || "").trim()));
   if (!list.length) return {};
-  try {
-    const res = await fetch(`${JUP_SEARCH}?query=${list.join(",")}`, { headers: { accept: "application/json" } });
-    if (!res.ok) throw new Error(`Jupiter ${res.status}`);
-    const assets = await res.json() as any[];
-    const out: Record<string, number | null> = {};
-    for (const a of assets) out[a.id] = maybeNum(a.usdPrice);
-    return out;
-  } catch (e: any) {
-    log("pnl_price", `Jupiter price fetch failed: ${e.message}`);
-    return {};
+
+  const solMint = config.tokens.SOL;
+  const tokenMints = list.filter((m) => m !== solMint);
+  const out: Record<string, number | null> = {};
+
+  // Use fetchSolPrice for SOL (cached, validated, Helius fallback)
+  const solPrice = await fetchSolPrice();
+  if (solPrice != null) out[solMint] = solPrice;
+
+  // Fetch token prices via price/v3
+  if (tokenMints.length > 0) {
+    try {
+      const ids = tokenMints.join(",");
+      const res = await fetch(`${JUPITER_PRICE_API}?ids=${ids}`, {
+        signal: AbortSignal.timeout(5_000),
+      });
+      if (res.ok) {
+        const data = await res.json() as Record<string, any>;
+        for (const mint of tokenMints) {
+          const entry = data?.[mint];
+          out[mint] = maybeNum(entry?.usdPrice);
+        }
+      } else {
+        log("pnl_price", `Jupiter price/v3 error: ${res.status}`);
+      }
+    } catch (e: any) {
+      log("pnl_price", `Jupiter price/v3 fetch failed: ${e.message}`);
+    }
   }
+
+  return out;
 }
 
 interface CacheEntry {
