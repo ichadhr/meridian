@@ -417,8 +417,7 @@ function shouldCountInAdjustedWinRate(closeReason: unknown): boolean {
   return !(
     text.includes("out of range") ||
     text.includes("pumped far above range") ||
-    text === "oor" ||
-    text.includes("oor")
+    text === "oor"
   );
 }
 
