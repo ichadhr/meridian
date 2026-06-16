@@ -237,8 +237,7 @@ export const config: Config = {
     maxTokenAgeHours:   optNum("maxTokenAgeHours"),
     athFilterPct:       optNum("athFilterPct"),
     maxDevRugCount:     num("maxDevRugCount", 2),
-    okxFailClosed:      bool("okxFailClosed", false),
-    safetyTtlMinutes:   num("safetyTtlMinutes", 10),
+
   },
 
   // ─── Position Management ────────────────
@@ -481,7 +480,6 @@ export function reloadScreeningThresholds(): void {
     if (fresh.maxBotHoldersPct  != null) s.maxBotHoldersPct = fresh.maxBotHoldersPct as number;
     if (fresh.allowedLaunchpads !== undefined) s.allowedLaunchpads = fresh.allowedLaunchpads as string[];
     if (fresh.maxDevRugCount    != null) s.maxDevRugCount    = fresh.maxDevRugCount as number;
-    if (fresh.okxFailClosed     !== undefined) s.okxFailClosed  = fresh.okxFailClosed as boolean;
     if (fresh.blockedLaunchpads !== undefined) s.blockedLaunchpads = fresh.blockedLaunchpads as string[];
     const minBinsBelow = numericConfig(fresh.minBinsBelow) ?? config.strategy.minBinsBelow;
     const maxBinsBelow = numericConfig(fresh.maxBinsBelow) ?? numericConfig(fresh.binsBelow) ?? config.strategy.maxBinsBelow;

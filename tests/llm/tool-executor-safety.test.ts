@@ -69,6 +69,7 @@ vi.mock("../../core/strategy-library.js", () => ({
 
 vi.mock("../../core/token-blacklist.js", () => ({
   addToBlacklist: vi.fn(),
+  isBlacklisted: vi.fn(() => false),
   removeFromBlacklist: vi.fn(),
   listBlacklist: vi.fn(),
   blockDev: vi.fn(),
@@ -277,6 +278,22 @@ describe("executeTool safety checks", () => {
       });
       expect(result.blocked).toBe(true);
       expect(result.reason).toContain("Already holding base token");
+    });
+
+    it("rejects blacklisted mint", async () => {
+      // Re-import with blacklist mock returning true
+      const { isBlacklisted } = await import("../../core/token-blacklist.js");
+      vi.mocked(isBlacklisted).mockReturnValueOnce(true as any);
+
+      const result = await executeTool("deploy_position", {
+        pool_address: "test-pool",
+        base_mint: "known-rug-mint",
+        amount_y: 0.5,
+        bins_below: 35,
+        bins_above: 0,
+      });
+      expect(result.blocked).toBe(true);
+      expect(result.reason).toContain("blacklisted");
     });
   });
 

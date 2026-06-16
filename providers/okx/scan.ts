@@ -102,7 +102,6 @@ interface OnchainosResponse {
 
 // ─── Constants ──────────────────────────────────────────────────
 
-const BINARY_RELATIVE_PATH = "skills/onchainos/onchainos";
 const MAX_MINTS_PER_BATCH = 50;  // CLI limit per docs
 const DEFAULT_TIMEOUT_MS = 30_000;
 const MAX_BUFFER = 10 * 1024 * 1024;
@@ -168,24 +167,19 @@ export function setBinaryPath(p: string | null): void {
 
 /**
  * Resolve the absolute path to the onchainos binary.
- * Looks in `skills/onchainos/onchainos` first (project install), then
- * the standard install path at `~/.local/bin/onchainos`.
+ * Checks the standard install path at `~/.local/bin/onchainos`.
+ * Tests can override via `setBinaryPath()`.
  */
 export function resolveBinaryPath(): string {
   if (_binaryOverride) return _binaryOverride;
-  const candidates = [
-    path.resolve(process.cwd(), BINARY_RELATIVE_PATH),
-    path.join(process.env.HOME || "~", ".local", "bin", "onchainos"),
-  ];
-  for (const candidate of candidates) {
-    try {
-      const stat = fs.statSync(candidate);
-      if (stat.isFile() && (stat.mode & 0o111) !== 0) return candidate;
-    } catch {
-      // continue
-    }
+  const globalPath = path.join(process.env.HOME || "~", ".local", "bin", "onchainos");
+  try {
+    const stat = fs.statSync(globalPath);
+    if (stat.isFile() && (stat.mode & 0o111) !== 0) return globalPath;
+  } catch {
+    // not found
   }
-  return candidates[0]; // best guess — caller will get ENOENT
+  return globalPath; // best guess — caller will get ENOENT
 }
 
 /**
@@ -225,8 +219,10 @@ export async function scanTokens(
 ): Promise<SafetyVerdict[]> {
   if (mints.length === 0) return [];
 
-  // Mock mode: for tests and for when OKX creds are missing.
-  const useMock = opts.useMock ?? (process.env.MOCK_ONCHAINOS === "1" || !hasCredentials());
+  // Mock mode: for tests only. Activates via MOCK_ONCHAINOS=1 or opts.useMock.
+  // Missing credentials is NOT a reason to mock — the binary call will fail
+  // and return SCAN_FAILED, which is the correct fail-closed behavior.
+  const useMock = opts.useMock ?? process.env.MOCK_ONCHAINOS === "1";
   if (useMock) {
     log("safety_mock", `onchainos mock mode (mints=${mints.length})`);
     return mints.map((m, i) => mockVerdictFor(m, i));

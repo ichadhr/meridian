@@ -117,13 +117,19 @@ export interface SafetyPreStepResult {
 
 /**
  * Run the OKX onchainos token-scan over all passing candidates, then
- * hard-filter the results. CRITICAL and HIGH verdicts (and optionally
- * MEDIUM if `config.safetyScan.dropMediumRisk`) are removed.
+ * hard-filter the results based on risk level:
  *
- * Fail-closed: if a mint is missing from the response (native token
- * skipped, chain unsupported, etc.) it gets a SCAN_FAILED verdict and
- * is dropped. This is the only way to guarantee the LLM can't deploy
- * an unscanned token.
+ *   required=true  (default) — fail-closed:
+ *     - CRITICAL, HIGH, SCAN_FAILED verdicts are dropped.
+ *     - MEDIUM is dropped if config.safetyScan.dropMediumRisk is true.
+ *     - Candidates without a mint address are blocked.
+ *     - If the entire binary call fails, safePassing is empty.
+ *
+ *   required=false — best-effort:
+ *     - Same risk-level filtering when the binary succeeds.
+ *     - If the binary call fails, all candidates pass through with a
+ *       logged warning (no scan data, but the cycle continues).
+ *     - Mintless candidates pass through (can't scan, no verdict).
  *
  * @param passing - Pre-fetched candidates (post getActiveBin)
  * @returns Safe candidates to pass to the LLM, plus the verdict map and summary
@@ -137,8 +143,10 @@ export async function runSafetyPreStep(passing: Candidate[]): Promise<SafetyPreS
   };
   if (passing.length === 0) return empty;
 
-  // Extract mints (best-effort). Candidates without a mint can't be scanned
-  // and are kept as-is (no verdict, no blocking).
+  // Extract mints. Candidates without a mint can't be scanned.
+  // When required=true they are blocked; when required=false they pass
+  // through (no verdict, no blocking).
+  const required = config.safetyScan.required;
   const mintByCandidate = new Map<Candidate, string>();
   const mints: string[] = [];
   for (const c of passing) {
@@ -150,6 +158,15 @@ export async function runSafetyPreStep(passing: Candidate[]): Promise<SafetyPreS
   }
 
   if (mints.length === 0) {
+    // No candidates had extractable mints.
+    if (required) {
+      return {
+        safePassing: [],
+        verdictMap: new Map(),
+        summary: "⚠️ Safety scan blocked: no mint addresses to scan (required mode)",
+        scanFailed: false,
+      };
+    }
     return { ...empty, summary: "⚠️ Safety scan skipped: no mint addresses in candidates" };
   }
 
@@ -160,10 +177,19 @@ export async function runSafetyPreStep(passing: Candidate[]): Promise<SafetyPreS
     verdicts = await scanTokens(mints, { timeoutMs: config.safetyScan.timeoutMs });
   } catch (err: any) {
     log("safety_error", `onchainos scan threw: ${err?.message ?? String(err)}`);
+    if (config.safetyScan.required) {
+      return {
+        safePassing: [],   // fail-closed: block all deploys
+        verdictMap: new Map(),
+        summary: `⚠️ Safety scan failed: ${err?.message ?? String(err)}`,
+        scanFailed: true,
+      };
+    }
+    // Best-effort mode: let all candidates through with a warning.
     return {
-      safePassing: [],   // fail-closed: block all deploys
+      safePassing: passing,
       verdictMap: new Map(),
-      summary: `⚠️ Safety scan failed: ${err?.message ?? String(err)}`,
+      summary: `⚠️ Safety scan failed (non-required, passing through): ${err?.message ?? String(err)}`,
       scanFailed: true,
     };
   }
@@ -178,8 +204,12 @@ export async function runSafetyPreStep(passing: Candidate[]): Promise<SafetyPreS
   for (const c of passing) {
     const mint = mintByCandidate.get(c);
     if (!mint) {
-      // No mint available — pass through (can't scan, but no verdict either).
-      kept.push(c);
+      // No mint available. When required=true, block; otherwise pass through.
+      if (required) {
+        blocked.push("(no mint)");
+      } else {
+        kept.push(c);
+      }
       continue;
     }
     const v = verdictMap.get(mint);

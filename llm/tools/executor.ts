@@ -30,6 +30,7 @@ import {
   setActiveStrategy,
   removeStrategy,
   addToBlacklist,
+  isBlacklisted,
   removeFromBlacklist,
   listBlacklist,
   blockDev,
@@ -41,7 +42,6 @@ import {
   checkSmartWalletsOnPool,
   getRecentDecisions,
 } from "../../core/index.js";
-import { getSkillsForCycle, loadCredentials, recordSafetyExecution } from "../skill-loader.js";
 import { swapToken } from "../../providers/jupiter/index.js";
 import { getWalletBalances } from "../../providers/solana/index.js";
 import { studyTopLPers } from "./study.js";
@@ -57,33 +57,6 @@ import { execSync, spawn, execFile } from "child_process";
 const execFileAsync = promisify(execFile);
 
 import { USER_CONFIG_FILE } from "../../config/paths.js";
-
-// ─── Skill Environment Sanitizer ──────────────────────────────
-// Only passes safe base vars + skill-declared credentials to external binaries.
-// Never leaks WALLET_PRIVATE_KEY, RPC_URL, OPENROUTER_API_KEY, etc.
-const SKILL_ENV_ALLOWLIST = new Set([
-  "PATH", "HOME", "USER", "LOGNAME", "SHELL",
-  "TMPDIR", "TEMP", "TMP",
-  "USERPROFILE", "HOMEDRIVE", "HOMEPATH",
-  "NODE_ENV", "DRY_RUN", "LANG", "LC_ALL",
-]);
-
-function buildSkillEnv(skillName: string): Record<string, string> {
-  const env: Record<string, string> = {};
-  // Safe base vars
-  for (const key of SKILL_ENV_ALLOWLIST) {
-    if (process.env[key] != null) env[key] = process.env[key]!;
-  }
-  // Skill-declared credentials (skip empty/whitespace-only)
-  const creds = loadCredentials()[skillName];
-  if (creds?.required && Array.isArray(creds.required)) {
-    for (const envVar of creds.required) {
-      const val = process.env[envVar];
-      if (val != null && val.trim() !== "") env[envVar] = val;
-    }
-  }
-  return env;
-}
 
 const POOL_DISCOVERY_BASE: string = "https://pool-discovery-api.datapi.meteora.ag";
 const MIN_VOLATILITY_TIMEFRAME: string = "30m";
@@ -435,65 +408,6 @@ const toolMap: Record<string, ToolFn> = {
       return { cleared: n, mode: "keyword", keyword };
     }
     return { error: "invalid mode" };
-  },
-  execute_skill: async (args: Record<string, unknown>): Promise<ToolResult> => {
-    const skillName = args.skill as string;
-    const command = args.command as string;
-    if (!skillName) return { error: "skill is required" };
-    if (!command) return { error: "command is required" };
-
-    // Verify skill exists
-    const { getSkillByName, verifySkillChecksum } = await import("../skill-loader.js");
-    const skill = getSkillByName(skillName);
-    if (!skill) {
-      return { error: `Skill '${skillName}' not found. Install with: npx skills add <owner/repo>` };
-    }
-
-    // Verify skill integrity (SKILL.md hasn't been tampered with)
-    const integrity = verifySkillChecksum(skillName);
-    if (!integrity.valid) {
-      log("skill_warn", `Integrity check failed for ${skillName}: ${integrity.reason}`);
-      return { error: `Skill integrity check failed: ${integrity.reason}. Reinstall with: npx skills add <owner/repo>` };
-    }
-
-    // Build env for this skill
-    const env = buildSkillEnv(skillName);
-
-    // Split command into binary + args — no shell involved
-    const parts = command.trim().split(/\s+/);
-    const binary = parts[0];
-    const cmdArgs = parts.slice(1);
-
-    if (!binary) return { error: "command must include a binary name as the first token" };
-
-    log("skill_exec", `Running: ${command} (skill: ${skillName})`);
-
-    try {
-      const { stdout, stderr } = await execFileAsync(binary, cmdArgs, {
-        timeout: 30_000,
-        env,
-        maxBuffer: 10 * 1024 * 1024,
-      });
-
-      // Record safety execution if this is a safety skill
-      const { getSkillsForCycle, recordSafetyExecution } = await import("../skill-loader.js");
-      const safetySkills = getSkillsForCycle("safety");
-      if (safetySkills.some((s) => s.name === skillName)) {
-        // Try to extract mint from command for tracking
-        const mintMatch = command.match(/(?:--tokens?\s+)?solana:([A-Za-z0-9]+)/);
-        if (mintMatch) {
-          recordSafetyExecution(skillName, mintMatch[1]);
-        }
-      }
-
-      try {
-        return JSON.parse(stdout);
-      } catch {
-        return { success: true, stdout, stderr };
-      }
-    } catch (err: any) {
-      return { success: false, error: err.message, stdout: err.stdout, stderr: err.stderr };
-    }
   },
   update_config: ({ changes, reason = "" }: Record<string, unknown>): ToolResult => {
     // Flat key → config section mapping (covers everything in config.js)
@@ -889,9 +803,9 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
 
 /**
  * Run safety checks before executing write operations.
- * Uses the standard skill model: SKILL.md instructions are injected into prompt,
- * LLM reads them and calls execute_skill with the appropriate command.
- * This function checks if required safety skills ran recently.
+ * Guards: blacklist check (base_mint), pool config constraints (bin_step,
+ * volatility, amount limits), position limits (max positions, duplicate
+ * pool/token), and pool-level thresholds (TVL, fees, etc.).
  */
 async function runSafetyChecks(name: string, args: Record<string, unknown>): Promise<SafetyCheckResult> {
   switch (name) {
@@ -899,25 +813,11 @@ async function runSafetyChecks(name: string, args: Record<string, unknown>): Pro
       const poolThresholds = await validateDeployPoolThresholds(args);
       if (!poolThresholds.pass) return poolThresholds;
 
-      // Check if required safety skills ran recently
+      // Check base_mint against the blacklist (applies to all agents).
       if (args.base_mint) {
         const mint = args.base_mint as string;
-        const { getRequiredDeploySkills, checkSafetyExecution } = await import("../skill-loader.js");
-        const requiredSkills = getRequiredDeploySkills();
-
-        if (requiredSkills.length > 0) {
-          const safetyTtl = config.screening.safetyTtlMinutes ?? 10;
-          const hasRecentScan = checkSafetyExecution(mint, safetyTtl);
-
-          if (!hasRecentScan) {
-            // Safety skill hasn't run recently — refuse deploy
-            // The LLM should run execute_skill with the safety skill first
-            const skillNames = requiredSkills.map((s) => s.name).join(", ");
-            return {
-              pass: false,
-              reason: `Required safety skill(s) [${skillNames}] have not been run for this token. Run execute_skill with the safety skill before deploying.`,
-            };
-          }
+        if (isBlacklisted(mint)) {
+          return { pass: false, reason: `Mint ${mint.slice(0, 8)}… is blacklisted. Cannot deploy.` };
         }
       }
 

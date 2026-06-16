@@ -1017,17 +1017,12 @@ Commands:
       return;
     }
 
-    // ── auto: agent picks and deploys ───────
+    // ── auto: run a screening cycle ─────────
     if (input.toLowerCase() === "auto") {
       await runBusy(async () => {
-        console.log("\nAgent is picking and deploying...\n");
-        const { content: reply }: { content: string } = await agentLoop(
-          `get_top_candidates and deploy only if a candidate is clearly worth it. If there is only one weak candidate, report NO DEPLOY. For a valid deploy, use amount_y=${DEPLOY}, amount_x=0, bins_above=0, and bins_below from positive volatility. Execute now, don't ask.`,
-          config.llm.maxSteps,
-          [],
-          "SCREENER"
-        );
-        console.log(`\n${reply}\n`);
+        console.log("\nRunning screening cycle...\n");
+        const reply = await runScreeningCycle({ silent: false, source: "cli-auto" });
+        console.log(`\n${reply || "Screening returned no result."}\n`);
         launchCron();
       });
       return;

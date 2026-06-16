@@ -36,8 +36,8 @@ INSTALLER="/tmp/onchainos-install-${TAG}.sh"
 CHECKSUMS="/tmp/onchainos-install-checksums-${TAG}.txt"
 
 echo "[install-onchainos] Downloading installer..."
-curl -sSL "https://raw.githubusercontent.com/${REPO}/v${TAG}/install.sh" -o "$INSTALLER"
-curl -sSL "https://github.com/${REPO}/releases/download/v${TAG}/installer-checksums.txt" -o "$CHECKSUMS"
+curl -sSL --fail "https://raw.githubusercontent.com/${REPO}/v${TAG}/install.sh" -o "$INSTALLER"
+curl -sSL --fail "https://github.com/${REPO}/releases/download/v${TAG}/installer-checksums.txt" -o "$CHECKSUMS"
 chmod +x "$INSTALLER"
 
 # Verify installer integrity BEFORE running it (defense in depth)

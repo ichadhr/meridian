@@ -36,8 +36,6 @@ export interface ScreeningConfig {
   maxTokenAgeHours: number | null;
   athFilterPct: number | null;
   maxDevRugCount: number;
-  okxFailClosed: boolean;
-  safetyTtlMinutes: number;
 }
 
 export interface ManagementConfig {
@@ -169,10 +167,12 @@ export interface SafetyScanConfig {
    * If true, deploy_position is gated by the safety pre-step:
    *   - Candidates that fail the scan (CRITICAL/HIGH risk or SCAN_FAILED)
    *     are dropped before the LLM sees them.
-   *   - If the entire pre-step fails, deploy_position is removed from the
-   *     SCREENER tool set (LLM can only suggest, not deploy).
-   * If false, the pre-step still runs as a soft filter — failures are
-   * logged but candidates pass through with a warning.
+   *   - Candidates without a mint address are also blocked.
+   *   - If the entire pre-step fails (binary missing, network error),
+   *     deploy_position is removed from the SCREENER tool set and the
+   *     screening cycle aborts (LLM can only suggest, not deploy).
+   * If false, the pre-step runs as a best-effort filter — scan failures
+   * allow candidates to pass through with a logged warning.
    */
   required: boolean;
   /** Per-call timeout for the onchainos binary in ms. */
