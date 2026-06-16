@@ -185,6 +185,15 @@ interface NormalizedLesson {
   outcome: string;
   sourceType: string;
   score: number | null;
+  confidence: number | null;
+  pool: string | null;
+  context: string | null;
+  entry_mcap: number | null;
+  entry_tvl: number | null;
+  entry_volume: number | null;
+  exit_mcap: number | null;
+  exit_tvl: number | null;
+  exit_volume: number | null;
   created_at: string;
 }
 
@@ -199,6 +208,15 @@ function normalizeSharedLesson(lesson: SharedLesson): NormalizedLesson | null {
     outcome: sanitizeText(lesson.outcome || "shared", 20) || "shared",
     sourceType: sanitizeText(lesson.sourceType || lesson.source || "shared", 24) || "shared",
     score: Number.isFinite(Number(lesson.score)) ? Number(lesson.score) : null,
+    confidence: Number.isFinite(Number(lesson.confidence)) ? Number(lesson.confidence) : null,
+    pool: sanitizeText(lesson.pool || "", 48) || null,
+    context: sanitizeText(lesson.context || "", 500) || null,
+    entry_mcap: numberOrNull(lesson.entry_mcap),
+    entry_tvl: numberOrNull(lesson.entry_tvl),
+    entry_volume: numberOrNull(lesson.entry_volume),
+    exit_mcap: numberOrNull(lesson.exit_mcap),
+    exit_tvl: numberOrNull(lesson.exit_tvl),
+    exit_volume: numberOrNull(lesson.exit_volume),
     created_at: lesson.created_at || lesson.createdAt || new Date().toISOString(),
   };
 }
