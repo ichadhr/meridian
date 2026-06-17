@@ -3,6 +3,7 @@ import { isBlacklisted, isDevBlocked, getBlockedDevs, isBaseMintOnCooldown, isPo
 import { scaleScreeningToTimeframe } from "../../core/screening-scales.js";
 import { log } from "../../utils/logger.js";
 import { confirmIndicatorPreset, getAgentMeridianBase, getAgentMeridianHeaders } from "../hivemind/index.js";
+import { METEORA_POOL_DISCOVERY, JUPITER_DATAPI, METEORA_DLMM_API } from "../../config/urls.js";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -221,9 +222,6 @@ interface GetTopCandidatesResult {
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
-const DATAPI_JUP = "https://datapi.jup.ag/v1";
-
-const POOL_DISCOVERY_BASE = "https://pool-discovery-api.datapi.meteora.ag";
 const MIN_VOLATILITY_TIMEFRAME = "30m";
 const TIMEFRAME_MINUTES: Record<string, number> = {
   "5m": 5,
@@ -378,7 +376,7 @@ async function fetchPoolDiscoveryPage({ page_size, filters, timeframe, category 
   timeframe: string;
   category: string;
 }): Promise<PoolDiscoveryResponse> {
-  const url = `${POOL_DISCOVERY_BASE}/pools?` +
+  const url = `${METEORA_POOL_DISCOVERY}/pools?` +
     `page_size=${page_size}` +
     `&filter_by=${encodeURIComponent(filters)}` +
     `&timeframe=${timeframe}` +
@@ -397,7 +395,7 @@ async function fetchPoolDiscoveryDetail({ poolAddress, timeframe }: {
   poolAddress: string;
   timeframe: string;
 }): Promise<PoolDiscoveryRecord | null> {
-  const url = `${POOL_DISCOVERY_BASE}/pools?` +
+  const url = `${METEORA_POOL_DISCOVERY}/pools?` +
     `page_size=1` +
     `&filter_by=${encodeURIComponent(`pool_address=${poolAddress}`)}` +
     `&timeframe=${timeframe}`;
@@ -461,7 +459,7 @@ async function applyVolatilityTimeframe(rawPools: PoolDiscoveryRecord[], sourceT
 }
 
 async function searchAssetsBySymbol(symbol: string): Promise<AssetApiResponse[]> {
-  const res = await fetch(`${DATAPI_JUP}/assets/search?query=${encodeURIComponent(symbol)}`);
+  const res = await fetch(`${JUPITER_DATAPI}/assets/search?query=${encodeURIComponent(symbol)}`);
   if (!res.ok) throw new Error(`assets/search ${res.status}`);
   const data = await res.json();
   return Array.isArray(data) ? data : [data];
@@ -516,7 +514,7 @@ async function enrichDiscordSignalLaunchpads(rawPools: PoolDiscoveryRecord[]): P
 }
 
 async function findRivalPool(mint: string): Promise<RivalPool | null> {
-  const url = `https://dlmm.datapi.meteora.ag/pools?query=${encodeURIComponent(mint)}&sort_by=${encodeURIComponent("tvl:desc")}&filter_by=${encodeURIComponent(`tvl>${PVP_MIN_ACTIVE_TVL}`)}`;
+  const url = `${METEORA_DLMM_API}/pools?query=${encodeURIComponent(mint)}&sort_by=${encodeURIComponent("tvl:desc")}&filter_by=${encodeURIComponent(`tvl>${PVP_MIN_ACTIVE_TVL}`)}`;
   const res = await fetch(url);
   if (!res.ok) throw new Error(`rival pool search ${res.status}`);
   const data = await res.json();
@@ -744,7 +742,7 @@ export async function discoverPools({
     if (missingDev.length > 0) {
       const devResults = await Promise.allSettled(
         missingDev.map((p) =>
-          fetch(`${DATAPI_JUP}/assets/search?query=${p.base.mint}`)
+          fetch(`${JUPITER_DATAPI}/assets/search?query=${p.base.mint}`)
             .then((r) => r.ok ? r.json() : null)
             .then((d) => {
               const t = Array.isArray(d) ? d[0] : d;
@@ -1077,7 +1075,7 @@ function pushFilteredReason(list: FilteredExample[], pool: CondensedPool, reason
  * don't need to re-fetch pool detail per result.
  */
 export async function searchPools({ query, limit = 10 }: { query: string; limit?: number }): Promise<any> {
-  const url = `https://dlmm.datapi.meteora.ag/pools?query=${encodeURIComponent(query)}`;
+  const url = `${METEORA_DLMM_API}/pools?query=${encodeURIComponent(query)}`;
   const res = await fetch(url);
   if (!res.ok) throw new Error(`Pool search API error: ${res.status} ${res.statusText}`);
   const data = await res.json();

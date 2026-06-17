@@ -5,8 +5,7 @@
 
 import { log } from "../../utils/logger.js";
 import { config } from "../../config/index.js";
-
-const LPAGENT_API = "https://api.lpagent.io/open-api/v1";
+import { LPAGENT_API } from "../../config/urls.js";
 
 /**
  * Fetch all open DLMM positions for `walletAddress` from the LPAgent API,

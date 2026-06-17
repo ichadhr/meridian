@@ -1,6 +1,7 @@
 import { resolveGlobalFeesSol } from "../token-fees.js";
+import { JUPITER_DATAPI } from "../../config/urls.js";
 
-const DATAPI_BASE = "https://datapi.jup.ag/v1";
+const DATAPI_BASE = JUPITER_DATAPI;
 
 /**
  * Get the narrative/story behind a token from Jupiter ChainInsight.

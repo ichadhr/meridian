@@ -7,6 +7,7 @@ import { PublicKey } from "@solana/web3.js";
 import { log } from "../../utils/logger.js";
 import { getConnection } from "../solana/wallet.js";
 import { getDLMM } from "./dlmm.js";
+import { METEORA_DLMM_API } from "../../config/urls.js";
 
 const poolCache = new Map<string, any>();
 const poolMetadataCache = new Map<string, any>();
@@ -50,7 +51,7 @@ export async function getPoolMetadata(poolAddress: PublicKey | string): Promise<
   }
 
   try {
-    const res = await fetch(`https://dlmm.datapi.meteora.ag/pools/${key}`);
+    const res = await fetch(`${METEORA_DLMM_API}/pools/${key}`);
     if (!res.ok) {
       throw new Error(`Pool metadata API ${res.status}`);
     }

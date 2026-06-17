@@ -9,9 +9,9 @@ import {
 } from "../../core/index.js";
 import type { RpcPosition, RpcPositionsResult } from "../../types/index.js";
 import { fetchSolPrice } from "../jupiter/index.js";
+import { JUPITER_PRICE, METEORA_DLMM_API } from "../../config/urls.js";
 
-const JUPITER_PRICE_API = "https://api.jup.ag/price/v3";
-const METEORA_PNL = "https://dlmm.datapi.meteora.ag/positions";
+const METEORA_PNL = `${METEORA_DLMM_API}/positions`;
 
 // Lazy SDK load — mirrors tools/dlmm.js (CJS dir-imports break in ESM at import time).
 let _DLMM: any = null;
@@ -121,7 +121,7 @@ async function fetchPriceChunks(mints: string[]): Promise<Record<string, number 
   const results = await Promise.allSettled(
     chunks.map(async (chunk) => {
       const ids = chunk.join(",");
-      const res = await fetch(`${JUPITER_PRICE_API}?ids=${ids}`, {
+      const res = await fetch(`${JUPITER_PRICE}?ids=${ids}`, {
         signal: AbortSignal.timeout(5_000),
       });
       if (!res.ok) {

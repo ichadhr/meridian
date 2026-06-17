@@ -57,8 +57,8 @@ import { execSync, spawn, execFile } from "child_process";
 const execFileAsync = promisify(execFile);
 
 import { USER_CONFIG_FILE } from "../../config/paths.js";
+import { METEORA_POOL_DISCOVERY } from "../../config/urls.js";
 
-const POOL_DISCOVERY_BASE: string = "https://pool-discovery-api.datapi.meteora.ag";
 const MIN_VOLATILITY_TIMEFRAME: string = "30m";
 const TIMEFRAME_MINUTES: Record<string, number> = {
   "5m": 5,
@@ -120,7 +120,7 @@ function poolDetailFeeActiveTvlRatio(pool: Record<string, unknown> | null | unde
 async function fetchFreshPoolDetail(poolAddress: string, timeframe: string = config.screening.timeframe || "5m"): Promise<Record<string, unknown> | null> {
   const encodedTimeframe = encodeURIComponent(timeframe);
   const filter = encodeURIComponent(`pool_address=${poolAddress}`);
-  const url = `${POOL_DISCOVERY_BASE}/pools?page_size=1&filter_by=${filter}&timeframe=${encodedTimeframe}`;
+  const url = `${METEORA_POOL_DISCOVERY}/pools?page_size=1&filter_by=${filter}&timeframe=${encodedTimeframe}`;
   const res = await fetch(url);
   if (!res.ok) throw new Error(`Pool Discovery API error: ${res.status} ${res.statusText}`);
   const data: any = await res.json();

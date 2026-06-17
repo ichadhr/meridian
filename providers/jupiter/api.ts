@@ -6,9 +6,8 @@ import { log } from "../../utils/logger.js";
 import { config } from "../../config/index.js";
 import { getConnection, getWallet, normalizeMint } from "../solana/wallet.js";
 import { getWalletBalances } from "../solana/balance.js";
+import { JUPITER_PRICE, JUPITER_SWAP } from "../../config/urls.js";
 
-const JUPITER_PRICE_API = "https://api.jup.ag/price/v3";
-const JUPITER_SWAP_V2_API = "https://api.jup.ag/swap/v2";
 const DEFAULT_JUPITER_API_KEY = "b15d42e9-e0e4-4f90-a424-ae41ceeaa382";
 
 /** Valid SOL price range — outside this means garbage data */
@@ -90,7 +89,7 @@ export async function swapToken({
       search.set("referralAccount", referralParams.referralAccount);
       search.set("referralFee", String(referralParams.referralFee));
     }
-    const orderUrl = `${JUPITER_SWAP_V2_API}/order?${search.toString()}`;
+    const orderUrl = `${JUPITER_SWAP}/order?${search.toString()}`;
     const jupiterApiKey = getJupiterApiKey();
 
     const orderRes = await fetch(orderUrl, {
@@ -116,7 +115,7 @@ export async function swapToken({
     tx.sign([wallet]);
     const signedTx = Buffer.from(tx.serialize()).toString("base64");
 
-    const execRes = await fetch(`${JUPITER_SWAP_V2_API}/execute`, {
+    const execRes = await fetch(`${JUPITER_SWAP}/execute`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -183,7 +182,7 @@ export async function fetchSolPrice(): Promise<number | null> {
   }
 
   try {
-    const res = await fetch(`${JUPITER_PRICE_API}?ids=${config.tokens.SOL}`, {
+    const res = await fetch(`${JUPITER_PRICE}?ids=${config.tokens.SOL}`, {
       signal: AbortSignal.timeout(5000),
     });
     if (res.ok) {
