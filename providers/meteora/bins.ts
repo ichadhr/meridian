@@ -2,11 +2,9 @@
 // Active-bin lookup, in-range bin fetching (with 30s cache), and the
 // per-bin Y-side BPS distribution used by virtual-position deploys.
 //
-// This module intentionally imports `getPool`, `getDLMM`, and
-// `decimalPriceToQ64` back from `./dlmm.js`. That creates a circular
-// dependency, but ES modules handle it: dlmm-bins.ts only needs
-// `getPool()` at call time (not module-load time), and `getDLMM()` is
-// invoked from `computeVpYDistribution` lazily.
+// This module imports `getPool` from `./pool-cache.js` while importing
+// `getDLMM` and `decimalPriceToQ64` from `./dlmm.js`.
+// That avoids the circular dependency between core.ts and bins.ts.
 //
 // The public surface is re-exported from `providers/meteora/index.ts`,
 // so external consumers (`core/`, `cli/`, `llm/`, etc.) see no change.
@@ -14,7 +12,8 @@
 import BN from "bn.js";
 import { log } from "../../utils/logger.js";
 import { normalizeMint } from "../solana/wallet.js";
-import { getPool, getDLMM, decimalPriceToQ64 } from "./dlmm.js";
+import { getDLMM, decimalPriceToQ64 } from "./dlmm.js";
+import { getPool } from "./pool-cache.js";
 
 // ─── Bins-in-range cache (30s TTL) ──────────────────────────────
 // Key = `${poolAddress}:${minBin}:${maxBin}`. Deploy path passes

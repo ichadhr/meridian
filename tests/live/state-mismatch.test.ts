@@ -735,18 +735,18 @@ describe("Source-order checks", () => {
 });
 
 // ════════════════════════════════════════════════════════════
-//  SECTION E: dlmm.ts import-pattern regression guard (meridian-fvo)
+//  SECTION E: core.ts import-pattern regression guard (meridian-fvo)
 // ════════════════════════════════════════════════════════════
 
-describe("dlmm.ts import-pattern regression", () => {
-  const dlmmSrc = fs.readFileSync(
-    path.join(__dirname, "..", "..", "providers", "meteora", "dlmm.ts"),
+describe("core.ts import-pattern regression", () => {
+  const coreSrc = fs.readFileSync(
+    path.join(__dirname, "..", "..", "providers", "meteora", "core.ts"),
     "utf8"
   );
 
-  it("E1: dlmm.ts imports mergeVpPositions (not re-exports)", () => {
-    expect(/^export\s*\{[^}]*mergeVpPositions[^}]*\}\s*from/m.test(dlmmSrc)).toBe(false);
-    expect(/mergeVpPositions/.test(dlmmSrc)).toBe(true);
+  it("E1: core.ts imports mergeVpPositions (not re-exports)", () => {
+    expect(/^export\s*\{[^}]*mergeVpPositions[^}]*\}\s*from/m.test(coreSrc)).toBe(false);
+    expect(/mergeVpPositions/.test(coreSrc)).toBe(true);
   });
 });
 

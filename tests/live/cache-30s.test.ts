@@ -238,7 +238,7 @@ describe("getBinsInRange cache", () => {
   it("signature accepts { skipCache: true }", () => {
     expect(typeof getBinsInRange).toBe("function");
     const fs = require("fs");
-    const src = fs.readFileSync(new URL("../../providers/meteora/dlmm.ts", import.meta.url), "utf8");
+    const src = fs.readFileSync(new URL("../../providers/meteora/core.ts", import.meta.url), "utf8");
     expect(src).toContain("skipCache");
   });
 });
